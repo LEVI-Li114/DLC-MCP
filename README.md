@@ -160,3 +160,10 @@ After `ListTasks` works, sync task metadata into the MCP asset DB:
 cd /opt/dlc-agent/DLC-Agent
 bash deploy/sync-wedata-once.sh
 ```
+
+Install a server crontab to sync every 10 minutes:
+
+```bash
+cd /opt/dlc-agent/DLC-Agent
+bash deploy/install-sync-cron.sh
+```

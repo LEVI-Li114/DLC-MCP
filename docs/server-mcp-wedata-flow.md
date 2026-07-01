@@ -187,3 +187,32 @@ cd /opt/dlc-agent/DLC-Agent
 git pull
 bash deploy/sync-wedata-once.sh
 ```
+
+Install automatic refresh every 10 minutes:
+
+```bash
+cd /opt/dlc-agent/DLC-Agent
+bash deploy/install-sync-cron.sh
+```
+
+The installer writes one idempotent crontab entry:
+
+```cron
+*/10 * * * * cd /opt/dlc-agent/DLC-Agent && bash deploy/sync-wedata-once.sh /etc/dlc-agent/env >> /data/dlc-agent/logs/sync.log 2>&1 # dlc-agent-wedata-sync
+```
+
+Verify the schedule and logs:
+
+```bash
+crontab -l | grep dlc-agent-wedata-sync
+tail -f /data/dlc-agent/logs/sync.log
+```
+
+If `/data/dlc-agent/logs` has no write permission:
+
+```bash
+sudo mkdir -p /data/dlc-agent/logs
+sudo chown -R "$USER":"$USER" /data/dlc-agent/logs
+```
+
+After this, if WeData adds a new task, wait up to 10 minutes or run `bash deploy/sync-wedata-once.sh` manually, then ask MCP through `search_tasks(query)`.
