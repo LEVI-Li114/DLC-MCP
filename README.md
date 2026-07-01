@@ -105,6 +105,21 @@ python3 -m dlc_agent.import_wedata_snapshot examples/wedata_snapshot.json --db d
 
 Update this section whenever a new MCP tool is added.
 
+## 功能目录
+
+- 项目管理：规划中。用于同步项目、项目成员、项目角色。
+- 资源组：规划中。用于同步资源组及资源组监控。
+- 数据开发：已部分支持。当前支持任务列表同步、任务搜索、任务输入输出映射。
+- 数据资产-数据字典：已部分支持。当前支持表资产、字段、质量状态、核心表判断的本地查询模型；真实表字段同步待接入。
+- 运维中心：已部分支持。当前支持任务运行实例的开始时间、结束时间、耗时、状态。
+- 数据探索：规划中。用于同步 SQL 脚本、代码文件、运行记录。
+- Studio：规划中。用于同步 Studio 相关代码和权限信息。
+- 数据安全：规划中。用于同步权限、授权主体、资源访问范围。
+- 数据质量：已部分支持。当前支持质量规则的本地导入和查询；真实规则组/规则执行结果同步待接入。
+- 平台管理：规划中。用于同步平台级配置。
+- 数据源管理：规划中。用于同步数据源、数据源权限、数据源关联任务。
+- 元数据：已部分支持。当前支持血缘和表字段的本地导入模型；真实元数据同步待接入。
+
 | Tool | What it answers | Current data source |
 | --- | --- | --- |
 | `search_assets(query)` | Search table assets by name, domain, or description. | Imported table metadata |
