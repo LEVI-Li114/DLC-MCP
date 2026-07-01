@@ -61,10 +61,17 @@ set +a
 python -m dlc_agent.call_wedata_api ListTasks "{\"ProjectId\":\"$WEDATA_PROJECT_ID\"}"
 ```
 
-One-shot sync for the implemented task dump:
+One-shot sync for the implemented task dump. This fetches all `ListTasks` pages, writes the raw dump to `/data/dlc-agent/sync/wedata_tasks.json`, imports it into SQLite, and runs a small MCP smoke test:
 
 ```bash
 cd /opt/dlc-agent
+bash deploy/sync-wedata-once.sh
+```
+
+If your repo lives under `/opt/dlc-agent/DLC-Agent`, run:
+
+```bash
+cd /opt/dlc-agent/DLC-Agent
 bash deploy/sync-wedata-once.sh
 ```
 

@@ -17,10 +17,9 @@ set +a
 WORK_DIR="${DLC_AGENT_SYNC_DIR:-/data/dlc-agent/sync}"
 mkdir -p "$WORK_DIR"
 
-python -m dlc_agent.call_wedata_api ListTasks "{\"ProjectId\":\"$WEDATA_PROJECT_ID\"}" > "$WORK_DIR/wedata_tasks.json"
+python -m dlc_agent.sync_wedata
 
-python -m dlc_agent.import_wedata_api_dump \
-  --tasks "$WORK_DIR/wedata_tasks.json" \
-  --db "$DLC_AGENT_DB"
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  | DLC_AGENT_DB="$DLC_AGENT_DB" python -m dlc_agent.server >/dev/null
 
-echo "synced WeData task dump into $DLC_AGENT_DB"
+echo "MCP smoke test passed"

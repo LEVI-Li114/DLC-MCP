@@ -125,3 +125,10 @@ Skipped: write operations, DLC sync, and automatic quality-rule creation. Add th
 ## Server Setup
 
 See [deploy/server-setup.md](deploy/server-setup.md).
+
+After `ListTasks` works, sync task metadata into the MCP asset DB:
+
+```bash
+cd /opt/dlc-agent/DLC-Agent
+bash deploy/sync-wedata-once.sh
+```

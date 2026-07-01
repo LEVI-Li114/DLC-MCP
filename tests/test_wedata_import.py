@@ -115,6 +115,41 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual(snapshot["tasks"][0]["id"], "t1")
         self.assertEqual(snapshot["quality_rules"][0]["rule_name"], "amount_not_null")
 
+    def test_maps_real_list_tasks_fields(self):
+        snapshot = snapshot_from_api_dump(
+            {
+                "tasks": {
+                    "Response": {
+                        "Data": {
+                            "Items": [
+                                {
+                                    "TaskId": "20251013191831005",
+                                    "TaskName": "1",
+                                    "TaskTypeId": 32,
+                                    "TaskLatestVersionStatus": "Y11",
+                                    "OwnerUin": "100043939904",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(
+            snapshot["tasks"][0],
+            {
+                "id": "20251013191831005",
+                "name": "1",
+                "task_type": "32",
+                "cycle": "",
+                "owner": "100043939904",
+                "status": "Y11",
+                "inputs": [],
+                "outputs": [],
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

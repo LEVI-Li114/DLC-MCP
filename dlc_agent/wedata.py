@@ -93,10 +93,10 @@ def _task_from_api(item):
     return {
         "id": str(_get(item, "TaskId", "Id", "id")),
         "name": _get(item, "TaskName", "Name", "name"),
-        "task_type": _get(item, "TaskType", "Type", "taskType"),
+        "task_type": str(_get(item, "TaskType", "TaskTypeId", "Type", "taskType")),
         "cycle": _get(item, "CycleType", "Cycle", "cycle"),
-        "owner": _get(item, "Owner", "OwnerName", "ResponsibleUser", "owner"),
-        "status": _get(item, "Status", "State", "status"),
+        "owner": str(_get(item, "Owner", "OwnerName", "OwnerUin", "ResponsibleUser", "owner")),
+        "status": _get(item, "Status", "TaskLatestVersionStatus", "State", "status"),
         "inputs": _get(item, "Inputs", "InputTables", "inputs", default=[]),
         "outputs": _get(item, "Outputs", "OutputTables", "outputs", default=[]),
     }
