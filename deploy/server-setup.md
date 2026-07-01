@@ -1,5 +1,7 @@
 # Server Setup
 
+For the full end-to-end MCP + real WeData flow, see `docs/server-mcp-wedata-flow.md`.
+
 Target layout:
 
 ```text

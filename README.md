@@ -148,6 +148,7 @@ Skipped: write operations, DLC sync, and automatic quality-rule creation. Add th
 ## Server Setup
 
 See [deploy/server-setup.md](deploy/server-setup.md).
+End-to-end server MCP and real WeData flow: [docs/server-mcp-wedata-flow.md](docs/server-mcp-wedata-flow.md).
 Core table scoring is documented in [docs/core-table-model.md](docs/core-table-model.md).
 
 After `ListTasks` works, sync task metadata into the MCP asset DB:
