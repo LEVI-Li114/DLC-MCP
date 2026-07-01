@@ -1,4 +1,5 @@
 import sqlite3
+import json
 
 
 class AssetStore:
@@ -65,6 +66,14 @@ class AssetStore:
                 duration_seconds integer not null default 0,
                 status text not null default '',
                 primary key (task_id, instance_id)
+            );
+            create table if not exists data_sources (
+                id text primary key,
+                name text not null default '',
+                type text not null default '',
+                owner text not null default '',
+                description text not null default '',
+                config_json text not null default '{}'
             );
             """
         )
@@ -167,6 +176,54 @@ class AssetStore:
         for table_name in item.get("outputs", []):
             self.conn.execute("insert into task_tables (task_id, table_name, direction) values (?, ?, 'output')", (item["id"], table_name))
         self.conn.commit()
+
+    def upsert_data_source(self, item):
+        self.conn.execute(
+            """
+            insert into data_sources (id, name, type, owner, description, config_json)
+            values (?, ?, ?, ?, ?, ?)
+            on conflict(id) do update set
+                name = excluded.name,
+                type = excluded.type,
+                owner = excluded.owner,
+                description = excluded.description,
+                config_json = excluded.config_json
+            """,
+            (
+                item["id"],
+                item.get("name", ""),
+                item.get("type", ""),
+                item.get("owner", ""),
+                item.get("description", ""),
+                json.dumps(item.get("config", {}), ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        self.conn.commit()
+
+    def list_data_sources(self, query=""):
+        like = f"%{query}%"
+        rows = self._all(
+            """
+            select id, name, type, owner, description, config_json
+            from data_sources
+            where ? = '' or id like ? or name like ? or type like ? or owner like ?
+            order by name
+            limit 50
+            """,
+            (query, like, like, like, like),
+        )
+        return {"query": query, "results": [self._data_source_dict(row) for row in rows]}
+
+    def get_data_source(self, data_source_id):
+        row = self._one("select id, name, type, owner, description, config_json from data_sources where id = ?", (data_source_id,))
+        if not row:
+            return {"error": "data_source_not_found", "data_source_id": data_source_id}
+        return self._data_source_dict(row)
+
+    def list_metadata(self):
+        databases = [row["database_name"] for row in self._all("select distinct database_name from tables where database_name != '' order by database_name")]
+        tables = [self._table_dict(row) for row in self._all("select name, database_name, layer, domain, owner, description, manual_core_level from tables order by database_name, name limit 100")]
+        return {"databases": databases, "tables": tables}
 
     def upsert_task_run(self, item):
         self.conn.execute(
@@ -330,6 +387,11 @@ class AssetStore:
     def _table_dict(self, row):
         data = dict(row)
         data["database"] = data.pop("database_name")
+        return data
+
+    def _data_source_dict(self, row):
+        data = dict(row)
+        data["config"] = json.loads(data.pop("config_json") or "{}")
         return data
 
     def _latest_status(self, rules):

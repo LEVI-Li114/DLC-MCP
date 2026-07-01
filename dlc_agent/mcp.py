@@ -34,6 +34,18 @@ TOOLS = {
         "description": "Return recent task instances with start time, end time, duration, and status.",
         "schema": {"type": "object", "properties": {"task_id": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["task_id"]},
     },
+    "list_data_sources": {
+        "description": "List data sources and their stored configuration summary.",
+        "schema": {"type": "object", "properties": {"query": {"type": "string"}}},
+    },
+    "get_data_source": {
+        "description": "Return one data source by id, including configuration details stored in the fact database.",
+        "schema": {"type": "object", "properties": {"data_source_id": {"type": "string"}}, "required": ["data_source_id"]},
+    },
+    "list_metadata": {
+        "description": "List imported databases and table metadata.",
+        "schema": {"type": "object", "properties": {}},
+    },
     "is_core_table": {
         "description": "Decide whether a table is core and return explainable scoring reasons.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]},
@@ -85,6 +97,12 @@ def _call_tool(store, request):
         data = store.get_table_tasks(args["table_name"])
     elif name == "get_task_runs":
         data = store.get_task_runs(args["task_id"], args.get("limit", 10))
+    elif name == "list_data_sources":
+        data = store.list_data_sources(args.get("query", ""))
+    elif name == "get_data_source":
+        data = store.get_data_source(args["data_source_id"])
+    elif name == "list_metadata":
+        data = store.list_metadata()
     else:
         data = store.is_core_table(args["table_name"])
 

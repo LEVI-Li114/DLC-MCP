@@ -117,8 +117,8 @@ Update this section whenever a new MCP tool is added.
 - 数据安全：规划中。用于同步权限、授权主体、资源访问范围。
 - 数据质量：已部分支持。当前支持质量规则的本地导入和查询；真实规则组/规则执行结果同步待接入。
 - 平台管理：规划中。用于同步平台级配置。
-- 数据源管理：规划中。用于同步数据源、数据源权限、数据源关联任务。
-- 元数据：已部分支持。当前支持血缘和表字段的本地导入模型；真实元数据同步待接入。
+- 数据源管理：已部分支持。当前支持数据源列表、数据源类型、负责人、描述和配置摘要的导入与查询。
+- 元数据：已部分支持。当前支持数据库列表、表资产、字段、血缘的本地导入和查询模型；真实元数据同步待接入。
 
 | Tool | What it answers | Current data source |
 | --- | --- | --- |
@@ -130,6 +130,9 @@ Update this section whenever a new MCP tool is added.
 | `get_table_lineage(table_name)` | Return upstream and downstream assets for a table. | Imported lineage and task input/output data |
 | `get_table_tasks(table_name)` | Return ETL tasks that read from or produce a table. | Task input/output mapping |
 | `get_task_runs(task_id)` | Return recent task instances, including start time, end time, duration, and status. | Optional `ListTaskInstances` sync |
+| `list_data_sources(query)` | List data sources and stored configuration summaries. | Imported data source metadata |
+| `get_data_source(data_source_id)` | Return one data source, including type, owner, description, and stored config. | Imported data source metadata |
+| `list_metadata()` | List imported databases and table metadata. | Imported metadata tables |
 | `is_core_table(table_name)` | Explain whether a table is core and return score plus reasons. | Local scoring model over layer/domain/lineage/quality/manual marks |
 
 Current limitation: after the first real sync, task search is available. Table columns, lineage, and quality answers become accurate after their corresponding WeData APIs are imported.

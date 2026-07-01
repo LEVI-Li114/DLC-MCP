@@ -43,6 +43,16 @@ class McpTest(unittest.TestCase):
                 "status": "success",
             }
         )
+        self.store.upsert_data_source(
+            {
+                "id": "ds_001",
+                "name": "mysql_prod",
+                "type": "mysql",
+                "owner": "data-platform",
+                "description": "Production MySQL",
+                "config": {"host": "mysql.internal", "database": "crm"},
+            }
+        )
 
     def test_lists_tools(self):
         response = handle_request(self.store, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
@@ -50,6 +60,8 @@ class McpTest(unittest.TestCase):
         self.assertEqual(response["id"], 1)
         self.assertIn("get_table_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("search_tasks", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("list_data_sources", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("list_metadata", [tool["name"] for tool in response["result"]["tools"]])
 
     def test_calls_table_profile_tool(self):
         response = handle_request(
@@ -90,6 +102,27 @@ class McpTest(unittest.TestCase):
         )
 
         self.assertIn("duration_seconds", response["result"]["content"][0]["text"])
+
+    def test_calls_data_source_tools(self):
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "get_data_source", "arguments": {"data_source_id": "ds_001"}},
+            },
+        )
+
+        self.assertIn("mysql.internal", response["result"]["content"][0]["text"])
+
+    def test_calls_metadata_tool(self):
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "list_metadata", "arguments": {}}},
+        )
+
+        self.assertIn("dim_customer", response["result"]["content"][0]["text"])
 
 
 if __name__ == "__main__":

@@ -174,6 +174,8 @@ Restart Codex, then ask:
 - Real WeData task list: supported through `ListTasks`
 - Task search: supported through `search_tasks(query)`
 - Task run start/end/duration/status: supported after optional `ListTaskInstances` sync
+- Data source listing and configuration lookup: local model and JSON import supported; live sync still needs follow-up work
+- Metadata database/table listing: local model and JSON import supported; live metadata sync still needs follow-up work
 - Table fields, quality rules, lineage: local model exists, real WeData sync still needs follow-up work
 
 ## 10. Routine Refresh

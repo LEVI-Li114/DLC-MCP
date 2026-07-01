@@ -32,12 +32,16 @@ def import_wedata_snapshot(store, snapshot):
     for run in snapshot.get("task_instances", []):
         store.upsert_task_run(run)
 
+    for data_source in snapshot.get("data_sources", []):
+        store.upsert_data_source(data_source)
+
 
 def snapshot_from_api_dump(dump):
     return {
         "tables": [_table_from_api(item) for item in _items(dump.get("tables", {}))],
         "tasks": [_task_from_api(item) for item in _items(dump.get("tasks", {}))],
         "task_instances": [_task_instance_from_api(item) for item in _items(dump.get("task_instances", {}))],
+        "data_sources": [_data_source_from_api(item) for item in _items(dump.get("data_sources", {}))],
         "lineage": [_lineage_from_api(item) for item in _items(dump.get("lineage", {}))],
         "quality_rules": [_quality_rule_from_api(item) for item in _items(dump.get("quality_rules", {}))],
     }
@@ -135,4 +139,20 @@ def _task_instance_from_api(item):
         "end_time": _get(item, "EndTime", "EndDate", "endTime"),
         "duration_seconds": int(_get(item, "CostTime", "CostSeconds", "DurationSeconds", "duration_seconds", default=0) or 0),
         "status": _get(item, "Status", "State", "ExecutionStatus", "status"),
+    }
+
+
+def _data_source_from_api(item):
+    config = {}
+    for source_key, target_key in (("Host", "host"), ("Port", "port"), ("DatabaseName", "database"), ("DbName", "database"), ("VpcId", "vpc_id")):
+        value = _get(item, source_key, default=None)
+        if value is not None:
+            config[target_key] = value
+    return {
+        "id": str(_get(item, "DataSourceId", "DatasourceId", "Id", "id")),
+        "name": _get(item, "DataSourceName", "DatasourceName", "Name", "name"),
+        "type": _get(item, "Type", "DataSourceType", "DatasourceType", "type"),
+        "owner": _get(item, "Owner", "OwnerName", "OwnerUin", "owner"),
+        "description": _get(item, "Description", "Remark", "Comment", "description"),
+        "config": config,
     }

@@ -61,6 +61,16 @@ class WeDataImportTest(unittest.TestCase):
                         "status": "success",
                     }
                 ],
+                "data_sources": [
+                    {
+                        "id": "ds_001",
+                        "name": "mysql_prod",
+                        "type": "mysql",
+                        "owner": "data-platform",
+                        "description": "Production MySQL",
+                        "config": {"host": "mysql.internal", "database": "crm"},
+                    }
+                ],
             },
         )
 
@@ -71,6 +81,7 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual(store.get_table_lineage("dws_customer_order_daily")["upstream"][0]["upstream"], "ods_order")
         self.assertEqual(store.get_task("task_001")["outputs"], ["dws_customer_order_daily"])
         self.assertEqual(store.get_task_runs("task_001")["runs"][0]["duration_seconds"], 330)
+        self.assertEqual(store.get_data_source("ds_001")["name"], "mysql_prod")
 
     def test_builds_snapshot_from_api_dump(self):
         snapshot = snapshot_from_api_dump(
@@ -126,6 +137,32 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual(snapshot["tables"][0]["name"], "ads_revenue")
         self.assertEqual(snapshot["tasks"][0]["id"], "t1")
         self.assertEqual(snapshot["quality_rules"][0]["rule_name"], "amount_not_null")
+
+    def test_maps_data_sources_from_api_dump(self):
+        snapshot = snapshot_from_api_dump(
+            {
+                "data_sources": {
+                    "Response": {
+                        "Data": {
+                            "Items": [
+                                {
+                                    "DataSourceId": "ds_001",
+                                    "DataSourceName": "mysql_prod",
+                                    "Type": "mysql",
+                                    "Owner": "data-platform",
+                                    "Description": "Production MySQL",
+                                    "Host": "mysql.internal",
+                                    "DatabaseName": "crm",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(snapshot["data_sources"][0]["name"], "mysql_prod")
+        self.assertEqual(snapshot["data_sources"][0]["config"]["host"], "mysql.internal")
 
     def test_maps_real_list_tasks_fields(self):
         snapshot = snapshot_from_api_dump(
