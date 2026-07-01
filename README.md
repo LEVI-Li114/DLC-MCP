@@ -129,7 +129,7 @@ Update this section whenever a new MCP tool is added.
 | `get_quality_status(table_name)` | Show whether a table has quality monitoring, rule count, latest status, and rule details. | `ListQualityRules` sync |
 | `get_table_lineage(table_name)` | Return upstream and downstream assets for a table. | `ListLineage` sync and task input/output data |
 | `get_table_tasks(table_name)` | Return ETL tasks that read from or produce a table. | Task input/output mapping |
-| `get_task_runs(task_id)` | Return recent task instances, including start time, end time, duration, and status. | Optional `ListTaskInstances` sync |
+| `get_task_runs(task_id/task_name, instance_date)` | Return task instances, including start time, end time, duration, and status. | Optional `ListTaskInstances` sync |
 | `list_data_sources(query)` | List data sources and stored configuration summaries. | Imported data source metadata |
 | `get_data_source(data_source_id)` | Return one data source, including type, owner, description, and stored config. | Imported data source metadata |
 | `list_metadata()` | List imported databases and table metadata. | Imported metadata tables |
@@ -171,6 +171,12 @@ Sync only selected tables:
 
 ```bash
 WEDATA_SYNC_METADATA=1 WEDATA_METADATA_TABLES=ads_bill_company_1d_di,dws_360_fin_job_seat_1d_di bash deploy/sync-wedata-once.sh
+```
+
+Sync rolling task runs for yesterday and today:
+
+```bash
+WEDATA_SYNC_INSTANCES=1 WEDATA_INSTANCE_LOOKBACK_DAYS=2 bash deploy/sync-wedata-once.sh
 ```
 
 Install a server crontab to sync every 10 minutes:

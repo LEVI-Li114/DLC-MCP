@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from datetime import datetime, timedelta
 
 from .assets import AssetStore
 from .tencentcloud import TencentCloudClient
@@ -32,9 +33,9 @@ def main():
 
     if os.environ.get("WEDATA_SYNC_INSTANCES") == "1":
         instance_payload = {"ProjectId": project_id}
-        for env_name, field_name in (("WEDATA_INSTANCE_START", "StartTime"), ("WEDATA_INSTANCE_END", "EndTime")):
-            if os.environ.get(env_name):
-                instance_payload[field_name] = os.environ[env_name]
+        start_time, end_time = _instance_window()
+        instance_payload["StartTime"] = start_time
+        instance_payload["EndTime"] = end_time
         instances_response = _list_all(client, "ListTaskInstances", instance_payload, page_size)
         instances_path = os.path.join(work_dir, "wedata_task_instances.json")
         with open(instances_path, "w", encoding="utf-8") as f:
@@ -70,6 +71,15 @@ def _list_all(client, action, payload, page_size):
     first["Response"]["Data"]["PageSize"] = page_size
     first["Response"]["Data"]["TotalPageNumber"] = total_pages
     return first
+
+
+def _instance_window():
+    if os.environ.get("WEDATA_INSTANCE_START") and os.environ.get("WEDATA_INSTANCE_END"):
+        return os.environ["WEDATA_INSTANCE_START"], os.environ["WEDATA_INSTANCE_END"]
+    days = int(os.environ.get("WEDATA_INSTANCE_LOOKBACK_DAYS", "2"))
+    today = datetime.now().date()
+    start = today - timedelta(days=max(days, 1) - 1)
+    return f"{start:%Y-%m-%d} 00:00:00", f"{today:%Y-%m-%d} 23:59:59"
 
 
 def _sync_metadata(client, project_id, table_names, page_size, work_dir):

@@ -262,18 +262,32 @@ class AssetStore:
         data["outputs"] = [row["table_name"] for row in self._all("select table_name from task_tables where task_id = ? and direction = 'output' order by table_name", (task_id,))]
         return data
 
-    def get_task_runs(self, task_id, limit=10):
+    def get_task_runs(self, task_id, limit=10, instance_date=""):
+        date_filter = "and instance_date like ?" if instance_date else ""
+        args = [task_id]
+        if instance_date:
+            args.append(f"{instance_date}%")
+        args.append(limit)
         rows = self._all(
-            """
+            f"""
             select task_id, instance_id, instance_date, start_time, end_time, duration_seconds, status
             from task_runs
             where task_id = ?
+            {date_filter}
             order by instance_date desc, start_time desc
             limit ?
             """,
-            (task_id, limit),
+            tuple(args),
         )
         return {"task_id": task_id, "runs": [dict(row) for row in rows]}
+
+    def get_task_runs_by_name(self, task_name, limit=10, instance_date=""):
+        task = self._one("select id, name from tasks where name = ? order by id limit 1", (task_name,))
+        if not task:
+            return {"error": "task_not_found", "task_name": task_name}
+        data = self.get_task_runs(task["id"], limit, instance_date)
+        data["task_name"] = task["name"]
+        return data
 
     def get_table_tasks(self, table_name):
         rows = self._all(

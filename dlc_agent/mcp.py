@@ -31,8 +31,16 @@ TOOLS = {
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]},
     },
     "get_task_runs": {
-        "description": "Return recent task instances with start time, end time, duration, and status.",
-        "schema": {"type": "object", "properties": {"task_id": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["task_id"]},
+        "description": "Return task instances by task id or exact task name, with optional instance date filter.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "task_name": {"type": "string"},
+                "instance_date": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+        },
     },
     "list_data_sources": {
         "description": "List data sources and their stored configuration summary.",
@@ -96,7 +104,10 @@ def _call_tool(store, request):
     elif name == "get_table_tasks":
         data = store.get_table_tasks(args["table_name"])
     elif name == "get_task_runs":
-        data = store.get_task_runs(args["task_id"], args.get("limit", 10))
+        if args.get("task_name"):
+            data = store.get_task_runs_by_name(args["task_name"], args.get("limit", 10), args.get("instance_date", ""))
+        else:
+            data = store.get_task_runs(args["task_id"], args.get("limit", 10), args.get("instance_date", ""))
     elif name == "list_data_sources":
         data = store.list_data_sources(args.get("query", ""))
     elif name == "get_data_source":

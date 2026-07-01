@@ -103,6 +103,24 @@ class McpTest(unittest.TestCase):
 
         self.assertIn("duration_seconds", response["result"]["content"][0]["text"])
 
+    def test_calls_get_task_runs_by_name_and_date(self):
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_task_runs",
+                    "arguments": {"task_name": "build_dim_customer", "instance_date": "2026-07-01"},
+                },
+            },
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("build_dim_customer", text)
+        self.assertIn("duration_seconds", text)
+
     def test_calls_data_source_tools(self):
         response = handle_request(
             self.store,
