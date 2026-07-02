@@ -24,7 +24,7 @@ type = "stdio"
 This is the cleanest team setup: users only add the MCP command. The npm launcher defaults to:
 
 - SSH host: `data-agent-host`
-- remote dir: `/opt/dlc-mcp`
+- remote dir: `/opt/dlc-mcp/DLC-MCP`
 - asset DB: `/data/dlc-mcp/assets.db`
 
 If your server path is different, override with env:
@@ -32,7 +32,7 @@ If your server path is different, override with env:
 ```toml
 [mcp_servers.dlc-mcp.env]
 DLC_MCP_SSH_HOST = "data-agent-host"
-DLC_MCP_REMOTE_DIR = "/opt/dlc-mcp"
+DLC_MCP_REMOTE_DIR = "/opt/dlc-mcp/DLC-MCP"
 DLC_MCP_DB = "/data/dlc-mcp/assets.db"
 ```
 
@@ -54,7 +54,7 @@ Shared Codex config without npm:
 ```toml
 [mcp_servers.dlc-mcp]
 command = "ssh"
-args = ["data-agent-host", "cd /opt/dlc-mcp && DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server"]
+args = ["data-agent-host", "cd /opt/dlc-mcp/DLC-MCP && DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server"]
 type = "stdio"
 ```
 

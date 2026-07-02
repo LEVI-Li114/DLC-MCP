@@ -11,7 +11,7 @@ if (process.argv[2] === "install-codex") {
 }
 
 const host = process.env.DLC_MCP_SSH_HOST || "data-agent-host";
-const remoteDir = process.env.DLC_MCP_REMOTE_DIR || "/opt/dlc-mcp";
+const remoteDir = process.env.DLC_MCP_REMOTE_DIR || "/opt/dlc-mcp/DLC-MCP";
 const db = process.env.DLC_MCP_DB || "/data/dlc-mcp/assets.db";
 const python = process.env.DLC_MCP_PYTHON || "python3";
 

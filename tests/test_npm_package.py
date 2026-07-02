@@ -16,7 +16,7 @@ class NpmPackageTest(unittest.TestCase):
             script = f.read()
 
         self.assertIn('"data-agent-host"', script)
-        self.assertIn('"/opt/dlc-mcp"', script)
+        self.assertIn('"/opt/dlc-mcp/DLC-MCP"', script)
         self.assertIn('"/data/dlc-mcp/assets.db"', script)
         self.assertIn('"python3"', script)
 
