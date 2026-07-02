@@ -10,10 +10,10 @@ class LiveWeData:
         self.store = store
         self.client = client or TencentCloudClient.wedata_from_env()
         self.project_id = os.environ["WEDATA_PROJECT_ID"]
-        self.page_size = int(os.environ.get("WEDATA_LIVE_PAGE_SIZE", "20"))
+        self.page_size = max(10, int(os.environ.get("WEDATA_LIVE_PAGE_SIZE", "20")))
 
     def sync_tasks(self, query):
-        data = self._list_all("ListTasks", {"ProjectId": self.project_id, "Keyword": query})
+        data = self._list_all("ListTasks", {"ProjectId": self.project_id, "TaskName": query})
         self._import({"tasks": data})
 
     def sync_table(self, table_name):
