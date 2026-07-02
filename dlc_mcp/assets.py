@@ -90,6 +90,20 @@ class AssetStore:
                 owner text not null default '',
                 primary key (data_source_id, task_id)
             );
+            create table if not exists expert_labels (
+                asset_type text not null,
+                asset_name text not null,
+                core_level text not null default '',
+                value_tier text not null default '',
+                domain text not null default '',
+                use_case text not null default '',
+                metric_definition text not null default '',
+                owner text not null default '',
+                reviewer text not null default '',
+                reason text not null default '',
+                updated_at text not null default '',
+                primary key (asset_type, asset_name)
+            );
             """
         )
         self._add_column_if_missing("tables", "source_guid", "text not null default ''")
@@ -282,6 +296,77 @@ class AssetStore:
         tables = [self._table_dict(row) for row in self._all("select name, source_guid, data_source_id, database_name, layer, domain, owner, description, manual_core_level from tables order by database_name, name limit 100")]
         return {"databases": databases, "tables": tables}
 
+    def upsert_expert_label(self, item):
+        self.conn.execute(
+            """
+            insert into expert_labels
+                (asset_type, asset_name, core_level, value_tier, domain, use_case, metric_definition, owner, reviewer, reason, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(asset_type, asset_name) do update set
+                core_level = excluded.core_level,
+                value_tier = excluded.value_tier,
+                domain = excluded.domain,
+                use_case = excluded.use_case,
+                metric_definition = excluded.metric_definition,
+                owner = excluded.owner,
+                reviewer = excluded.reviewer,
+                reason = excluded.reason,
+                updated_at = excluded.updated_at
+            """,
+            (
+                item.get("asset_type", "table"),
+                item["asset_name"],
+                item.get("core_level", ""),
+                item.get("value_tier", ""),
+                item.get("domain", ""),
+                item.get("use_case", ""),
+                item.get("metric_definition", ""),
+                item.get("owner", ""),
+                item.get("reviewer", ""),
+                item.get("reason", ""),
+                item.get("updated_at", ""),
+            ),
+        )
+        self.conn.commit()
+
+    def get_expert_label(self, asset_type, asset_name):
+        row = self._one(
+            """
+            select asset_type, asset_name, core_level, value_tier, domain, use_case, metric_definition, owner, reviewer, reason, updated_at
+            from expert_labels
+            where asset_type = ? and asset_name = ?
+            """,
+            (asset_type, asset_name),
+        )
+        if not row:
+            return {"error": "expert_label_not_found", "asset_type": asset_type, "asset_name": asset_name}
+        return dict(row)
+
+    def list_expert_review_queue(self, layer="", limit=50):
+        args = []
+        filters = ["el.asset_name is null", "coalesce(q.rule_count, 0) = 0", "coalesce(l.downstream_count, 0) > 0"]
+        if layer:
+            filters.append("t.layer = ?")
+            args.append(layer)
+        args.append(limit)
+        rows = self._all(
+            f"""
+            select
+                t.name, t.layer, t.domain, t.owner,
+                coalesce(l.downstream_count, 0) as downstream_count,
+                coalesce(q.rule_count, 0) as quality_rule_count
+            from tables t
+            left join expert_labels el on el.asset_type = 'table' and el.asset_name = t.name
+            left join (select upstream, count(*) as downstream_count from lineage group by upstream) l on l.upstream = t.name
+            left join (select table_name, count(*) as rule_count from quality_rules group by table_name) q on q.table_name = t.name
+            where {" and ".join(filters)}
+            order by downstream_count desc, t.layer, t.name
+            limit ?
+            """,
+            tuple(args),
+        )
+        return {"layer": layer, "results": [dict(row) for row in rows]}
+
     def upsert_task_run(self, item):
         self.conn.execute(
             """
@@ -376,6 +461,7 @@ class AssetStore:
         rules = self._all("select * from quality_rules where table_name = ? order by rule_name", (table_name,))
         return {
             "table": self._table_dict(table),
+            "expert_label": self._label_or_none("table", table_name),
             "columns": [dict(row) for row in self._all("select name, type, description from columns where table_name = ? order by ordinal, name", (table_name,))],
             "lineage": self.get_table_lineage(table_name),
             "quality": {
@@ -420,6 +506,7 @@ class AssetStore:
             "latest_runs": latest_runs,
             "reasons": reasons,
             "suggestions": _risk_suggestions(rule_count, downstream_count, failed_runs),
+            "expert_label": self._label_or_none("table", table_name),
         }
 
     def list_quality_gaps(self, layer="", domain="", limit=50):
@@ -490,6 +577,9 @@ class AssetStore:
         table = self._one("select * from tables where name = ?", (table_name,))
         if not table:
             return {"error": "table_not_found", "table_name": table_name}
+        label = self._label_or_none("table", table_name)
+        if label and label.get("core_level"):
+            return {"table_name": table_name, "is_core": label["core_level"] in {"P0", "P1", "核心"}, "score": 100, "reasons": [f"expert core level: {label['core_level']}"]}
         if table["manual_core_level"]:
             return {"table_name": table_name, "is_core": True, "score": 100, "reasons": [f"manual core level: {table['manual_core_level']}"]}
 
@@ -563,6 +653,10 @@ class AssetStore:
             (table_name,),
         )
         return [dict(row) for row in rows if row["instance_date"]]
+
+    def _label_or_none(self, asset_type, asset_name):
+        label = self.get_expert_label(asset_type, asset_name)
+        return None if label.get("error") else label
 
     def _latest_status(self, rules):
         failed = [rule for rule in rules if rule["last_status"] == "failed"]

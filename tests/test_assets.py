@@ -101,6 +101,24 @@ class AssetStoreTest(unittest.TestCase):
 
         self.assertEqual(gaps["results"][0]["name"], "dwd_sms_bill")
 
+    def test_expert_label_overrides_core_decision(self):
+        store = make_risky_store()
+        store.upsert_expert_label(
+            {
+                "asset_name": "dwd_sms_bill",
+                "core_level": "P0",
+                "value_tier": "核心",
+                "domain": "财务分析",
+                "use_case": "短信计费核算",
+                "reviewer": "data-expert",
+                "reason": "影响短信账单与成本分析",
+            }
+        )
+
+        self.assertEqual(store.get_table_profile("dwd_sms_bill")["expert_label"]["core_level"], "P0")
+        self.assertTrue(store.is_core_table("dwd_sms_bill")["is_core"])
+        self.assertEqual(store.list_expert_review_queue(layer="dwd")["results"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

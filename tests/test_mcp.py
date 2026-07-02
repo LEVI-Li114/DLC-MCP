@@ -60,6 +60,7 @@ class McpTest(unittest.TestCase):
             "ds_001",
             [{"task_id": "sync_001", "task_name": "sync_mysql_prod", "task_type": "DataDevelopment", "project_name": "prod"}],
         )
+        self.store.upsert_expert_label({"asset_name": "dim_customer", "core_level": "P1", "value_tier": "重要", "domain": "客户", "use_case": "客户分析"})
 
     def test_lists_tools(self):
         response = handle_request(self.store, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
@@ -71,6 +72,8 @@ class McpTest(unittest.TestCase):
         self.assertIn("list_data_source_tasks", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_table_risk_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_quality_gaps", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("get_expert_label", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("list_expert_review_queue", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_metadata", [tool["name"] for tool in response["result"]["tools"]])
 
     def test_calls_table_profile_tool(self):
@@ -86,6 +89,7 @@ class McpTest(unittest.TestCase):
 
         self.assertEqual(response["result"]["content"][0]["type"], "text")
         self.assertIn("dim_customer", response["result"]["content"][0]["text"])
+        self.assertIn("专家标注", response["result"]["content"][0]["text"])
 
     def test_calls_search_tasks_tool(self):
         response = handle_request(
@@ -205,6 +209,32 @@ class McpTest(unittest.TestCase):
                 "id": 13,
                 "method": "tools/call",
                 "params": {"name": "list_quality_gaps", "arguments": {"layer": "dwd"}},
+            },
+        )
+
+        self.assertIn("dwd_sms_bill", response["result"]["content"][0]["text"])
+
+    def test_calls_expert_label_tool(self):
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 14,
+                "method": "tools/call",
+                "params": {"name": "get_expert_label", "arguments": {"asset_name": "dim_customer"}},
+            },
+        )
+
+        self.assertIn("P1", response["result"]["content"][0]["text"])
+
+    def test_calls_expert_review_queue_tool(self):
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 15,
+                "method": "tools/call",
+                "params": {"name": "list_expert_review_queue", "arguments": {"layer": "dwd"}},
             },
         )
 

@@ -115,6 +115,7 @@ Update this section whenever a new MCP tool is added.
 - 数据质量：已部分支持。当前支持真实质量规则同步、查询、表风险画像和质量监控缺口扫描；规则执行结果同步待接入。
 - 数据源管理：已支持。当前支持真实数据源列表、类型、负责人、描述、配置摘要、关联任务数和关联任务明细查询。
 - 元数据：已部分支持。当前支持真实表资产、字段、下游血缘同步和查询。
+- 专家模式：已支持。当前支持专家标注导入、查询、核心等级覆盖和专家评审队列。
 
 | Tool | What it answers | Current data source |
 | --- | --- | --- |
@@ -125,6 +126,8 @@ Update this section whenever a new MCP tool is added.
 | `get_quality_status(table_name, live)` | Show whether a table has quality monitoring, rule count, latest status, and rule details. | SQLite cache, live `ListQualityRules` fallback |
 | `get_table_risk_profile(table_name, live)` | Explain table risk level from layer, downstream dependencies, quality rules, and latest output task runs. | Local model over metadata, lineage, quality rules, and task runs |
 | `list_quality_gaps(layer, domain, limit)` | List tables with downstream dependencies but no quality rules. | Local model over metadata, lineage, and quality rules |
+| `get_expert_label(asset_type, asset_name)` | Return expert label for one table/metric/data source. | Imported expert labels |
+| `list_expert_review_queue(layer, limit)` | List high-impact unlabelled tables for expert review. | Local model over metadata, lineage, quality rules, and expert labels |
 | `get_table_lineage(table_name, live)` | Return upstream and downstream assets for a table. | SQLite cache, live `ListLineage` fallback |
 | `get_table_tasks(table_name)` | Return ETL tasks that read from or produce a table. | Task input/output mapping |
 | `get_task_runs(task_id/task_name, instance_date, live)` | Return task instances, including start time, end time, duration, and status. | SQLite cache, live `ListTaskInstances` fallback |
@@ -135,6 +138,36 @@ Update this section whenever a new MCP tool is added.
 | `is_core_table(table_name)` | Explain whether a table is core and return score plus reasons. | Local scoring model over layer/domain/lineage/quality/manual marks |
 
 Current limitation: usage heat is not synced yet. It needs query logs or BI/report access logs, not the current WeData metadata APIs.
+
+## Expert Labels
+
+Import expert labels from JSON or CSV:
+
+```bash
+python3 -m dlc_mcp.import_expert_labels expert_labels.json --db data/assets.db
+```
+
+JSON shape:
+
+```json
+[
+  {
+    "asset_type": "table",
+    "asset_name": "dwd_call_sms_instance_bill_di",
+    "core_level": "P0",
+    "value_tier": "核心",
+    "domain": "财务分析",
+    "use_case": "短信计费核算、客户账单、供应商通道成本分析",
+    "metric_definition": "",
+    "owner": "finance-data",
+    "reviewer": "data-expert",
+    "reason": "影响短信账单与成本分析",
+    "updated_at": "2026-07-02"
+  }
+]
+```
+
+Expert labels override automatic core-table scoring. If a table has `core_level`, `is_core_table` treats `P0`/`P1`/`核心` as core and includes the expert reason in table and risk profiles.
 
 ## WeData Snapshot Shape
 

@@ -63,6 +63,14 @@ TOOLS = {
         "description": "List tables with downstream dependencies but no quality rules.",
         "schema": {"type": "object", "properties": {"layer": {"type": "string"}, "domain": {"type": "string"}, "limit": {"type": "integer"}}},
     },
+    "get_expert_label": {
+        "description": "Return expert label for one asset.",
+        "schema": {"type": "object", "properties": {"asset_type": {"type": "string"}, "asset_name": {"type": "string"}}, "required": ["asset_name"]},
+    },
+    "list_expert_review_queue": {
+        "description": "List high-impact tables that need expert labeling.",
+        "schema": {"type": "object", "properties": {"layer": {"type": "string"}, "limit": {"type": "integer"}}},
+    },
     "list_metadata": {
         "description": "List imported databases and table metadata.",
         "schema": {"type": "object", "properties": {}},
@@ -164,6 +172,10 @@ def _call_tool(store, request, live=None):
             data = store.get_table_risk_profile(args["table_name"])
     elif name == "list_quality_gaps":
         data = store.list_quality_gaps(args.get("layer", ""), args.get("domain", ""), args.get("limit", 50))
+    elif name == "get_expert_label":
+        data = store.get_expert_label(args.get("asset_type", "table"), args["asset_name"])
+    elif name == "list_expert_review_queue":
+        data = store.list_expert_review_queue(args.get("layer", ""), args.get("limit", 50))
     elif name == "list_metadata":
         data = store.list_metadata()
     else:
@@ -215,6 +227,7 @@ def _format_markdown(tool_name, data):
                         f"建议：{'; '.join(data.get('suggestions') or [])}",
                     ],
                 ),
+                _format_expert_label(data.get("expert_label")),
                 _table(
                     ["TaskId", "任务名", "实例日期", "开始时间", "结束时间", "耗时秒", "状态"],
                     [[r.get("task_id"), r.get("task_name"), r.get("instance_date"), r.get("start_time"), r.get("end_time"), r.get("duration_seconds"), r.get("status")] for r in data.get("latest_runs", [])],
@@ -224,6 +237,14 @@ def _format_markdown(tool_name, data):
     if tool_name == "list_quality_gaps":
         rows = data.get("results", [])
         return _section("质量监控缺口", [f"层级：`{_cell(data.get('layer'))}`", f"领域：`{_cell(data.get('domain'))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
+            ["表名", "层级", "领域", "负责人", "下游依赖数", "质量规则数"],
+            [[r.get("name"), r.get("layer"), r.get("domain"), r.get("owner"), r.get("downstream_count"), r.get("quality_rule_count")] for r in rows],
+        )
+    if tool_name == "get_expert_label":
+        return _format_expert_label(data)
+    if tool_name == "list_expert_review_queue":
+        rows = data.get("results", [])
+        return _section("专家评审队列", [f"层级：`{_cell(data.get('layer'))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
             ["表名", "层级", "领域", "负责人", "下游依赖数", "质量规则数"],
             [[r.get("name"), r.get("layer"), r.get("domain"), r.get("owner"), r.get("downstream_count"), r.get("quality_rule_count")] for r in rows],
         )
@@ -270,6 +291,7 @@ def _format_markdown(tool_name, data):
                         f"核心表：**{core.get('is_core')}**，分数：**{core.get('score')}**，原因：{', '.join(core.get('reasons') or [])}",
                     ],
                 ),
+                _format_expert_label(data.get("expert_label") or {"error": "expert_label_not_found"}),
                 _format_markdown("list_table_columns", {"table_name": table.get("name"), "columns": data.get("columns", [])}),
                 _format_markdown("get_table_lineage", data.get("lineage", {})),
                 _format_markdown("get_quality_status", {"table_name": table.get("name"), "has_quality_monitoring": bool(data.get("quality", {}).get("rule_count")), **data.get("quality", {})}),
@@ -284,6 +306,25 @@ def _format_markdown(tool_name, data):
 def _section(title, lines):
     body = "\n".join(f"- {line}" for line in lines if line)
     return f"**{title}**" + (f"\n\n{body}" if body else "")
+
+
+def _format_expert_label(label):
+    if not label or label.get("error"):
+        return "**专家标注**\n\n_暂无专家标注_"
+    return _section(
+        "专家标注",
+        [
+            f"资产：`{_cell(label.get('asset_type'))}` / **{_cell(label.get('asset_name'))}**",
+            f"核心等级：`{_cell(label.get('core_level'))}`",
+            f"价值分层：`{_cell(label.get('value_tier'))}`",
+            f"分类：`{_cell(label.get('domain'))}`",
+            f"使用场景：{_cell(label.get('use_case'))}",
+            f"指标口径：{_cell(label.get('metric_definition'))}",
+            f"Owner：`{_cell(label.get('owner'))}`，Reviewer：`{_cell(label.get('reviewer'))}`",
+            f"原因：{_cell(label.get('reason'))}",
+            f"更新时间：`{_cell(label.get('updated_at'))}`",
+        ],
+    )
 
 
 def _table(headers, rows):
