@@ -10,14 +10,14 @@ if (process.argv[2] === "install-codex") {
   process.exit(0);
 }
 
-const host = process.env.DLC_AGENT_SSH_HOST || "data-agent-host";
-const remoteDir = process.env.DLC_AGENT_REMOTE_DIR || "/opt/dlc-agent";
-const db = process.env.DLC_AGENT_DB || "/data/dlc-agent/assets.db";
-const python = process.env.DLC_AGENT_PYTHON || "python3";
+const host = process.env.DLC_MCP_SSH_HOST || "data-agent-host";
+const remoteDir = process.env.DLC_MCP_REMOTE_DIR || "/opt/dlc-mcp";
+const db = process.env.DLC_MCP_DB || "/data/dlc-mcp/assets.db";
+const python = process.env.DLC_MCP_PYTHON || "python3";
 
 const child = host
-  ? spawn("ssh", [host, `cd ${remoteDir} && DLC_AGENT_DB=${db} ${python} -m dlc_agent.server`], { stdio: "inherit" })
-  : spawn(python, ["-m", "dlc_agent.server"], {
+  ? spawn("ssh", [host, `cd ${remoteDir} && DLC_MCP_DB=${db} ${python} -m dlc_mcp.server`], { stdio: "inherit" })
+  : spawn(python, ["-m", "dlc_mcp.server"], {
       cwd: path.resolve(__dirname, ".."),
       env: process.env,
       stdio: "inherit",
@@ -35,22 +35,22 @@ function installCodex() {
   const current = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf8") : "";
   const next = replaceBlock(current, codexBlock()).trimEnd() + "\n";
   fs.writeFileSync(configPath, next);
-  console.log(`Installed dlc-agent MCP in ${configPath}`);
+  console.log(`Installed dlc-mcp MCP in ${configPath}`);
 }
 
 function codexBlock() {
-  return `[mcp_servers.dlc-agent]
+  return `[mcp_servers.dlc-mcp]
 command = "npx"
-args = ["-y", "@baiying/dlc-agent-mcp"]
+args = ["-y", "@baiying/dlc-mcp"]
 type = "stdio"
 `;
 }
 
 function replaceBlock(text, block) {
-  const start = text.indexOf("[mcp_servers.dlc-agent]");
+  const start = text.indexOf("[mcp_servers.dlc-mcp]");
   if (start === -1) return `${text.trimEnd()}\n\n${block}`;
-  const rest = text.slice(start + "[mcp_servers.dlc-agent]".length);
+  const rest = text.slice(start + "[mcp_servers.dlc-mcp]".length);
   const nextHeader = rest.search(/\n\[[^\]]+\]/);
-  const end = nextHeader === -1 ? text.length : start + "[mcp_servers.dlc-agent]".length + nextHeader + 1;
+  const end = nextHeader === -1 ? text.length : start + "[mcp_servers.dlc-mcp]".length + nextHeader + 1;
   return `${text.slice(0, start).trimEnd()}\n\n${block}\n${text.slice(end).trimStart()}`.trimEnd() + "\n";
 }

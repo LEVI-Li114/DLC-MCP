@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from dlc_agent.tencentcloud import TencentCloudClient
+from dlc_mcp.tencentcloud import TencentCloudClient
 
 
 class FakeOpener:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_FILE="${1:-/etc/dlc-agent/env}"
+ENV_FILE="${1:-/etc/dlc-mcp/env}"
 if [ ! -f "$ENV_FILE" ]; then
   echo "missing env file: $ENV_FILE" >&2
   exit 1
@@ -12,16 +12,16 @@ set -a
 set +a
 
 : "${WEDATA_PROJECT_ID:?missing WEDATA_PROJECT_ID}"
-: "${DLC_AGENT_DB:=/data/dlc-agent/assets.db}"
+: "${DLC_MCP_DB:=/data/dlc-mcp/assets.db}"
 
-WORK_DIR="${DLC_AGENT_SYNC_DIR:-/data/dlc-agent/sync}"
+WORK_DIR="${DLC_MCP_SYNC_DIR:-/data/dlc-mcp/sync}"
 mkdir -p "$WORK_DIR"
 
-PYTHON_BIN="${DLC_AGENT_PYTHON:-python3}"
+PYTHON_BIN="${DLC_MCP_PYTHON:-python3}"
 
-"$PYTHON_BIN" -m dlc_agent.sync_wedata
+"$PYTHON_BIN" -m dlc_mcp.sync_wedata
 
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-  | DLC_AGENT_DB="$DLC_AGENT_DB" "$PYTHON_BIN" -m dlc_agent.server >/dev/null
+  | DLC_MCP_DB="$DLC_MCP_DB" "$PYTHON_BIN" -m dlc_mcp.server >/dev/null
 
 echo "MCP smoke test passed"

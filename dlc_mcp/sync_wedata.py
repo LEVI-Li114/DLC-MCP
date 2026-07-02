@@ -10,8 +10,8 @@ from .wedata import import_wedata_snapshot, snapshot_from_api_dump
 
 def main():
     project_id = os.environ["WEDATA_PROJECT_ID"]
-    db_path = os.environ.get("DLC_AGENT_DB", "/data/dlc-agent/assets.db")
-    work_dir = os.environ.get("DLC_AGENT_SYNC_DIR", "/data/dlc-agent/sync")
+    db_path = os.environ.get("DLC_MCP_DB", "/data/dlc-mcp/assets.db")
+    work_dir = os.environ.get("DLC_MCP_SYNC_DIR", "/data/dlc-mcp/sync")
     page_size = int(os.environ.get("WEDATA_PAGE_SIZE", "100"))
 
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)

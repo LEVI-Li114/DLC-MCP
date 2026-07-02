@@ -1,7 +1,7 @@
 import sqlite3
 import unittest
 
-from dlc_agent.assets import AssetStore
+from dlc_mcp.assets import AssetStore
 
 
 def make_store():

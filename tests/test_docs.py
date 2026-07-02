@@ -1,6 +1,6 @@
 import unittest
 
-from dlc_agent.mcp import TOOLS
+from dlc_mcp.mcp import TOOLS
 
 
 class DocsTest(unittest.TestCase):

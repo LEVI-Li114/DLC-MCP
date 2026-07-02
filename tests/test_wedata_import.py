@@ -1,8 +1,8 @@
 import sqlite3
 import unittest
 
-from dlc_agent.assets import AssetStore
-from dlc_agent.wedata import import_wedata_snapshot, snapshot_from_api_dump
+from dlc_mcp.assets import AssetStore
+from dlc_mcp.wedata import import_wedata_snapshot, snapshot_from_api_dump
 
 
 class WeDataImportTest(unittest.TestCase):

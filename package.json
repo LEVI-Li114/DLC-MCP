@@ -1,14 +1,14 @@
 {
-  "name": "@baiying/dlc-agent-mcp",
+  "name": "@baiying/dlc-mcp",
   "version": "0.1.0",
   "private": true,
   "description": "WeData-first data asset MCP server launcher.",
   "bin": {
-    "dlc-agent-mcp": "bin/dlc-agent-mcp.js"
+    "dlc-mcp": "bin/dlc-mcp.js"
   },
   "files": [
     "bin",
-    "dlc_agent/*.py",
+    "dlc_mcp/*.py",
     "docs/*.md",
     "README.md"
   ],

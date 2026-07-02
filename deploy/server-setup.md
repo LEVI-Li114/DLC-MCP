@@ -5,17 +5,17 @@ For the full end-to-end MCP + real WeData flow, see `docs/server-mcp-wedata-flow
 Target layout:
 
 ```text
-/opt/dlc-agent
-/data/dlc-agent/assets.db
-/etc/dlc-agent/env
+/opt/dlc-mcp
+/data/dlc-mcp/assets.db
+/etc/dlc-mcp/env
 ```
 
 ## 1. Install code
 
 ```bash
-sudo mkdir -p /opt/dlc-agent /data/dlc-agent /etc/dlc-agent
-sudo chown -R "$USER":"$USER" /opt/dlc-agent /data/dlc-agent
-cd /opt/dlc-agent
+sudo mkdir -p /opt/dlc-mcp /data/dlc-mcp /etc/dlc-mcp
+sudo chown -R "$USER":"$USER" /opt/dlc-mcp /data/dlc-mcp
+cd /opt/dlc-mcp
 git clone <your-repo-url> .
 python3 -m unittest discover -s tests -v
 ```
@@ -27,9 +27,9 @@ Create a dedicated Tencent Cloud CAM sub-account for this service. Give it read-
 Put the keys on the server only:
 
 ```bash
-sudo cp /opt/dlc-agent/deploy/env.example /etc/dlc-agent/env
-sudo chmod 600 /etc/dlc-agent/env
-sudo vi /etc/dlc-agent/env
+sudo cp /opt/dlc-mcp/deploy/env.example /etc/dlc-mcp/env
+sudo chmod 600 /etc/dlc-mcp/env
+sudo vi /etc/dlc-mcp/env
 ```
 
 Fill these values:
@@ -40,7 +40,7 @@ TENCENTCLOUD_SECRET_KEY=your-secret-key
 TENCENTCLOUD_REGION=ap-guangzhou
 WEDATA_VERSION=2025-08-06
 WEDATA_PROJECT_ID=your-wedata-project-id
-DLC_AGENT_DB=/data/dlc-agent/assets.db
+DLC_MCP_DB=/data/dlc-mcp/assets.db
 ```
 
 Do not put Tencent Cloud keys in git, npm, user Codex config, or user laptops.
@@ -50,30 +50,30 @@ Do not put Tencent Cloud keys in git, npm, user Codex config, or user laptops.
 Demo data:
 
 ```bash
-python3 -m dlc_agent.seed
-cp data/assets.db /data/dlc-agent/assets.db
+python3 -m dlc_mcp.seed
+cp data/assets.db /data/dlc-mcp/assets.db
 ```
 
 Live WeData smoke test:
 
 ```bash
 set -a
-. /etc/dlc-agent/env
+. /etc/dlc-mcp/env
 set +a
-python3 -m dlc_agent.call_wedata_api ListTasks "{\"ProjectId\":\"$WEDATA_PROJECT_ID\"}"
+python3 -m dlc_mcp.call_wedata_api ListTasks "{\"ProjectId\":\"$WEDATA_PROJECT_ID\"}"
 ```
 
-One-shot sync for the implemented task dump. This fetches all `ListTasks` pages, writes the raw dump to `/data/dlc-agent/sync/wedata_tasks.json`, imports it into SQLite, and runs a small MCP smoke test:
+One-shot sync for the implemented task dump. This fetches all `ListTasks` pages, writes the raw dump to `/data/dlc-mcp/sync/wedata_tasks.json`, imports it into SQLite, and runs a small MCP smoke test:
 
 ```bash
-cd /opt/dlc-agent
+cd /opt/dlc-mcp
 bash deploy/sync-wedata-once.sh
 ```
 
 To sync task instance start/end/duration after `ListTaskInstances` works in your tenant, set:
 
 ```bash
-sudo vi /etc/dlc-agent/env
+sudo vi /etc/dlc-mcp/env
 ```
 
 ```bash
@@ -82,29 +82,29 @@ WEDATA_INSTANCE_START=2026-07-01 00:00:00
 WEDATA_INSTANCE_END=2026-07-01 23:59:59
 ```
 
-If your repo lives under `/opt/dlc-agent/DLC-Agent`, run:
+If your repo lives under `/opt/dlc-mcp/DLC-MCP`, run:
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 bash deploy/sync-wedata-once.sh
 ```
 
 Import saved Tencent Cloud API responses:
 
 ```bash
-python3 -m dlc_agent.import_wedata_api_dump \
-  --tables /data/dlc-agent/wedata_tables.json \
-  --tasks /data/dlc-agent/wedata_tasks.json \
-  --quality-rules /data/dlc-agent/wedata_quality_rules.json \
-  --db /data/dlc-agent/assets.db
+python3 -m dlc_mcp.import_wedata_api_dump \
+  --tables /data/dlc-mcp/wedata_tables.json \
+  --tasks /data/dlc-mcp/wedata_tasks.json \
+  --quality-rules /data/dlc-mcp/wedata_quality_rules.json \
+  --db /data/dlc-mcp/assets.db
 ```
 
 ## 4. Smoke test local MCP on server
 
 ```bash
-cd /opt/dlc-agent
+cd /opt/dlc-mcp
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-  | DLC_AGENT_DB=/data/dlc-agent/assets.db python3 -m dlc_agent.server
+  | DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server
 ```
 
 ## 5. Smoke test MCP over SSH
@@ -113,7 +113,7 @@ Run from a user laptop that has SSH access:
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-  | ssh data-agent-host 'cd /opt/dlc-agent && DLC_AGENT_DB=/data/dlc-agent/assets.db python3 -m dlc_agent.server'
+  | ssh data-agent-host 'cd /opt/dlc-mcp && DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server'
 ```
 
 ## 6. User install
@@ -121,18 +121,18 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
 After the npm package is published:
 
 ```bash
-npx -y @baiying/dlc-agent-mcp install-codex
+npx -y @baiying/dlc-mcp install-codex
 ```
 
 Restart Codex, then ask:
 
 ```text
-用 dlc-agent 查一下 ads_customer_revenue_daily 是不是核心表，有哪些字段，有没有质量监控
+用 dlc-mcp 查一下 ads_customer_revenue_daily 是不是核心表，有哪些字段，有没有质量监控
 ```
 
 After task sync, test task search:
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_tasks","arguments":{"query":"test"}}}' \
-  | DLC_AGENT_DB=/data/dlc-agent/assets.db python3 -m dlc_agent.server
+  | DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server
 ```

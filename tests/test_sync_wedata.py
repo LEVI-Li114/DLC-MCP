@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-from dlc_agent.sync_wedata import _instance_window
+from dlc_mcp.sync_wedata import _instance_window
 
 
 class SyncWeDataTest(unittest.TestCase):

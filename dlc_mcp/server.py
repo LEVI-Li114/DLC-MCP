@@ -8,7 +8,7 @@ from .mcp import handle_request
 
 
 def main():
-    db_path = os.environ.get("DLC_AGENT_DB", "data/assets.db")
+    db_path = os.environ.get("DLC_MCP_DB", "data/assets.db")
     db_dir = os.path.dirname(db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)

@@ -10,7 +10,7 @@ class DeployScriptsTest(unittest.TestCase):
         script = (ROOT / "deploy" / "install-sync-cron.sh").read_text()
 
         self.assertIn("0 */6 * * *", script)
-        self.assertIn("dlc-agent-wedata-sync", script)
+        self.assertIn("dlc-mcp-wedata-sync", script)
         self.assertIn("deploy/sync-wedata-once.sh", script)
-        self.assertIn("DLC_AGENT_REPO_DIR", script)
-        self.assertIn("DLC_AGENT_LOG_DIR", script)
+        self.assertIn("DLC_MCP_REPO_DIR", script)
+        self.assertIn("DLC_MCP_LOG_DIR", script)

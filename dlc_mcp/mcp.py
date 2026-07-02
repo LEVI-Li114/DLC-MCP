@@ -64,7 +64,7 @@ TOOLS = {
 def handle_request(store, request):
     method = request.get("method")
     if method == "initialize":
-        return _result(request, {"protocolVersion": "2024-11-05", "serverInfo": {"name": "dlc-agent", "version": "0.1.0"}, "capabilities": {"tools": {}}})
+        return _result(request, {"protocolVersion": "2024-11-05", "serverInfo": {"name": "dlc-mcp", "version": "0.1.0"}, "capabilities": {"tools": {}}})
     if method == "tools/list":
         tools = [
             {

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="${DLC_AGENT_REPO_DIR:-$(pwd)}"
-ENV_FILE="${DLC_AGENT_ENV_FILE:-/etc/dlc-agent/env}"
-LOG_DIR="${DLC_AGENT_LOG_DIR:-/data/dlc-agent/logs}"
-CRON_TAG="# dlc-agent-wedata-sync"
+REPO_DIR="${DLC_MCP_REPO_DIR:-$(pwd)}"
+ENV_FILE="${DLC_MCP_ENV_FILE:-/etc/dlc-mcp/env}"
+LOG_DIR="${DLC_MCP_LOG_DIR:-/data/dlc-mcp/logs}"
+CRON_TAG="# dlc-mcp-wedata-sync"
 
 if [ ! -f "$REPO_DIR/deploy/sync-wedata-once.sh" ]; then
   echo "missing sync script: $REPO_DIR/deploy/sync-wedata-once.sh" >&2
-  echo "run this from the DLC-Agent repo, or set DLC_AGENT_REPO_DIR" >&2
+  echo "run this from the DLC-MCP repo, or set DLC_MCP_REPO_DIR" >&2
   exit 1
 fi
 
@@ -31,5 +31,5 @@ echo "installed crontab:"
 echo "$CRON_LINE"
 echo
 echo "check it with:"
-echo "  crontab -l | grep dlc-agent-wedata-sync"
+echo "  crontab -l | grep dlc-mcp-wedata-sync"
 echo "  tail -f $LOG_DIR/sync.log"

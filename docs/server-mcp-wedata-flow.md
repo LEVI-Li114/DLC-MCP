@@ -5,10 +5,10 @@ This document is the end-to-end runbook for running the MCP service on a server 
 ## Target Layout
 
 ```text
-/opt/dlc-agent/DLC-Agent       repo checkout
-/data/dlc-agent/assets.db      SQLite asset database used by MCP
-/data/dlc-agent/sync/          raw WeData JSON dumps
-/etc/dlc-agent/env             server-only Tencent Cloud credentials and sync config
+/opt/dlc-mcp/DLC-MCP       repo checkout
+/data/dlc-mcp/assets.db      SQLite asset database used by MCP
+/data/dlc-mcp/sync/          raw WeData JSON dumps
+/etc/dlc-mcp/env             server-only Tencent Cloud credentials and sync config
 ```
 
 Tencent Cloud AK/SK must stay on the server. Do not put them in GitHub, npm, Codex config, or user laptops.
@@ -16,12 +16,12 @@ Tencent Cloud AK/SK must stay on the server. Do not put them in GitHub, npm, Cod
 ## 1. Install Code On Server
 
 ```bash
-sudo mkdir -p /opt/dlc-agent /data/dlc-agent /etc/dlc-agent
-sudo chown -R "$USER":"$USER" /opt/dlc-agent /data/dlc-agent
+sudo mkdir -p /opt/dlc-mcp /data/dlc-mcp /etc/dlc-mcp
+sudo chown -R "$USER":"$USER" /opt/dlc-mcp /data/dlc-mcp
 
-cd /opt/dlc-agent
-git clone https://github.com/LEVI-Li114/DLC-Agent.git
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp
+git clone https://github.com/LEVI-Li114/DLC-MCP.git
+cd /opt/dlc-mcp/DLC-MCP
 
 python3 -m unittest discover -s tests -v
 ```
@@ -29,9 +29,9 @@ python3 -m unittest discover -s tests -v
 ## 2. Configure WeData Credentials
 
 ```bash
-sudo cp /opt/dlc-agent/DLC-Agent/deploy/env.example /etc/dlc-agent/env
-sudo chmod 600 /etc/dlc-agent/env
-sudo vi /etc/dlc-agent/env
+sudo cp /opt/dlc-mcp/DLC-MCP/deploy/env.example /etc/dlc-mcp/env
+sudo chmod 600 /etc/dlc-mcp/env
+sudo vi /etc/dlc-mcp/env
 ```
 
 Fill in real values:
@@ -42,7 +42,7 @@ TENCENTCLOUD_SECRET_KEY=your-secret-key
 TENCENTCLOUD_REGION=ap-guangzhou
 WEDATA_VERSION=2025-08-06
 WEDATA_PROJECT_ID=2881307738992685056
-DLC_AGENT_DB=/data/dlc-agent/assets.db
+DLC_MCP_DB=/data/dlc-mcp/assets.db
 WEDATA_SYNC_METADATA=0
 WEDATA_METADATA_TABLE_LIMIT=50
 WEDATA_METADATA_TABLES=
@@ -59,13 +59,13 @@ Use the numeric WeData project id, not the project name.
 ## 3. Verify WeData API Access
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 
 set -a
-. /etc/dlc-agent/env
+. /etc/dlc-mcp/env
 set +a
 
-python3 -m dlc_agent.call_wedata_api ListTasks "{\"ProjectId\":\"$WEDATA_PROJECT_ID\",\"PageNumber\":1,\"PageSize\":10}"
+python3 -m dlc_mcp.call_wedata_api ListTasks "{\"ProjectId\":\"$WEDATA_PROJECT_ID\",\"PageNumber\":1,\"PageSize\":10}"
 ```
 
 Success means the response contains `Response.Data.Items`.
@@ -73,24 +73,24 @@ Success means the response contains `Response.Data.Items`.
 ## 4. Sync Real WeData Tasks Into MCP Database
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 bash deploy/sync-wedata-once.sh
 ```
 
 The script:
 
-- loads `/etc/dlc-agent/env`
+- loads `/etc/dlc-mcp/env`
 - calls `ListTasks` with pagination
 - optionally calls `ListTable`, `GetTableColumns`, `ListLineage`, and `ListQualityRules`
-- saves the raw task dump to `/data/dlc-agent/sync/wedata_tasks.json`
-- imports tasks into `/data/dlc-agent/assets.db`
+- saves the raw task dump to `/data/dlc-mcp/sync/wedata_tasks.json`
+- imports tasks into `/data/dlc-mcp/assets.db`
 - runs a small MCP smoke test
 
 Expected output:
 
 ```text
-synced 2415 WeData tasks into /data/dlc-agent/assets.db
-saved raw task dump to /data/dlc-agent/sync/wedata_tasks.json
+synced 2415 WeData tasks into /data/dlc-mcp/assets.db
+saved raw task dump to /data/dlc-mcp/sync/wedata_tasks.json
 MCP smoke test passed
 ```
 
@@ -99,7 +99,7 @@ MCP smoke test passed
 Enable this when you want real fields, downstream lineage, and quality rules:
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 WEDATA_SYNC_METADATA=1 WEDATA_METADATA_TABLE_LIMIT=50 bash deploy/sync-wedata-once.sh
 ```
 
@@ -123,7 +123,7 @@ The metadata table limit keeps the sync small enough for manual runs. Increase i
 After `ListTaskInstances` works for your tenant, enable run-instance sync:
 
 ```bash
-sudo vi /etc/dlc-agent/env
+sudo vi /etc/dlc-mcp/env
 ```
 
 ```bash
@@ -138,7 +138,7 @@ WEDATA_INSTANCE_END=2026-07-01 23:59:59
 Then rerun:
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 bash deploy/sync-wedata-once.sh
 ```
 
@@ -153,24 +153,24 @@ Use `WEDATA_INSTANCE_KEYWORDS` to limit instance sync to task names or task ids.
 List tools:
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-  | DLC_AGENT_DB=/data/dlc-agent/assets.db python3 -m dlc_agent.server
+  | DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server
 ```
 
 Search real synced tasks:
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_tasks","arguments":{"query":"dws_360_fin_job_seat_1d_di"}}}' \
-  | DLC_AGENT_DB=/data/dlc-agent/assets.db python3 -m dlc_agent.server
+  | DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server
 ```
 
 Get task runs:
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_task_runs","arguments":{"task_id":"20250808125438221","limit":5}}}' \
-  | DLC_AGENT_DB=/data/dlc-agent/assets.db python3 -m dlc_agent.server
+  | DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server
 ```
 
 ## 8. Smoke Test MCP From A User Laptop
@@ -179,7 +179,7 @@ The user laptop must be able to SSH to the server.
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-  | ssh data-agent-host 'cd /opt/dlc-agent/DLC-Agent && DLC_AGENT_DB=/data/dlc-agent/assets.db python3 -m dlc_agent.server'
+  | ssh data-agent-host 'cd /opt/dlc-mcp/DLC-MCP && DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server'
 ```
 
 If this returns MCP tools, Codex can use the server.
@@ -189,22 +189,22 @@ If this returns MCP tools, Codex can use the server.
 Before the npm package is published, add this to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.dlc-agent]
+[mcp_servers.dlc-mcp]
 command = "ssh"
-args = ["data-agent-host", "cd /opt/dlc-agent/DLC-Agent && DLC_AGENT_DB=/data/dlc-agent/assets.db python3 -m dlc_agent.server"]
+args = ["data-agent-host", "cd /opt/dlc-mcp/DLC-MCP && DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server"]
 type = "stdio"
 ```
 
 After the npm package is published, users can run:
 
 ```bash
-npx -y @baiying/dlc-agent-mcp install-codex
+npx -y @baiying/dlc-mcp install-codex
 ```
 
 Restart Codex, then ask:
 
 ```text
-用 dlc-agent 搜索任务 dws_360_fin_job_seat_1d_di
+用 dlc-mcp 搜索任务 dws_360_fin_job_seat_1d_di
 ```
 
 ## 10. Current Supported Real Data
@@ -224,7 +224,7 @@ Restart Codex, then ask:
 Run whenever you want to refresh data:
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 git pull
 bash deploy/sync-wedata-once.sh
 ```
@@ -232,28 +232,28 @@ bash deploy/sync-wedata-once.sh
 Install automatic refresh every 6 hours:
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 bash deploy/install-sync-cron.sh
 ```
 
 The installer writes one idempotent crontab entry:
 
 ```cron
-0 */6 * * * cd /opt/dlc-agent/DLC-Agent && bash deploy/sync-wedata-once.sh /etc/dlc-agent/env >> /data/dlc-agent/logs/sync.log 2>&1 # dlc-agent-wedata-sync
+0 */6 * * * cd /opt/dlc-mcp/DLC-MCP && bash deploy/sync-wedata-once.sh /etc/dlc-mcp/env >> /data/dlc-mcp/logs/sync.log 2>&1 # dlc-mcp-wedata-sync
 ```
 
 Verify the schedule and logs:
 
 ```bash
-crontab -l | grep dlc-agent-wedata-sync
-tail -f /data/dlc-agent/logs/sync.log
+crontab -l | grep dlc-mcp-wedata-sync
+tail -f /data/dlc-mcp/logs/sync.log
 ```
 
-If `/data/dlc-agent/logs` has no write permission:
+If `/data/dlc-mcp/logs` has no write permission:
 
 ```bash
-sudo mkdir -p /data/dlc-agent/logs
-sudo chown -R "$USER":"$USER" /data/dlc-agent/logs
+sudo mkdir -p /data/dlc-mcp/logs
+sudo chown -R "$USER":"$USER" /data/dlc-mcp/logs
 ```
 
 After this, if WeData adds a new task, wait up to 6 hours or run `bash deploy/sync-wedata-once.sh` manually, then ask MCP through `search_tasks(query)`.

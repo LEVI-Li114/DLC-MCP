@@ -1,8 +1,8 @@
 import sqlite3
 import unittest
 
-from dlc_agent.assets import AssetStore
-from dlc_agent.mcp import handle_request
+from dlc_mcp.assets import AssetStore
+from dlc_mcp.mcp import handle_request
 
 
 class McpTest(unittest.TestCase):

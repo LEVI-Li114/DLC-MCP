@@ -1,4 +1,4 @@
-# DLC Agent
+# DLC-MCP
 
 WeData-first data asset MCP server. User-facing MCP mode is read-only and does not require Tencent Cloud keys.
 
@@ -9,52 +9,52 @@ Use this mode for Codex/Cursor/Claude Desktop users. The MCP server only reads t
 Recommended shared Codex config through npm + SSH:
 
 ```bash
-npx -y @baiying/dlc-agent-mcp install-codex
+npx -y @baiying/dlc-mcp install-codex
 ```
 
 The installer writes this block to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.dlc-agent]
+[mcp_servers.dlc-mcp]
 command = "npx"
-args = ["-y", "@baiying/dlc-agent-mcp"]
+args = ["-y", "@baiying/dlc-mcp"]
 type = "stdio"
 ```
 
 This is the cleanest team setup: users only add the MCP command. The npm launcher defaults to:
 
 - SSH host: `data-agent-host`
-- remote dir: `/opt/dlc-agent`
-- asset DB: `/data/dlc-agent/assets.db`
+- remote dir: `/opt/dlc-mcp`
+- asset DB: `/data/dlc-mcp/assets.db`
 
 If your server path is different, override with env:
 
 ```toml
-[mcp_servers.dlc-agent.env]
-DLC_AGENT_SSH_HOST = "data-agent-host"
-DLC_AGENT_REMOTE_DIR = "/opt/dlc-agent"
-DLC_AGENT_DB = "/data/dlc-agent/assets.db"
+[mcp_servers.dlc-mcp.env]
+DLC_MCP_SSH_HOST = "data-agent-host"
+DLC_MCP_REMOTE_DIR = "/opt/dlc-mcp"
+DLC_MCP_DB = "/data/dlc-mcp/assets.db"
 ```
 
 Local Codex config without npm:
 
 ```toml
-[mcp_servers.dlc-agent]
+[mcp_servers.dlc-mcp]
 command = "python3"
-args = ["-m", "dlc_agent.server"]
-cwd = "/Users/leve/Documents/DLC-Agent"
+args = ["-m", "dlc_mcp.server"]
+cwd = "/Users/leve/Documents/DLC-MCP"
 type = "stdio"
 
-[mcp_servers.dlc-agent.env]
-DLC_AGENT_DB = "/Users/leve/Documents/DLC-Agent/data/assets.db"
+[mcp_servers.dlc-mcp.env]
+DLC_MCP_DB = "/Users/leve/Documents/DLC-MCP/data/assets.db"
 ```
 
 Shared Codex config without npm:
 
 ```toml
-[mcp_servers.dlc-agent]
+[mcp_servers.dlc-mcp]
 command = "ssh"
-args = ["data-agent-host", "cd /opt/dlc-agent && DLC_AGENT_DB=/data/dlc-agent/assets.db python3 -m dlc_agent.server"]
+args = ["data-agent-host", "cd /opt/dlc-mcp && DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server"]
 type = "stdio"
 ```
 
@@ -70,8 +70,8 @@ Ask Codex:
 ## Local Demo
 
 ```bash
-python3 -m dlc_agent.seed
-DLC_AGENT_DB=data/assets.db python3 -m dlc_agent.server
+python3 -m dlc_mcp.seed
+DLC_MCP_DB=data/assets.db python3 -m dlc_mcp.server
 ```
 
 ## Server Sync Mode
@@ -82,13 +82,13 @@ Run this only on the trusted sync server.
 export TENCENTCLOUD_SECRET_ID=...
 export TENCENTCLOUD_SECRET_KEY=...
 export TENCENTCLOUD_REGION=ap-guangzhou
-python3 -m dlc_agent.call_wedata_api ListTasks '{"ProjectId":"your-project-id"}'
+python3 -m dlc_mcp.call_wedata_api ListTasks '{"ProjectId":"your-project-id"}'
 ```
 
 Import saved Tencent Cloud API responses:
 
 ```bash
-python3 -m dlc_agent.import_wedata_api_dump \
+python3 -m dlc_mcp.import_wedata_api_dump \
   --tables data/wedata_tables.json \
   --tasks data/wedata_tasks.json \
   --quality-rules data/wedata_quality_rules.json \
@@ -98,7 +98,7 @@ python3 -m dlc_agent.import_wedata_api_dump \
 Import a hand-written WeData snapshot:
 
 ```bash
-python3 -m dlc_agent.import_wedata_snapshot examples/wedata_snapshot.json --db data/assets.db
+python3 -m dlc_mcp.import_wedata_snapshot examples/wedata_snapshot.json --db data/assets.db
 ```
 
 ## MCP Tools
@@ -157,7 +157,7 @@ Core table scoring is documented in [docs/core-table-model.md](docs/core-table-m
 After `ListTasks` works, sync task metadata into the MCP asset DB:
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 bash deploy/sync-wedata-once.sh
 ```
 
@@ -182,6 +182,6 @@ WEDATA_SYNC_INSTANCES=1 WEDATA_INSTANCE_LOOKBACK_DAYS=2 WEDATA_INSTANCE_KEYWORDS
 Install a server crontab to sync every 6 hours:
 
 ```bash
-cd /opt/dlc-agent/DLC-Agent
+cd /opt/dlc-mcp/DLC-MCP
 bash deploy/install-sync-cron.sh
 ```

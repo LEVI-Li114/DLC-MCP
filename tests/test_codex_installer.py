@@ -15,9 +15,9 @@ class CodexInstallerTest(unittest.TestCase):
             self.run_installer(home)
 
             text = config.read_text(encoding="utf-8")
-            self.assertEqual(text.count("[mcp_servers.dlc-agent]"), 1)
+            self.assertEqual(text.count("[mcp_servers.dlc-mcp]"), 1)
             self.assertIn('command = "npx"', text)
-            self.assertIn('args = ["-y", "@baiying/dlc-agent-mcp"]', text)
+            self.assertIn('args = ["-y", "@baiying/dlc-mcp"]', text)
             self.assertIn('type = "stdio"', text)
 
     def test_install_codex_replaces_existing_block(self):
@@ -26,7 +26,7 @@ class CodexInstallerTest(unittest.TestCase):
             config = home / ".codex" / "config.toml"
             config.parent.mkdir()
             config.write_text(
-                '[mcp_servers.dlc-agent]\ncommand = "old"\n\n[mcp_servers.other]\ncommand = "ok"\n',
+                '[mcp_servers.dlc-mcp]\ncommand = "old"\n\n[mcp_servers.other]\ncommand = "ok"\n',
                 encoding="utf-8",
             )
 
@@ -35,11 +35,11 @@ class CodexInstallerTest(unittest.TestCase):
             text = config.read_text(encoding="utf-8")
             self.assertNotIn('command = "old"', text)
             self.assertIn("[mcp_servers.other]", text)
-            self.assertEqual(text.count("[mcp_servers.dlc-agent]"), 1)
+            self.assertEqual(text.count("[mcp_servers.dlc-mcp]"), 1)
 
     def run_installer(self, home):
         result = subprocess.run(
-            ["node", "bin/dlc-agent-mcp.js", "install-codex"],
+            ["node", "bin/dlc-mcp.js", "install-codex"],
             cwd=Path(__file__).resolve().parents[1],
             env={**os.environ, "HOME": str(home)},
             text=True,
