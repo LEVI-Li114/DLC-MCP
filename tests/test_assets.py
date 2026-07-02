@@ -26,6 +26,7 @@ def make_store():
     store.upsert_column("dws_customer_revenue_1d_di", "customer_id", "string", "Customer ID", 1)
     store.upsert_column("dws_customer_revenue_1d_di", "revenue_amount", "decimal(18,2)", "Revenue amount", 2)
     store.upsert_column("dws_customer_revenue_1d_di", "pay_count", "bigint", "Pay count", 3)
+    store.upsert_column("dws_customer_revenue_1d_di", "bill_date", "string", "Bill date", 4)
     store.upsert_lineage("dws_customer_revenue_1d_di", "ads_customer_revenue_daily", "task_ads_revenue_daily")
     store.upsert_lineage("ods_order", "ads_customer_revenue_daily", "task_revenue_daily")
     store.upsert_lineage("ads_customer_revenue_daily", "bi_finance_dashboard", "bi_report")

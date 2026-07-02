@@ -822,8 +822,8 @@ def _metric_field(column):
 def _metric_field_type(name):
     name = name.lower()
     checks = [
-        ("金额类", ("amount", "amt", "cost", "fee", "price", "income", "revenue", "bill")),
         ("数量类", ("num", "cnt", "count", "total", "times", "qty")),
+        ("金额类", ("amount", "amt", "cost", "fee", "price", "income", "revenue")),
         ("比率类", ("rate", "ratio", "percent", "pct")),
         ("时长/均值类", ("duration", "seconds", "minutes", "avg")),
         ("状态/结果类", ("success", "fail", "status")),
