@@ -45,6 +45,11 @@ def main():
         with open(data_sources_path, "w", encoding="utf-8") as f:
             json.dump(data_sources_response, f, ensure_ascii=False, indent=2)
         dump["data_sources"] = data_sources_response
+        related_tasks = _sync_data_source_tasks(client, data_sources_response)
+        related_tasks_path = os.path.join(work_dir, "wedata_data_source_tasks.json")
+        with open(related_tasks_path, "w", encoding="utf-8") as f:
+            json.dump(related_tasks, f, ensure_ascii=False, indent=2)
+        dump["data_source_tasks"] = related_tasks
 
     if os.environ.get("WEDATA_SYNC_INSTANCES") == "1":
         instance_payload = {"ProjectId": project_id}
@@ -116,6 +121,15 @@ def _merge_metadata_dump(dump, metadata_dump):
             by_name[name] = {**by_name.get(name, {}), **item}
     metadata_dump["tables"]["Response"]["Data"]["Items"] = list(by_name.values())
     return metadata_dump
+
+
+def _sync_data_source_tasks(client, data_sources_response):
+    related = {}
+    for item in data_sources_response.get("Response", {}).get("Data", {}).get("Items") or []:
+        data_source_id = item.get("Id") or item.get("DataSourceId") or item.get("DatasourceId")
+        if data_source_id:
+            related[str(data_source_id)] = client.call("GetDataSourceRelatedTasks", {"Id": int(data_source_id)})
+    return related
 
 
 def _instance_window():

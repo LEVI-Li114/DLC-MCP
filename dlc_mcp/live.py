@@ -57,7 +57,12 @@ class LiveWeData:
         if query:
             payload["Name"] = query
         data = self._list_all("ListDataSources", payload)
-        self._import({"data_sources": data})
+        related = {}
+        for item in data.get("Response", {}).get("Data", {}).get("Items") or []:
+            data_source_id = item.get("Id") or item.get("DataSourceId") or item.get("DatasourceId")
+            if data_source_id:
+                related[str(data_source_id)] = self.client.call("GetDataSourceRelatedTasks", {"Id": int(data_source_id)})
+        self._import({"data_sources": data, "data_source_tasks": related})
 
     def _list_all(self, action, payload, max_pages=None):
         first = self.client.call(action, {**payload, "PageNumber": 1, "PageSize": self.page_size})

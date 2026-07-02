@@ -73,6 +73,12 @@ class AssetStoreTest(unittest.TestCase):
         self.assertEqual(source["owner_name"], "luyuan")
         self.assertEqual(source["task_count"], 1)
 
+    def test_data_source_task_count_prefers_related_tasks(self):
+        store = make_store()
+        store.replace_data_source_tasks("ds_001", [{"task_id": "sync_001", "task_name": "sync_mysql"}])
+
+        self.assertEqual(store.get_data_source("ds_001")["task_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

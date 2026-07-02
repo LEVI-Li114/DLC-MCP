@@ -117,7 +117,7 @@ Update this section whenever a new MCP tool is added.
 - 数据安全：规划中。用于同步权限、授权主体、资源访问范围。
 - 数据质量：已部分支持。当前支持真实质量规则同步和查询；规则执行结果同步待接入。
 - 平台管理：规划中。用于同步平台级配置。
-- 数据源管理：已支持。当前支持真实数据源列表、类型、负责人、描述和配置摘要查询。
+- 数据源管理：已支持。当前支持真实数据源列表、类型、负责人、描述、配置摘要和关联任务数查询。
 - 元数据：已部分支持。当前支持真实表资产、字段、下游血缘同步和查询。
 
 | Tool | What it answers | Current data source |
@@ -130,8 +130,8 @@ Update this section whenever a new MCP tool is added.
 | `get_table_lineage(table_name, live)` | Return upstream and downstream assets for a table. | SQLite cache, live `ListLineage` fallback |
 | `get_table_tasks(table_name)` | Return ETL tasks that read from or produce a table. | Task input/output mapping |
 | `get_task_runs(task_id/task_name, instance_date, live)` | Return task instances, including start time, end time, duration, and status. | SQLite cache, live `ListTaskInstances` fallback |
-| `list_data_sources(query, live)` | List data sources and stored configuration summaries. | SQLite cache, live `ListDataSources` fallback |
-| `get_data_source(data_source_id, live)` | Return one data source, including type, owner, description, and stored config. | SQLite cache, live `ListDataSources` fallback |
+| `list_data_sources(query, live)` | List data sources, stored configuration summaries, and related task counts. | SQLite cache, live `ListDataSources` + `GetDataSourceRelatedTasks` fallback |
+| `get_data_source(data_source_id, live)` | Return one data source, including type, owner, related task count, description, and stored config. | SQLite cache, live `ListDataSources` + `GetDataSourceRelatedTasks` fallback |
 | `list_metadata()` | List imported databases and table metadata. | Imported metadata tables |
 | `is_core_table(table_name)` | Explain whether a table is core and return score plus reasons. | Local scoring model over layer/domain/lineage/quality/manual marks |
 

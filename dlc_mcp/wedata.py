@@ -35,6 +35,9 @@ def import_wedata_snapshot(store, snapshot):
     for data_source in snapshot.get("data_sources", []):
         store.upsert_data_source(data_source)
 
+    for item in snapshot.get("data_source_tasks", []):
+        store.replace_data_source_tasks(item["data_source_id"], item.get("tasks", []))
+
 
 def snapshot_from_api_dump(dump):
     tasks = [_task_from_api(item) for item in _items(dump.get("tasks", {}))]
@@ -53,6 +56,7 @@ def snapshot_from_api_dump(dump):
         "tasks": tasks,
         "task_instances": [_task_instance_from_api(item) for item in _items(dump.get("task_instances", {}))],
         "data_sources": data_sources + _builtin_data_sources(tables, data_sources),
+        "data_source_tasks": _data_source_tasks_from_dump(dump.get("data_source_tasks", {})),
         "lineage": [edge for edge in (_lineage_from_api(item) for item in _items(dump.get("lineage", {}))) if edge["upstream"] and edge["downstream"] and edge["upstream"] != edge["downstream"]],
         "quality_rules": [_quality_rule_from_api(item) for item in _items(dump.get("quality_rules", {}))],
     }
@@ -235,6 +239,30 @@ def _builtin_data_sources(tables, data_sources):
     existing = {source["id"] for source in data_sources}
     missing = sorted({table.get("data_source_id") for table in tables if table.get("data_source_id")} - existing)
     return [{"id": source_id, "name": source_id, "type": source_id, "owner": "", "description": "WeData table catalog source", "config": {}} for source_id in missing]
+
+
+def _data_source_tasks_from_dump(value):
+    items = value.items() if isinstance(value, dict) else []
+    return [{"data_source_id": str(data_source_id), "tasks": _related_tasks_from_api(response)} for data_source_id, response in items]
+
+
+def _related_tasks_from_api(response):
+    tasks = []
+    for project in response.get("Response", {}).get("Data") or []:
+        for group in project.get("TaskInfo") or []:
+            for item in group.get("TaskList") or []:
+                tasks.append(
+                    {
+                        "task_id": str(_get(item, "TaskId", "Id", "id")),
+                        "task_name": _get(item, "TaskName", "Name", "name"),
+                        "task_type": _get(group, "TaskType", "type"),
+                        "project_id": str(project.get("ProjectId") or ""),
+                        "project_name": project.get("ProjectName") or "",
+                        "create_time": item.get("CreateTime") or "",
+                        "owner": ",".join(item.get("OwnerUinList") or []),
+                    }
+                )
+    return tasks
 
 
 def _json_dict(value):

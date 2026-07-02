@@ -79,6 +79,17 @@ class AssetStore:
                 description text not null default '',
                 config_json text not null default '{}'
             );
+            create table if not exists data_source_tasks (
+                data_source_id text not null,
+                task_id text not null,
+                task_name text not null default '',
+                task_type text not null default '',
+                project_id text not null default '',
+                project_name text not null default '',
+                create_time text not null default '',
+                owner text not null default '',
+                primary key (data_source_id, task_id)
+            );
             """
         )
         self._add_column_if_missing("tables", "source_guid", "text not null default ''")
@@ -208,6 +219,28 @@ class AssetStore:
                 json.dumps(item.get("config", {}), ensure_ascii=False, sort_keys=True),
             ),
         )
+        self.conn.commit()
+
+    def replace_data_source_tasks(self, data_source_id, tasks):
+        self.conn.execute("delete from data_source_tasks where data_source_id = ?", (data_source_id,))
+        for item in tasks:
+            self.conn.execute(
+                """
+                insert or replace into data_source_tasks
+                    (data_source_id, task_id, task_name, task_type, project_id, project_name, create_time, owner)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data_source_id,
+                    item["task_id"],
+                    item.get("task_name", ""),
+                    item.get("task_type", ""),
+                    item.get("project_id", ""),
+                    item.get("project_name", ""),
+                    item.get("create_time", ""),
+                    item.get("owner", ""),
+                ),
+            )
         self.conn.commit()
 
     def list_data_sources(self, query=""):
@@ -426,6 +459,9 @@ class AssetStore:
         return data
 
     def _data_source_task_count(self, data_source_id):
+        direct = self._one("select count(distinct task_id) as n from data_source_tasks where data_source_id = ?", (data_source_id,))
+        if direct and direct["n"]:
+            return direct["n"]
         row = self._one(
             """
             select count(distinct tt.task_id) as n

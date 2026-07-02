@@ -279,6 +279,41 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual(snapshot["tables"][0]["data_source_id"], "DLC")
         self.assertEqual(snapshot["data_sources"][0]["id"], "DLC")
 
+    def test_maps_data_source_related_tasks(self):
+        snapshot = snapshot_from_api_dump(
+            {
+                "data_source_tasks": {
+                    "67186": {
+                        "Response": {
+                            "Data": [
+                                {
+                                    "ProjectId": "2881307738992685056",
+                                    "ProjectName": "byai_bigdata_prod",
+                                    "TaskInfo": [
+                                        {
+                                            "TaskType": "DataDevelopment",
+                                            "TaskList": [
+                                                {
+                                                    "TaskId": "20251023184047084",
+                                                    "TaskName": "c2f_ads_call_company_yizhifu_1d_di",
+                                                    "CreateTime": "2025-10-23 18:40:47",
+                                                    "OwnerUinList": ["100043939904"],
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+
+        related = snapshot["data_source_tasks"][0]
+        self.assertEqual(related["data_source_id"], "67186")
+        self.assertEqual(related["tasks"][0]["task_name"], "c2f_ads_call_company_yizhifu_1d_di")
+
     def test_maps_real_list_tasks_fields(self):
         snapshot = snapshot_from_api_dump(
             {
