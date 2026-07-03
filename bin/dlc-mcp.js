@@ -7,6 +7,7 @@ const path = require("node:path");
 
 const defaultGatewayUrl = "http://64.186.234.87:8787/mcp";
 const gatewayUrl = process.env.DLC_MCP_GATEWAY_URL || defaultGatewayUrl;
+const gatewayToken = process.env.DLC_MCP_GATEWAY_TOKEN || "";
 
 if (process.argv[2] === "install-codex") {
   installCodex();
@@ -55,9 +56,11 @@ function runGatewayClient(url) {
 
 async function postMcp(url, line) {
   try {
+    const headers = { "content-type": "application/json" };
+    if (gatewayToken) headers.authorization = `Bearer ${gatewayToken}`;
     const response = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: line,
     });
     const text = await response.text();
@@ -87,6 +90,10 @@ type = "stdio"
 [mcp_servers.dlc-mcp.env]
 DLC_MCP_GATEWAY_URL = "${gatewayUrl}"
 `;
+  if (gatewayToken) {
+    block += `DLC_MCP_GATEWAY_TOKEN = "${gatewayToken}"
+`;
+  }
   return block;
 }
 

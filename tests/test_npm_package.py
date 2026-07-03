@@ -29,6 +29,8 @@ class NpmPackageTest(unittest.TestCase):
             script = f.read()
 
         self.assertIn("DLC_MCP_GATEWAY_URL", script)
+        self.assertIn("DLC_MCP_GATEWAY_TOKEN", script)
+        self.assertIn("headers.authorization", script)
         self.assertIn("fetch(url", script)
         self.assertIn("[mcp_servers.dlc-mcp.env]", script)
 

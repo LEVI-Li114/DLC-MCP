@@ -30,6 +30,8 @@ def _has_live_env():
 
 
 def _handler(store, live):
+    token = os.environ.get("DLC_MCP_GATEWAY_TOKEN", "")
+
     class GatewayHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path != "/health":
@@ -40,6 +42,9 @@ def _handler(store, live):
         def do_POST(self):
             if self.path != "/mcp":
                 self.send_error(404)
+                return
+            if token and not _authorized(self.headers, token):
+                self.send_error(401)
                 return
             length = int(self.headers.get("content-length") or 0)
             request = json.loads(self.rfile.read(length) or b"{}")
@@ -62,6 +67,11 @@ def _handler(store, live):
             self.wfile.write(body)
 
     return GatewayHandler
+
+
+def _authorized(headers, token):
+    auth = headers.get("authorization", "")
+    return auth == f"Bearer {token}" or headers.get("x-dlc-mcp-token", "") == token
 
 
 if __name__ == "__main__":

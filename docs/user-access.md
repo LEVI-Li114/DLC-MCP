@@ -134,7 +134,36 @@ DLC_MCP_ENV_FILE=/etc/dlc-mcp/env
 
 ### 4. 增加访问控制
 
-最小可用方案：
+内部测试最小方案：共享 token。
+
+服务器启动 Gateway 时设置：
+
+```bash
+DLC_MCP_GATEWAY_TOKEN=replace-with-random-token
+```
+
+客户端请求 `/mcp` 时需要带：
+
+```text
+Authorization: Bearer replace-with-random-token
+```
+
+或：
+
+```text
+X-DLC-MCP-Token: replace-with-random-token
+```
+
+本机验证 MCP tools：
+
+```bash
+curl -s http://64.186.234.87:8787/mcp \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer replace-with-random-token' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+进一步方案：
 
 ```text
 只允许公司 VPN / 办公网 IP 访问 Gateway
@@ -196,6 +225,7 @@ type = "stdio"
 
 [mcp_servers.dlc-mcp-gateway.env]
 DLC_MCP_GATEWAY_URL = "http://64.186.234.87:8787/mcp"
+DLC_MCP_GATEWAY_TOKEN = "replace-with-random-token"
 ```
 
 这样：
@@ -215,6 +245,7 @@ type = "stdio"
 
 [mcp_servers.dlc-mcp.env]
 DLC_MCP_GATEWAY_URL = "http://64.186.234.87:8787/mcp"
+DLC_MCP_GATEWAY_TOKEN = "replace-with-random-token"
 ```
 
 不再需要：
@@ -231,6 +262,7 @@ DLC_MCP_DB
 
 ```bash
 DLC_MCP_GATEWAY_URL=http://64.186.234.87:8787/mcp \
+DLC_MCP_GATEWAY_TOKEN=replace-with-random-token \
   npx -y @baiying/dlc-mcp install-codex
 ```
 
