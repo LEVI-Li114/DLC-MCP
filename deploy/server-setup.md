@@ -107,13 +107,17 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
   | DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server
 ```
 
-## 5. Smoke test MCP over SSH
+## 5. Smoke test HTTP Gateway
 
-Run from a user laptop that has SSH access:
+Run from a user laptop:
 
 ```bash
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-  | ssh data-agent-host 'cd /opt/dlc-mcp && DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server'
+curl -s http://64.186.234.87:8787/health
+
+curl -s http://64.186.234.87:8787/mcp \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer your-token' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
 ## 6. User install

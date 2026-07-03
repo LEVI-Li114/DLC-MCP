@@ -14,15 +14,14 @@ class NpmPackageTest(unittest.TestCase):
         self.assertEqual(package["publishConfig"]["access"], "public")
         self.assertTrue(os.path.exists("bin/dlc-mcp.js"))
 
-    def test_launcher_has_shared_defaults(self):
+    def test_launcher_has_gateway_defaults(self):
         with open("bin/dlc-mcp.js", "r", encoding="utf-8") as f:
             script = f.read()
 
-        self.assertIn('"data-agent-host"', script)
-        self.assertIn('"/opt/dlc-mcp/DLC-MCP"', script)
-        self.assertIn('"/data/dlc-mcp/assets.db"', script)
         self.assertIn('"http://64.186.234.87:8787/mcp"', script)
-        self.assertIn('"python3"', script)
+        self.assertNotIn("DLC_MCP_SSH_HOST", script)
+        self.assertNotIn("DLC_MCP_REMOTE_DIR", script)
+        self.assertNotIn("spawn(\"ssh\"", script)
 
     def test_launcher_supports_http_gateway(self):
         with open("bin/dlc-mcp.js", "r", encoding="utf-8") as f:

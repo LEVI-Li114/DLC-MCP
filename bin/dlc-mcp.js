@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -14,31 +13,7 @@ if (process.argv[2] === "install-codex") {
   process.exit(0);
 }
 
-if (process.env.DLC_MCP_DISABLE_GATEWAY !== "1") {
-  runGatewayClient(gatewayUrl);
-} else {
-  runStdioServer();
-}
-
-function runStdioServer() {
-const host = process.env.DLC_MCP_SSH_HOST || "data-agent-host";
-const remoteDir = process.env.DLC_MCP_REMOTE_DIR || "/opt/dlc-mcp/DLC-MCP";
-const db = process.env.DLC_MCP_DB || "/data/dlc-mcp/assets.db";
-const python = process.env.DLC_MCP_PYTHON || "python3";
-
-const child = host
-  ? spawn("ssh", [host, `cd ${remoteDir} && DLC_MCP_DB=${db} ${python} -m dlc_mcp.server`], { stdio: "inherit" })
-  : spawn(python, ["-m", "dlc_mcp.server"], {
-      cwd: path.resolve(__dirname, ".."),
-      env: process.env,
-      stdio: "inherit",
-    });
-
-child.on("exit", (code, signal) => {
-  if (signal) process.kill(process.pid, signal);
-  process.exit(code || 0);
-});
-}
+runGatewayClient(gatewayUrl);
 
 function runGatewayClient(url) {
   let buffer = "";
