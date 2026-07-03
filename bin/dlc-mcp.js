@@ -5,11 +5,21 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
+const defaultGatewayUrl = "http://64.186.234.87:8787/mcp";
+const gatewayUrl = process.env.DLC_MCP_GATEWAY_URL || defaultGatewayUrl;
+
 if (process.argv[2] === "install-codex") {
   installCodex();
   process.exit(0);
 }
 
+if (process.env.DLC_MCP_DISABLE_GATEWAY !== "1") {
+  runGatewayClient(gatewayUrl);
+} else {
+  runStdioServer();
+}
+
+function runStdioServer() {
 const host = process.env.DLC_MCP_SSH_HOST || "data-agent-host";
 const remoteDir = process.env.DLC_MCP_REMOTE_DIR || "/opt/dlc-mcp/DLC-MCP";
 const db = process.env.DLC_MCP_DB || "/data/dlc-mcp/assets.db";
@@ -27,6 +37,35 @@ child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   process.exit(code || 0);
 });
+}
+
+function runGatewayClient(url) {
+  let buffer = "";
+  let chain = Promise.resolve();
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (line.trim()) chain = chain.then(() => postMcp(url, line));
+    }
+  });
+}
+
+async function postMcp(url, line) {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: line,
+    });
+    const text = await response.text();
+    if (text.trim()) process.stdout.write(text.trim() + "\n");
+  } catch (error) {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32000, message: String(error.message || error) } }) + "\n");
+  }
+}
 
 function installCodex() {
   const codexDir = path.join(os.homedir(), ".codex");
@@ -39,18 +78,23 @@ function installCodex() {
 }
 
 function codexBlock() {
-  return `[mcp_servers.dlc-mcp]
+  let block = `[mcp_servers.dlc-mcp]
 command = "npx"
 args = ["-y", "@baiying/dlc-mcp"]
 type = "stdio"
 `;
+  block += `
+[mcp_servers.dlc-mcp.env]
+DLC_MCP_GATEWAY_URL = "${gatewayUrl}"
+`;
+  return block;
 }
 
 function replaceBlock(text, block) {
   const start = text.indexOf("[mcp_servers.dlc-mcp]");
   if (start === -1) return `${text.trimEnd()}\n\n${block}`;
   const rest = text.slice(start + "[mcp_servers.dlc-mcp]".length);
-  const nextHeader = rest.search(/\n\[[^\]]+\]/);
+  const nextHeader = rest.search(/\n\[(?!mcp_servers\.dlc-mcp\.env\])[^\]]+\]/);
   const end = nextHeader === -1 ? text.length : start + "[mcp_servers.dlc-mcp]".length + nextHeader + 1;
   return `${text.slice(0, start).trimEnd()}\n\n${block}\n${text.slice(end).trimStart()}`.trimEnd() + "\n";
 }

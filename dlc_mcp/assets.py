@@ -522,17 +522,16 @@ class AssetStore:
         columns = [dict(row) for row in self._all("select name, type, description from columns where table_name = ? order by ordinal, name", (table_name,))]
         lineage = self.get_table_lineage(table_name)
         role = _metric_role(table)
-        metric_fields = []
-        for column in columns:
-            metric_field = _metric_field(column)
-            if metric_field:
-                metric_fields.append(metric_field)
+        fields = _metric_fields(columns)
+        grain = fields["time_fields"] + fields["dimension_fields"]
         return {
             "table": table,
             "role": role,
             "subject": _metric_subject(table_name),
             "time_grain": _metric_time_grain(table_name),
-            "metric_fields": metric_fields,
+            "summary": _metric_summary(table, fields["metric_fields"]),
+            "statistical_grain": grain,
+            **fields,
             "upstream_dws": [row for row in lineage["upstream"] if self._is_layer_table(row["upstream"], "dws")],
             "upstream_sources": [row for row in lineage["upstream"] if not self._is_layer_table(row["upstream"], "dws")],
             "downstream_ads": [row for row in lineage["downstream"] if self._is_layer_table(row["downstream"], "ads")],
@@ -812,11 +811,32 @@ def _metric_time_grain(table_name):
     return "unknown"
 
 
-def _metric_field(column):
-    metric_type = _metric_field_type(column["name"])
-    if not metric_type:
-        return None
-    return {**column, "metric_type": metric_type}
+def _metric_fields(columns):
+    result = {"time_fields": [], "dimension_fields": [], "metric_fields": [], "description_fields": []}
+    for column in columns:
+        role = _column_role(column["name"])
+        if role == "metric":
+            result["metric_fields"].append({**column, "metric_type": _metric_field_type(column["name"])})
+        elif role == "time":
+            result["time_fields"].append(column)
+        elif role == "dimension":
+            result["dimension_fields"].append(column)
+        elif role == "description":
+            result["description_fields"].append(column)
+    return result
+
+
+def _column_role(name):
+    name = name.lower()
+    if name in {"dt", "date", "stat_date", "bill_date"} or name.endswith(("_date", "_time")):
+        return "time"
+    if _metric_field_type(name):
+        return "metric"
+    if name.endswith("_id") or name.endswith("_no") or name in {"id"}:
+        return "dimension"
+    if name.endswith("_name") or name.endswith("_type") or name.endswith("_mode") or name.endswith("_unit"):
+        return "description"
+    return ""
 
 
 def _metric_field_type(name):
@@ -840,6 +860,14 @@ def _metric_explanation(role):
     if role["name"] == "指标应用结果层":
         return "ads 表作为业务使用的指标结果层，口径优先追溯上游 dws 表；本表更适合解释指标产出结果。"
     return "该表不是 ads/dws 主指标表，可作为指标口径的上游来源参与解释。"
+
+
+def _metric_summary(table, metric_fields):
+    if not metric_fields:
+        return "当前已同步字段中未识别到指标字段。"
+    metric_types = "、".join(dict.fromkeys(field["metric_type"] for field in metric_fields))
+    subject = _metric_subject(table["name"]).replace("_", " ")
+    return f"该表按已同步字段推导，主要统计 {subject} 相关的{metric_types}指标。"
 
 
 def _value_tier_from_score(score):

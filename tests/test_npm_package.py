@@ -9,6 +9,9 @@ class NpmPackageTest(unittest.TestCase):
             package = json.load(f)
 
         self.assertEqual(package["bin"]["dlc-mcp"], "bin/dlc-mcp.js")
+        self.assertEqual(package["version"], "0.1.1")
+        self.assertNotIn("private", package)
+        self.assertEqual(package["publishConfig"]["access"], "public")
         self.assertTrue(os.path.exists("bin/dlc-mcp.js"))
 
     def test_launcher_has_shared_defaults(self):
@@ -18,7 +21,16 @@ class NpmPackageTest(unittest.TestCase):
         self.assertIn('"data-agent-host"', script)
         self.assertIn('"/opt/dlc-mcp/DLC-MCP"', script)
         self.assertIn('"/data/dlc-mcp/assets.db"', script)
+        self.assertIn('"http://64.186.234.87:8787/mcp"', script)
         self.assertIn('"python3"', script)
+
+    def test_launcher_supports_http_gateway(self):
+        with open("bin/dlc-mcp.js", "r", encoding="utf-8") as f:
+            script = f.read()
+
+        self.assertIn("DLC_MCP_GATEWAY_URL", script)
+        self.assertIn("fetch(url", script)
+        self.assertIn("[mcp_servers.dlc-mcp.env]", script)
 
 
 if __name__ == "__main__":

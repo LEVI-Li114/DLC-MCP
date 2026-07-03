@@ -24,9 +24,10 @@ def make_store():
     store.upsert_column("ads_customer_revenue_daily", "revenue_amount", "decimal(18,2)", "Revenue", 2)
     store.upsert_table({"name": "dws_customer_revenue_1d_di", "layer": "dws", "domain": "finance", "owner": "data-finance"})
     store.upsert_column("dws_customer_revenue_1d_di", "customer_id", "string", "Customer ID", 1)
-    store.upsert_column("dws_customer_revenue_1d_di", "revenue_amount", "decimal(18,2)", "Revenue amount", 2)
-    store.upsert_column("dws_customer_revenue_1d_di", "pay_count", "bigint", "Pay count", 3)
-    store.upsert_column("dws_customer_revenue_1d_di", "bill_date", "string", "Bill date", 4)
+    store.upsert_column("dws_customer_revenue_1d_di", "customer_name", "string", "Customer name", 2)
+    store.upsert_column("dws_customer_revenue_1d_di", "revenue_amount", "decimal(18,2)", "Revenue amount", 3)
+    store.upsert_column("dws_customer_revenue_1d_di", "pay_count", "bigint", "Pay count", 4)
+    store.upsert_column("dws_customer_revenue_1d_di", "bill_date", "string", "Bill date", 5)
     store.upsert_lineage("dws_customer_revenue_1d_di", "ads_customer_revenue_daily", "task_ads_revenue_daily")
     store.upsert_lineage("ods_order", "ads_customer_revenue_daily", "task_revenue_daily")
     store.upsert_lineage("ads_customer_revenue_daily", "bi_finance_dashboard", "bi_report")
@@ -144,6 +145,10 @@ class AssetStoreTest(unittest.TestCase):
         self.assertEqual(ads["upstream_dws"][0]["upstream"], "dws_customer_revenue_1d_di")
         self.assertEqual(dws["role"]["name"], "指标统计口径层")
         self.assertEqual([field["metric_type"] for field in dws["metric_fields"]], ["金额类", "数量类"])
+        self.assertEqual([field["name"] for field in dws["time_fields"]], ["bill_date"])
+        self.assertEqual([field["name"] for field in dws["dimension_fields"]], ["customer_id"])
+        self.assertEqual([field["name"] for field in dws["description_fields"]], ["customer_name"])
+        self.assertIn("金额类、数量类", dws["summary"])
 
 
 if __name__ == "__main__":

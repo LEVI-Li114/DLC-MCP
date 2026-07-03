@@ -236,6 +236,9 @@ class McpTest(unittest.TestCase):
         text = response["result"]["content"][0]["text"]
         self.assertIn("指标口径", text)
         self.assertIn("指标应用结果层", text)
+        self.assertIn("统计粒度", text)
+        self.assertIn("维度字段", text)
+        self.assertIn("指标字段", text)
         self.assertIn("dws_customer_revenue_1d_di", text)
 
     def test_calls_quality_gaps_tool(self):

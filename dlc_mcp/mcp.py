@@ -386,12 +386,26 @@ def _format_metric_definition(data):
                     f"是否口径主表：**{role.get('primary_definition')}**",
                     f"主题：`{_cell(data.get('subject'))}`",
                     f"时间粒度：`{_cell(data.get('time_grain'))}`",
+                    f"统计粒度：{', '.join(_field_names(data.get('statistical_grain', []))) or '未识别'}",
+                    f"口径摘要：{_cell(data.get('summary'))}",
                     f"说明：{_cell(data.get('explanation'))}",
                 ],
             ),
-            _table(
+            _section("时间字段", []) + "\n\n" + _table(
+                ["字段名", "字段类型", "说明"],
+                [[r.get("name"), r.get("type"), r.get("description")] for r in data.get("time_fields", [])],
+            ),
+            _section("维度字段", []) + "\n\n" + _table(
+                ["字段名", "字段类型", "说明"],
+                [[r.get("name"), r.get("type"), r.get("description")] for r in data.get("dimension_fields", [])],
+            ),
+            _section("指标字段", []) + "\n\n" + _table(
                 ["字段名", "指标类型", "字段类型", "说明"],
                 [[r.get("name"), r.get("metric_type"), r.get("type"), r.get("description")] for r in data.get("metric_fields", [])],
+            ),
+            _section("描述字段", []) + "\n\n" + _table(
+                ["字段名", "字段类型", "说明"],
+                [[r.get("name"), r.get("type"), r.get("description")] for r in data.get("description_fields", [])],
             ),
             _section("上游 dws 口径表", []) + "\n\n" + _table(["表名", "经由"], [[r.get("upstream"), r.get("via")] for r in data.get("upstream_dws", [])]),
             _section("上游来源表", []) + "\n\n" + _table(["表名", "经由"], [[r.get("upstream"), r.get("via")] for r in data.get("upstream_sources", [])]),
@@ -400,6 +414,10 @@ def _format_metric_definition(data):
             _format_expert_label(data.get("expert_label")),
         ]
     )
+
+
+def _field_names(fields):
+    return [field.get("name", "") for field in fields if field.get("name")]
 
 
 def _table(headers, rows):

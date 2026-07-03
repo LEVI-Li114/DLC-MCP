@@ -125,7 +125,7 @@ Update this section whenever a new MCP tool is added.
 | `list_table_columns(table_name, live)` | List fields for a table. | SQLite cache, live `GetTableColumns` fallback |
 | `get_quality_status(table_name, live)` | Show whether a table has quality monitoring, rule count, latest status, and rule details. | SQLite cache, live `ListQualityRules` fallback |
 | `get_asset_value_profile(table_name, live)` | Return reusable asset value tier and core-table decision for a table. | Local model over expert labels, metadata, lineage, quality rules, and task runs |
-| `get_metric_definition(table_name, live)` | Explain metric definition for ads/dws tables from metric fields, upstream/downstream lineage, and related tasks. | SQLite cache, live metadata fallback |
+| `get_metric_definition(table_name, live)` | Explain metric definition for ads/dws tables from time fields, dimensions, metric fields, lineage, and related tasks. | SQLite cache, live metadata fallback |
 | `get_table_risk_profile(table_name, live)` | Explain table risk level from layer, downstream dependencies, quality rules, and latest output task runs. | Local model over metadata, lineage, quality rules, and task runs |
 | `list_quality_gaps(layer, domain, limit)` | List tables with downstream dependencies but no quality rules. | Local model over metadata, lineage, and quality rules |
 | `get_expert_label(asset_type, asset_name)` | Return expert label for one table/metric/data source. | Imported expert labels |
