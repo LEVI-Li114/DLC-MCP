@@ -58,7 +58,7 @@ args = ["data-agent-host", "cd /opt/dlc-mcp/DLC-MCP && DLC_MCP_DB=/data/dlc-mcp/
 type = "stdio"
 ```
 
-In shared mode, Tencent Cloud keys stay on the sync server. Users do not configure AK/SK.
+In shared mode, Tencent Cloud keys stay on the sync server. Users do not configure AK/SK. The server loads `/etc/dlc-mcp/env` automatically; override with `DLC_MCP_ENV_FILE` if needed.
 
 Ask Codex:
 
