@@ -9,7 +9,7 @@ Use this mode for Codex/Cursor/Claude Desktop users. The MCP server only reads t
 Recommended shared Codex config through npm + HTTP Gateway:
 
 ```bash
-npx -y @baiying/dlc-mcp install-codex
+npx -y @levisli/dlc-mcp install-codex
 ```
 
 The installer writes this block to `~/.codex/config.toml`:
@@ -17,7 +17,7 @@ The installer writes this block to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.dlc-mcp]
 command = "npx"
-args = ["-y", "@baiying/dlc-mcp"]
+args = ["-y", "@levisli/dlc-mcp"]
 type = "stdio"
 
 [mcp_servers.dlc-mcp.env]
@@ -30,7 +30,7 @@ This is the cleanest team setup: users only add the MCP command and gateway toke
 Install with a token:
 
 ```bash
-DLC_MCP_GATEWAY_TOKEN=your-token npx -y @baiying/dlc-mcp install-codex
+DLC_MCP_GATEWAY_TOKEN=your-token npx -y @levisli/dlc-mcp install-codex
 ```
 
 If your gateway URL is different, override with env:

@@ -194,7 +194,7 @@ If this returns MCP tools, Codex can use the server.
 After the npm package is published, users can run:
 
 ```bash
-DLC_MCP_GATEWAY_TOKEN=your-token npx -y @baiying/dlc-mcp install-codex
+DLC_MCP_GATEWAY_TOKEN=your-token npx -y @levisli/dlc-mcp install-codex
 ```
 
 If the Gateway URL is different:
@@ -202,7 +202,7 @@ If the Gateway URL is different:
 ```bash
 DLC_MCP_GATEWAY_URL=http://64.186.234.87:8787/mcp \
 DLC_MCP_GATEWAY_TOKEN=your-token \
-  npx -y @baiying/dlc-mcp install-codex
+  npx -y @levisli/dlc-mcp install-codex
 ```
 
 Restart Codex, then ask:

@@ -9,7 +9,7 @@ class NpmPackageTest(unittest.TestCase):
             package = json.load(f)
 
         self.assertEqual(package["bin"]["dlc-mcp"], "bin/dlc-mcp.js")
-        self.assertEqual(package["version"], "0.1.1")
+        self.assertRegex(package["version"], r"^\d+\.\d+\.\d+$")
         self.assertNotIn("private", package)
         self.assertEqual(package["publishConfig"]["access"], "public")
         self.assertTrue(os.path.exists("bin/dlc-mcp.js"))

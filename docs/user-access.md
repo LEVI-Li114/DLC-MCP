@@ -5,7 +5,7 @@
 ## 接入链路
 
 ```text
-Codex -> npx @baiying/dlc-mcp -> HTTP Gateway -> DLC-MCP 服务端 -> assets.db / WeData
+Codex -> npx @levisli/dlc-mcp -> HTTP Gateway -> DLC-MCP 服务端 -> assets.db / WeData
 ```
 
 普通用户只需要：
@@ -92,14 +92,14 @@ curl -s http://64.186.234.87:8787/mcp \
 
 ```bash
 DLC_MCP_GATEWAY_TOKEN=replace-with-random-token \
-  npx -y @baiying/dlc-mcp install-codex
+  npx -y @levisli/dlc-mcp install-codex
 ```
 
 可以直接发给普通用户：
 
 ```bash
 DLC_MCP_GATEWAY_TOKEN=你发给他的token \
-  npx -y @baiying/dlc-mcp install-codex
+  npx -y @levisli/dlc-mcp install-codex
 ```
 
 执行后，安装器会把 token 写入用户的 Codex config：
@@ -115,7 +115,7 @@ DLC_MCP_GATEWAY_TOKEN = "..."
 ```bash
 DLC_MCP_GATEWAY_URL=http://64.186.234.87:8787/mcp \
 DLC_MCP_GATEWAY_TOKEN=replace-with-random-token \
-  npx -y @baiying/dlc-mcp install-codex
+  npx -y @levisli/dlc-mcp install-codex
 ```
 
 安装器会写入 `~/.codex/config.toml`：
@@ -123,7 +123,7 @@ DLC_MCP_GATEWAY_TOKEN=replace-with-random-token \
 ```toml
 [mcp_servers.dlc-mcp]
 command = "npx"
-args = ["-y", "@baiying/dlc-mcp"]
+args = ["-y", "@levisli/dlc-mcp"]
 type = "stdio"
 
 [mcp_servers.dlc-mcp.env]

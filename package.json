@@ -1,5 +1,5 @@
 {
-  "name": "@baiying/dlc-mcp",
+  "name": "@levisli/dlc-mcp",
   "version": "0.1.4",
   "description": "WeData-first data asset MCP server launcher.",
   "bin": {

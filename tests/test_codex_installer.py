@@ -17,7 +17,7 @@ class CodexInstallerTest(unittest.TestCase):
             text = config.read_text(encoding="utf-8")
             self.assertEqual(text.count("[mcp_servers.dlc-mcp]"), 1)
             self.assertIn('command = "npx"', text)
-            self.assertIn('args = ["-y", "@baiying/dlc-mcp"]', text)
+            self.assertIn('args = ["-y", "@levisli/dlc-mcp"]', text)
             self.assertIn('type = "stdio"', text)
 
     def test_install_codex_replaces_existing_block(self):

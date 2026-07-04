@@ -58,7 +58,7 @@ function installCodex() {
 function codexBlock() {
   let block = `[mcp_servers.dlc-mcp]
 command = "npx"
-args = ["-y", "@baiying/dlc-mcp"]
+args = ["-y", "@levisli/dlc-mcp"]
 type = "stdio"
 `;
   block += `

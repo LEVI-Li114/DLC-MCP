@@ -125,7 +125,7 @@ curl -s http://64.186.234.87:8787/mcp \
 After the npm package is published:
 
 ```bash
-npx -y @baiying/dlc-mcp install-codex
+npx -y @levisli/dlc-mcp install-codex
 ```
 
 Restart Codex, then ask:
