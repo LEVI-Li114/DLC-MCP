@@ -150,6 +150,31 @@ class AssetStoreTest(unittest.TestCase):
         self.assertEqual([field["name"] for field in dws["description_fields"]], ["customer_name"])
         self.assertIn("金额类、数量类", dws["summary"])
 
+    def test_sync_health_and_asset_coverage(self):
+        store = make_store()
+        store.upsert_task_run(
+            {
+                "task_id": "task_001",
+                "instance_id": "inst_001",
+                "instance_date": "2026-07-07",
+                "start_time": "2026-07-07 08:00:00",
+                "end_time": "2026-07-07 08:05:00",
+                "duration_seconds": 300,
+                "status": "success",
+            }
+        )
+
+        health = store.get_sync_health()
+        coverage = store.get_asset_coverage()
+
+        self.assertEqual(health["counts"]["tables"], 2)
+        self.assertEqual(health["counts"]["tasks"], 1)
+        self.assertEqual(health["latest_signals"]["latest_task_run_start"], "2026-07-07 08:00:00")
+        self.assertNotIn("未同步任务运行实例", health["gaps"])
+        self.assertEqual(coverage["layers"][0]["layer"], "ads")
+        self.assertEqual(coverage["layers"][0]["tables_with_quality_rules"], 1)
+        self.assertEqual(coverage["layers"][1]["layer"], "dws")
+
 
 if __name__ == "__main__":
     unittest.main()

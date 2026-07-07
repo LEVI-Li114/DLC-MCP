@@ -70,6 +70,8 @@ Update this list whenever a new MCP tool is added.
 | `get_expert_label(asset_type, asset_name)` | Return expert label for one asset. |
 | `list_expert_review_queue(layer, limit)` | List high-impact unlabelled tables for expert review. |
 | `list_metadata()` | List imported databases and table metadata. |
+| `get_sync_health()` | Return sync health, asset counts, latest observed sync signals, and current data gaps. |
+| `get_asset_coverage()` | Return asset coverage by layer for fields, lineage, quality rules, tasks, data sources, and runs. |
 | `is_core_table(table_name)` | Explain whether a table is core and why. |
 
 ## Development

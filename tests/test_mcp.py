@@ -81,6 +81,8 @@ class McpTest(unittest.TestCase):
         self.assertIn("get_expert_label", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_expert_review_queue", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_metadata", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("get_sync_health", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("get_asset_coverage", [tool["name"] for tool in response["result"]["tools"]])
 
     def test_calls_table_profile_tool(self):
         response = handle_request(
@@ -94,8 +96,46 @@ class McpTest(unittest.TestCase):
         )
 
         self.assertEqual(response["result"]["content"][0]["type"], "text")
-        self.assertIn("dim_customer", response["result"]["content"][0]["text"])
-        self.assertIn("专家标注", response["result"]["content"][0]["text"])
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("标准表画像：dim_customer", text)
+        self.assertIn("资产价值与核心表判断", text)
+        self.assertIn("字段信息", text)
+        self.assertIn("上下游血缘", text)
+        self.assertIn("运行状态", text)
+        self.assertIn("当前缺口", text)
+        self.assertIn("专家标注", text)
+
+    def test_calls_sync_health_tool(self):
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 18,
+                "method": "tools/call",
+                "params": {"name": "get_sync_health", "arguments": {}},
+            },
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("同步健康检查", text)
+        self.assertIn("表资产", text)
+        self.assertIn("最新同步线索", text)
+
+    def test_calls_asset_coverage_tool(self):
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 19,
+                "method": "tools/call",
+                "params": {"name": "get_asset_coverage", "arguments": {}},
+            },
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("资产覆盖率", text)
+        self.assertIn("| 层级 | 表数 | 有字段 | 有质量规则 |", text)
+        self.assertIn("dwd", text)
 
     def test_calls_search_tasks_tool(self):
         response = handle_request(

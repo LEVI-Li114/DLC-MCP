@@ -296,6 +296,83 @@ class AssetStore:
         tables = [self._table_dict(row) for row in self._all("select name, source_guid, data_source_id, database_name, layer, domain, owner, description, manual_core_level from tables order by database_name, name limit 100")]
         return {"databases": databases, "tables": tables}
 
+    def get_sync_health(self):
+        counts = {
+            "tables": self._count("tables"),
+            "columns": self._count("columns"),
+            "tasks": self._count("tasks"),
+            "task_table_mappings": self._count("task_tables"),
+            "task_runs": self._count("task_runs"),
+            "data_sources": self._count("data_sources"),
+            "data_source_tasks": self._count("data_source_tasks"),
+            "lineage_edges": self._count("lineage"),
+            "quality_rules": self._count("quality_rules"),
+            "expert_labels": self._count("expert_labels"),
+        }
+        signals = {
+            "latest_task_run_start": self._max_text("task_runs", "start_time"),
+            "latest_task_run_end": self._max_text("task_runs", "end_time"),
+            "latest_quality_check": self._max_text("quality_rules", "last_checked_at"),
+            "latest_data_source_task_create": self._max_text("data_source_tasks", "create_time"),
+        }
+        gaps = []
+        if counts["tasks"] == 0:
+            gaps.append("未同步 WeData 任务列表")
+        if counts["tables"] == 0:
+            gaps.append("未同步表资产")
+        if counts["columns"] == 0:
+            gaps.append("未同步字段")
+        if counts["lineage_edges"] == 0:
+            gaps.append("未同步血缘")
+        if counts["quality_rules"] == 0:
+            gaps.append("未同步质量规则")
+        if counts["task_runs"] == 0:
+            gaps.append("未同步任务运行实例")
+        if counts["data_sources"] == 0:
+            gaps.append("未同步数据源")
+        return {
+            "status": "ok" if counts["tasks"] and not gaps else "partial",
+            "counts": counts,
+            "latest_signals": signals,
+            "gaps": gaps,
+            "notes": [
+                "当前版本根据资产库已有事实表聚合健康状态。",
+                "如果某类数量为 0，通常表示对应 WeData 同步开关未开启、接口未接入或本轮同步未覆盖。",
+            ],
+        }
+
+    def get_asset_coverage(self):
+        totals = self.get_sync_health()["counts"]
+        layer_rows = self._all(
+            """
+            select
+                coalesce(nullif(layer, ''), 'unknown') as layer,
+                count(*) as table_count,
+                sum(case when c.column_count > 0 then 1 else 0 end) as tables_with_columns,
+                sum(case when q.rule_count > 0 then 1 else 0 end) as tables_with_quality_rules,
+                sum(case when d.downstream_count > 0 then 1 else 0 end) as tables_with_downstream,
+                sum(case when u.upstream_count > 0 then 1 else 0 end) as tables_with_upstream,
+                sum(case when tt.task_count > 0 then 1 else 0 end) as tables_with_tasks,
+                sum(case when data_source_id != '' then 1 else 0 end) as tables_with_data_source
+            from tables t
+            left join (select table_name, count(*) as column_count from columns group by table_name) c on c.table_name = t.name
+            left join (select table_name, count(*) as rule_count from quality_rules group by table_name) q on q.table_name = t.name
+            left join (select upstream, count(*) as downstream_count from lineage group by upstream) d on d.upstream = t.name
+            left join (select downstream, count(*) as upstream_count from lineage group by downstream) u on u.downstream = t.name
+            left join (select table_name, count(distinct task_id) as task_count from task_tables group by table_name) tt on tt.table_name = t.name
+            group by coalesce(nullif(layer, ''), 'unknown')
+            order by layer
+            """
+        )
+        return {
+            "totals": totals,
+            "layers": [dict(row) for row in layer_rows],
+            "coverage_notes": [
+                "字段、质量、血缘、任务、数据源覆盖率都按已同步表资产计算。",
+                "覆盖为 0 不等于业务不存在，优先检查同步开关、API 权限和同步范围。",
+            ],
+        }
+
     def upsert_expert_label(self, item):
         self.conn.execute(
             """
@@ -458,9 +535,12 @@ class AssetStore:
         table = self._one("select * from tables where name = ?", (table_name,))
         if not table:
             return {"error": "table_not_found", "table_name": table_name}
+        table_data = self._table_dict(table)
         rules = self._all("select * from quality_rules where table_name = ? order by rule_name", (table_name,))
+        data_source = self.get_data_source(table_data["data_source_id"]) if table_data.get("data_source_id") else None
         return {
-            "table": self._table_dict(table),
+            "table": table_data,
+            "data_source": None if data_source and data_source.get("error") else data_source,
             "expert_label": self._label_or_none("table", table_name),
             "columns": [dict(row) for row in self._all("select name, type, description from columns where table_name = ? order by ordinal, name", (table_name,))],
             "lineage": self.get_table_lineage(table_name),
@@ -471,6 +551,8 @@ class AssetStore:
             },
             "tasks": self.get_table_tasks(table_name)["tasks"],
             "core": self.is_core_table(table_name),
+            "latest_runs": self._latest_output_task_runs(table_name),
+            "gaps": self._table_profile_gaps(table_name, table_data, rules),
         }
 
     def get_asset_value_profile(self, table_name):
@@ -652,6 +734,12 @@ class AssetStore:
     def _all(self, sql, args=()):
         return self.conn.execute(sql, args).fetchall()
 
+    def _count(self, table_name):
+        return self._one(f"select count(*) as n from {table_name}")["n"]
+
+    def _max_text(self, table_name, column_name):
+        return self._one(f"select max(nullif({column_name}, '')) as value from {table_name}")["value"] or ""
+
     def _add_column_if_missing(self, table_name, column_name, definition):
         columns = {row["name"] for row in self.conn.execute(f"pragma table_info({table_name})")}
         if column_name not in columns:
@@ -714,6 +802,22 @@ class AssetStore:
         if failed:
             return "failed"
         return rules[0]["last_status"] if rules else "missing"
+
+    def _table_profile_gaps(self, table_name, table, rules):
+        gaps = []
+        if not self._one("select 1 from columns where table_name = ? limit 1", (table_name,)):
+            gaps.append("缺字段信息")
+        if not self._one("select 1 from lineage where upstream = ? or downstream = ? limit 1", (table_name, table_name)):
+            gaps.append("缺血缘信息")
+        if not rules:
+            gaps.append("缺质量规则")
+        if not self._one("select 1 from task_tables where table_name = ? limit 1", (table_name,)):
+            gaps.append("缺相关任务")
+        if not self._latest_output_task_runs(table_name):
+            gaps.append("缺最近运行实例")
+        if not table.get("data_source_id"):
+            gaps.append("缺数据源关联")
+        return gaps
 
 
 def _is_bad_run_status(status):

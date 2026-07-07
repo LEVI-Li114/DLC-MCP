@@ -83,6 +83,14 @@ TOOLS = {
         "description": "List imported databases and table metadata.",
         "schema": {"type": "object", "properties": {}},
     },
+    "get_sync_health": {
+        "description": "Return sync health, asset counts, latest observed sync signals, and data gaps.",
+        "schema": {"type": "object", "properties": {}},
+    },
+    "get_asset_coverage": {
+        "description": "Return asset coverage by layer for tables, fields, lineage, quality rules, tasks, data sources, and runs.",
+        "schema": {"type": "object", "properties": {}},
+    },
     "is_core_table": {
         "description": "Decide whether a table is core and return explainable scoring reasons.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]},
@@ -196,6 +204,10 @@ def _call_tool(store, request, live=None):
         data = store.list_expert_review_queue(args.get("layer", ""), args.get("limit", 50))
     elif name == "list_metadata":
         data = store.list_metadata()
+    elif name == "get_sync_health":
+        data = store.get_sync_health()
+    elif name == "get_asset_coverage":
+        data = store.get_asset_coverage()
     else:
         data = store.is_core_table(args["table_name"])
 
@@ -298,26 +310,51 @@ def _format_markdown(tool_name, data):
         downstream = _table(["下游", "经由"], [[r.get("downstream"), r.get("via")] for r in data.get("downstream", [])])
         return f"**血缘关系**\n\n上游：\n\n{upstream}\n\n下游：\n\n{downstream}"
     if tool_name == "get_table_profile":
-        table = data.get("table", {})
-        core = data.get("core", {})
+        return _format_table_profile(data)
+    if tool_name == "get_sync_health":
+        counts = data.get("counts", {})
+        signals = data.get("latest_signals", {})
         return "\n\n".join(
             [
                 _section(
-                    f"表画像：{table.get('name')}",
+                    "同步健康检查",
                     [
-                        f"库：`{_cell(table.get('database'))}`",
-                        f"层级：`{_cell(table.get('layer'))}`",
-                        f"领域：`{_cell(table.get('domain'))}`",
-                        f"负责人：`{_cell(table.get('owner'))}`",
-                        f"描述：{_cell(table.get('description'))}",
-                        f"核心表：**{core.get('is_core')}**，分数：**{core.get('score')}**，原因：{', '.join(core.get('reasons') or [])}",
+                        f"状态：**{_cell(data.get('status'))}**",
+                        f"缺口数：**{len(data.get('gaps') or [])}**",
+                        f"说明：{'; '.join(data.get('notes') or [])}",
                     ],
                 ),
-                _format_expert_label(data.get("expert_label") or {"error": "expert_label_not_found"}),
-                _format_markdown("list_table_columns", {"table_name": table.get("name"), "columns": data.get("columns", [])}),
-                _format_markdown("get_table_lineage", data.get("lineage", {})),
-                _format_markdown("get_quality_status", {"table_name": table.get("name"), "has_quality_monitoring": bool(data.get("quality", {}).get("rule_count")), **data.get("quality", {})}),
-                _section("相关任务", []) + "\n\n" + _table(["TaskId", "任务名", "方向", "状态"], [[t.get("id"), t.get("name"), t.get("direction"), t.get("status")] for t in data.get("tasks", [])]),
+                _table("资产类型 数量".split(), [[_count_label(k), v] for k, v in counts.items()]),
+                _section("最新同步线索", []) + "\n\n" + _table(
+                    ["线索", "时间"],
+                    [[_count_label(k), v] for k, v in signals.items()],
+                ),
+                _section("当前缺口", data.get("gaps") or ["暂无明显缺口"]),
+            ]
+        )
+    if tool_name == "get_asset_coverage":
+        totals = data.get("totals", {})
+        return "\n\n".join(
+            [
+                _section("资产覆盖率", ["按已同步表资产统计。"]),
+                _table("资产类型 数量".split(), [[_count_label(k), v] for k, v in totals.items()]),
+                _table(
+                    ["层级", "表数", "有字段", "有质量规则", "有下游", "有上游", "有关联任务", "有数据源"],
+                    [
+                        [
+                            r.get("layer"),
+                            r.get("table_count"),
+                            _ratio(r.get("tables_with_columns"), r.get("table_count")),
+                            _ratio(r.get("tables_with_quality_rules"), r.get("table_count")),
+                            _ratio(r.get("tables_with_downstream"), r.get("table_count")),
+                            _ratio(r.get("tables_with_upstream"), r.get("table_count")),
+                            _ratio(r.get("tables_with_tasks"), r.get("table_count")),
+                            _ratio(r.get("tables_with_data_source"), r.get("table_count")),
+                        ]
+                        for r in data.get("layers", [])
+                    ],
+                ),
+                _section("说明", data.get("coverage_notes") or []),
             ]
         )
     if tool_name == "is_core_table":
@@ -416,6 +453,79 @@ def _format_metric_definition(data):
     )
 
 
+def _format_table_profile(data):
+    table = data.get("table", {})
+    core = data.get("core", {})
+    quality = data.get("quality", {})
+    lineage = data.get("lineage", {})
+    source = data.get("data_source") or {}
+    return "\n\n".join(
+        [
+            _section(
+                f"标准表画像：{table.get('name')}",
+                [
+                    f"库：`{_cell(table.get('database'))}`",
+                    f"层级：`{_cell(table.get('layer'))}`",
+                    f"领域：`{_cell(table.get('domain'))}`",
+                    f"负责人：`{_cell(table.get('owner'))}`",
+                    f"描述：{_cell(table.get('description'))}",
+                    f"数据源ID：`{_cell(table.get('data_source_id'))}`",
+                ],
+            ),
+            _section(
+                "资产价值与核心表判断",
+                [
+                    f"是否核心：**{core.get('is_core')}**",
+                    f"核心等级：**{_cell(core.get('core_level'))}**",
+                    f"价值分层：**{_cell(core.get('value_tier'))}**",
+                    f"分数：**{core.get('score')}**",
+                    f"依据：{', '.join(core.get('reasons') or [])}",
+                ],
+            ),
+            _format_expert_label(data.get("expert_label")),
+            _section("字段信息", [f"字段数：{len(data.get('columns', []))}"]) + "\n\n" + _table(
+                ["字段名", "类型", "说明"],
+                [[c.get("name"), c.get("type"), c.get("description")] for c in data.get("columns", [])],
+            ),
+            _section("上下游血缘", [f"上游数：{len(lineage.get('upstream', []))}", f"下游数：{len(lineage.get('downstream', []))}"])
+            + "\n\n上游：\n\n"
+            + _table(["表名", "经由"], [[r.get("upstream"), r.get("via")] for r in lineage.get("upstream", [])])
+            + "\n\n下游：\n\n"
+            + _table(["表名", "经由"], [[r.get("downstream"), r.get("via")] for r in lineage.get("downstream", [])]),
+            _section("相关任务", [f"任务数：{len(data.get('tasks', []))}"]) + "\n\n" + _table(
+                ["TaskId", "任务名", "方向", "状态", "负责人"],
+                [[t.get("id"), t.get("name"), t.get("direction"), t.get("status"), t.get("owner")] for t in data.get("tasks", [])],
+            ),
+            _format_profile_data_source(source),
+            _section("质量监控", [f"是否有监控：{bool(quality.get('rule_count'))}", f"规则数：{quality.get('rule_count')}", f"最新状态：`{_cell(quality.get('latest_status'))}`"])
+            + "\n\n"
+            + _table(
+                ["规则名", "类型", "目标", "启用", "状态", "检查时间"],
+                [[r.get("rule_name"), r.get("rule_type"), r.get("target"), r.get("enabled"), r.get("last_status"), r.get("last_checked_at")] for r in quality.get("rules", [])],
+            ),
+            _section("运行状态", [f"最近运行实例数：{len(data.get('latest_runs', []))}"]) + "\n\n" + _table(
+                ["TaskId", "任务名", "实例日期", "开始时间", "结束时间", "耗时秒", "状态"],
+                [[r.get("task_id"), r.get("task_name"), r.get("instance_date"), r.get("start_time"), r.get("end_time"), r.get("duration_seconds"), r.get("status")] for r in data.get("latest_runs", [])],
+            ),
+            _section("当前缺口", data.get("gaps") or ["暂无明显缺口"]),
+        ]
+    )
+
+
+def _format_profile_data_source(source):
+    if not source:
+        return _section("数据源", ["未关联数据源"])
+    return _section(
+        "数据源",
+        [
+            f"名称：**{_cell(source.get('name'))}**",
+            f"类型：`{_cell(source.get('type'))}`",
+            f"负责人：`{_cell(source.get('owner'))}` / `{_cell(source.get('owner_name'))}`",
+            f"关联任务数：{source.get('task_count', 0)}",
+        ],
+    )
+
+
 def _field_names(fields):
     return [field.get("name", "") for field in fields if field.get("name")]
 
@@ -432,3 +542,31 @@ def _table(headers, rows):
 def _cell(value):
     text = "" if value is None else str(value)
     return text.replace("|", "\\|").replace("\n", " ")
+
+
+def _ratio(value, total):
+    value = int(value or 0)
+    total = int(total or 0)
+    if not total:
+        return "0/0"
+    return f"{value}/{total} ({value / total:.0%})"
+
+
+def _count_label(key):
+    labels = {
+        "tables": "表资产",
+        "columns": "字段",
+        "tasks": "任务",
+        "task_table_mappings": "任务表映射",
+        "task_runs": "运行实例",
+        "data_sources": "数据源",
+        "data_source_tasks": "数据源关联任务",
+        "lineage_edges": "血缘边",
+        "quality_rules": "质量规则",
+        "expert_labels": "专家标注",
+        "latest_task_run_start": "最近任务开始",
+        "latest_task_run_end": "最近任务结束",
+        "latest_quality_check": "最近质量检查",
+        "latest_data_source_task_create": "最近数据源任务创建",
+    }
+    return labels.get(key, key)
