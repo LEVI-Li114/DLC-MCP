@@ -61,6 +61,12 @@ class DeployScriptsTest(unittest.TestCase):
         self.assertIn("elapsed_seconds", script)
         self.assertNotIn("sync_wedata", script)
 
+    def test_full_asset_facts_sync_script_reports_elapsed_time(self):
+        script = (ROOT / "deploy" / "sync-all-asset-facts.sh").read_text()
+
+        self.assertIn("dlc_mcp.sync_asset_facts", script)
+        self.assertIn("elapsed_seconds", script)
+
     def test_sync_script_runs_health_coverage_and_gap_checks(self):
         script = (ROOT / "deploy" / "sync-wedata-once.sh").read_text()
 

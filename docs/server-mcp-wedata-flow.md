@@ -135,6 +135,19 @@ WEDATA_FULL_FIELDS_RETRY_BASE_SLEEP=2
 WEDATA_FULL_FIELDS_PROGRESS_EVERY=50
 ```
 
+For a stable one-off full asset fact backfill after fields are ready, use:
+
+```bash
+cd /opt/dlc-mcp/DLC-MCP
+bash deploy/sync-all-asset-facts.sh /etc/dlc-mcp/env
+```
+
+This syncs full task mappings, lineage, quality rules, and a wider task-instance window. It writes elapsed time and failures to:
+
+```text
+/data/dlc-mcp/sync/wedata_asset_facts_full_report.json
+```
+
 ## 6. Optional: Sync Task Runs
 
 After `ListTaskInstances` works for your tenant, enable run-instance sync:
