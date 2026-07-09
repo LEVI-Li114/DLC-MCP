@@ -71,6 +71,14 @@ class WeDataImportTest(unittest.TestCase):
                         "config": {"host": "mysql.internal", "database": "crm"},
                     }
                 ],
+                "table_partitions": [
+                    {
+                        "table_name": "dws_customer_order_daily",
+                        "partition_name": "dt=2026-07-01",
+                        "partition_date": "2026-07-01",
+                        "row_count": 100,
+                    }
+                ],
             },
         )
 
@@ -82,6 +90,7 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual(store.get_task("task_001")["outputs"], ["dws_customer_order_daily"])
         self.assertEqual(store.get_task_runs("task_001")["runs"][0]["duration_seconds"], 330)
         self.assertEqual(store.get_data_source("ds_001")["name"], "mysql_prod")
+        self.assertEqual(store.get_table_partition_profile("dws_customer_order_daily", "2026-07-01")["target_partition"]["row_count"], 100)
 
     def test_builds_snapshot_from_api_dump(self):
         snapshot = snapshot_from_api_dump(
@@ -200,6 +209,32 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual(snapshot["tables"][0]["columns"][0]["name"], "company_id")
         self.assertEqual(snapshot["lineage"][0]["downstream"], "ads_bill_company_1d_di_report")
         self.assertEqual(snapshot["quality_rules"][0]["target"], "bill_amt")
+
+    def test_maps_table_partitions_from_api_dump(self):
+        snapshot = snapshot_from_api_dump(
+            {
+                "table_partitions": {
+                    "Response": {
+                        "Data": {
+                            "Items": [
+                                {
+                                    "QueriedTableName": "ads_bill_company_1d_di",
+                                    "PartitionName": "dt=20260708",
+                                    "RowCount": 123,
+                                    "StorageBytes": 456,
+                                    "FileCount": 7,
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+
+        partition = snapshot["table_partitions"][0]
+        self.assertEqual(partition["table_name"], "ads_bill_company_1d_di")
+        self.assertEqual(partition["partition_date"], "2026-07-08")
+        self.assertEqual(partition["row_count"], 123)
 
     def test_maps_data_sources_from_api_dump(self):
         snapshot = snapshot_from_api_dump(

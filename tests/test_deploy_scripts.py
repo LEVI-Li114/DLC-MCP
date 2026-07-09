@@ -6,12 +6,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeployScriptsTest(unittest.TestCase):
-    def test_sync_cron_installer_runs_every_six_hours(self):
+    def test_sync_cron_installer_runs_managed_sync_at_five(self):
         script = (ROOT / "deploy" / "install-sync-cron.sh").read_text()
 
-        self.assertIn("0 */6 * * *", script)
+        self.assertIn("0 5 * * *", script)
         self.assertIn("dlc-mcp-wedata-sync", script)
-        self.assertIn("deploy/sync-wedata-once.sh", script)
+        self.assertIn("deploy/sync-wedata-managed.sh", script)
         self.assertIn("DLC_MCP_REPO_DIR", script)
         self.assertIn("DLC_MCP_LOG_DIR", script)
 
@@ -25,13 +25,32 @@ class DeployScriptsTest(unittest.TestCase):
             "WEDATA_SYNC_TABLE_CATALOG",
             "WEDATA_METADATA_WORKERS",
             "WEDATA_SYNC_DATA_SOURCES",
+            "WEDATA_SYNC_PARTITIONS",
+            "WEDATA_PARTITION_ACTION",
             "WEDATA_INSTANCE_TIMEZONE",
             "DLC_MCP_SYNC_HEALTH_CHECK",
             "DLC_MCP_SYNC_GAP_TYPES",
             "DLC_MCP_SYNC_GAP_LIMIT",
+            "DLC_MCP_SYNC_MODE",
+            "DLC_MCP_DAILY_NEW_ASSET_STRICT",
+            "DLC_MCP_MONTHLY_METADATA_TABLE_LIMIT",
             "DLC_MCP_GATEWAY_TOKEN",
         ]:
             self.assertIn(key, env)
+
+    def test_managed_sync_controls_daily_and_monthly_modes(self):
+        script = (ROOT / "deploy" / "sync-wedata-managed.sh").read_text()
+
+        self.assertIn("DLC_MCP_SYNC_MODE", script)
+        self.assertIn("TOMORROW_DAY", script)
+        self.assertIn("MODE=\"monthly\"", script)
+        self.assertIn("MODE=\"daily\"", script)
+        self.assertIn("WEDATA_NEW_ASSET_START", script)
+        self.assertIn("WEDATA_NEW_ASSET_END", script)
+        self.assertIn("WEDATA_SYNC_PARTITIONS", script)
+        self.assertIn("WEDATA_PARTITION_DATE", script)
+        self.assertIn("WEDATA_INSTANCE_START", script)
+        self.assertIn("deploy/sync-wedata-once.sh", script)
 
     def test_sync_script_runs_health_coverage_and_gap_checks(self):
         script = (ROOT / "deploy" / "sync-wedata-once.sh").read_text()

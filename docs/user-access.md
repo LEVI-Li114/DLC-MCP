@@ -133,6 +133,16 @@ DLC_MCP_GATEWAY_TOKEN = "replace-with-random-token"
 
 然后重启 Codex。
 
+## 避免 Codex 命令确认
+
+推荐流程：
+
+```text
+普通终端执行一次 install-codex -> 重启 Codex -> 在 Codex 里直接问 dlc-mcp
+```
+
+不要让 Codex 在对话里代跑 `curl`、`ssh` 或 `TOKEN=$(...)` 去查资产。那些是 shell 命令，Codex 会按安全策略询问是否允许。安装完成后，查询表结构、资产画像、任务运行状态都应该直接走 `dlc-mcp` MCP 工具。
+
 ## 用户验证
 
 在 Codex 中提问：

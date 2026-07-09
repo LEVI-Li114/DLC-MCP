@@ -38,6 +38,8 @@ Then restart Codex and ask questions such as:
 - `dwd_call_sms_instance_bill_di 是不是核心表？`
 - `tech_support 这个数据源关联了多少任务？`
 
+Use the installer once from a normal terminal. After Codex restarts, data queries should go through the `dlc-mcp` MCP tools directly, not through shell, `curl`, or `ssh`; that avoids Codex command approval prompts during normal use.
+
 ## Server
 
 Server setup, WeData credentials, sync jobs, cron, Gateway startup, and smoke tests are documented in [docs/server-mcp-wedata-flow.md](docs/server-mcp-wedata-flow.md).

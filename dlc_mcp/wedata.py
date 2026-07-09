@@ -33,6 +33,9 @@ def import_wedata_snapshot(store, snapshot):
     for run in snapshot.get("task_instances", []):
         store.upsert_task_run(run)
 
+    for partition in snapshot.get("table_partitions", []):
+        store.upsert_table_partition(partition)
+
     for data_source in snapshot.get("data_sources", []):
         store.upsert_data_source(data_source)
 
@@ -56,6 +59,7 @@ def snapshot_from_api_dump(dump):
         "tables": tables,
         "tasks": tasks,
         "task_instances": [_task_instance_from_api(item) for item in _items(dump.get("task_instances", {}))],
+        "table_partitions": [_partition_from_api(item) for item in _items(dump.get("table_partitions", {}))],
         "data_sources": data_sources + _builtin_data_sources(tables, data_sources),
         "data_source_tasks": _data_source_tasks_from_dump(dump.get("data_source_tasks", {})),
         "lineage": [edge for edge in (_lineage_from_api(item) for item in _items(dump.get("lineage", {}))) if edge["upstream"] and edge["downstream"] and edge["upstream"] != edge["downstream"]],
@@ -403,6 +407,21 @@ def _task_instance_from_api(item):
     }
 
 
+def _partition_from_api(item):
+    table_name = _get(item, "QueriedTableName", "TableName", "Name", "tableName")
+    partition_name = _get(item, "PartitionName", "Partition", "PartitionSpec", "Name", "partitionName")
+    return {
+        "table_name": table_name,
+        "partition_name": partition_name,
+        "partition_date": _get(item, "PartitionDate", "Dt", "Date", "BizDate", "partitionDate", default=_date_from_partition_name(partition_name)),
+        "row_count": _get(item, "RowCount", "Rows", "RecordCount", "rowCount", default=0),
+        "storage_bytes": _get(item, "StorageBytes", "StorageSize", "SizeBytes", "storageBytes", default=0),
+        "file_count": _get(item, "FileCount", "Files", "fileCount", default=0),
+        "updated_at": _get(item, "UpdateTime", "ModifiedTime", "LastModifyTime", "updatedAt"),
+        "collected_at": _get(item, "CollectedAt", "CreateTime", "createTime"),
+    }
+
+
 def _data_source_from_api(item):
     config_source = _json_dict(_get(item, "ProdConProperties", "DevConProperties", default=""))
     config = {}
@@ -481,6 +500,14 @@ def _duration_seconds(item, cost_time):
     if cost_time is not None:
         return int((int(cost_time) or 0) / 1000)
     return int(_get(item, "CostSeconds", "DurationSeconds", "duration_seconds", default=0) or 0)
+
+
+def _date_from_partition_name(name):
+    match = re.search(r"\d{4}-\d{2}-\d{2}|\d{8}", str(name or ""))
+    if not match:
+        return ""
+    value = match.group(0)
+    return f"{value[:4]}-{value[4:6]}-{value[6:8]}" if len(value) == 8 else value
 
 
 def _layer_from_name(name):

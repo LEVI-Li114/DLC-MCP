@@ -53,6 +53,7 @@ function installCodex() {
   const next = replaceBlock(current, codexBlock()).trimEnd() + "\n";
   fs.writeFileSync(configPath, next);
   console.log(`Installed dlc-mcp MCP in ${configPath}`);
+  console.log("Restart Codex, then ask with dlc-mcp directly. Do not ask Codex to run curl or shell commands for data queries.");
 }
 
 function codexBlock() {

@@ -40,8 +40,18 @@ def main():
         print(f"saved raw table catalog dump to {tables_path}", flush=True)
 
     if os.environ.get("WEDATA_SYNC_METADATA") == "1":
+        if os.environ.get("WEDATA_NEW_ASSET_START") and os.environ.get("WEDATA_NEW_ASSET_END"):
+            table_names = _filter_new_asset_tables(table_names, catalog_tables, os.environ["WEDATA_NEW_ASSET_START"], os.environ["WEDATA_NEW_ASSET_END"])
         metadata_dump = _sync_metadata(client, project_id, table_names, page_size, work_dir, catalog_tables)
         dump.update(_merge_metadata_dump(dump, metadata_dump))
+
+    if os.environ.get("WEDATA_SYNC_PARTITIONS") == "1":
+        partitions_response = _sync_partitions(client, project_id, table_names, page_size)
+        partitions_path = os.path.join(work_dir, "wedata_table_partitions.json")
+        with open(partitions_path, "w", encoding="utf-8") as f:
+            json.dump(partitions_response, f, ensure_ascii=False, indent=2)
+        dump["table_partitions"] = partitions_response
+        print(f"saved raw table partitions dump to {partitions_path}", flush=True)
 
     if os.environ.get("WEDATA_SYNC_DATA_SOURCES") == "1":
         data_sources_response = _list_all(client, "ListDataSources", {"ProjectId": project_id}, page_size)
@@ -86,6 +96,8 @@ def main():
         print(f"synced metadata details for {_metadata_table_count(metadata_dump)} tables", flush=True)
     if "data_sources" in dump:
         print(f"synced {len(dump['data_sources']['Response']['Data']['Items'])} WeData data sources", flush=True)
+    if "table_partitions" in dump:
+        print(f"synced partitions for {_response_item_count(dump['table_partitions'])} table partitions", flush=True)
 
 
 def _list_all(client, action, payload, page_size, max_pages=None):
@@ -142,6 +154,24 @@ def _sync_data_source_tasks(client, data_sources_response, progress_every=10):
     return related
 
 
+def _sync_partitions(client, project_id, table_names, page_size, progress_every=10):
+    action = os.environ.get("WEDATA_PARTITION_ACTION", "ListTablePartitions")
+    partition_date = os.environ.get("WEDATA_PARTITION_DATE", "")
+    items = []
+    total = len(table_names)
+    for index, table_name in enumerate(table_names, start=1):
+        payload = {"ProjectId": project_id, "TableName": table_name}
+        if partition_date:
+            payload["PartitionDate"] = partition_date
+        response = _list_all(client, action, payload, page_size)
+        for item in response.get("Response", {}).get("Data", {}).get("Items") or []:
+            item["QueriedTableName"] = table_name
+            items.append(item)
+        if progress_every and (index == total or index % progress_every == 0):
+            print(f"synced partitions for {index}/{total} tables", flush=True)
+    return {"Response": {"Data": {"Items": items}}}
+
+
 def _response_item_count(response):
     return len(response.get("Response", {}).get("Data", {}).get("Items") or [])
 
@@ -161,6 +191,51 @@ def _catalog_tables_by_name(response):
 
 def _metadata_table_count(metadata_dump):
     return _response_item_count(metadata_dump.get("tables", {}))
+
+
+def _filter_new_asset_tables(table_names, catalog_tables, start, end):
+    if not catalog_tables:
+        if os.environ.get("WEDATA_NEW_ASSET_STRICT", "1") == "1":
+            raise RuntimeError("WEDATA_NEW_ASSET_START requires WEDATA_SYNC_TABLE_CATALOG=1")
+        return []
+    window_start = _parse_date(start)
+    window_end = _parse_date(end)
+    if not any(_item_dates(item) for item in catalog_tables.values()) and os.environ.get("WEDATA_NEW_ASSET_STRICT", "1") == "1":
+        raise RuntimeError("ListTable response has no recognized create/update time fields for new asset sync")
+    names = set(table_names)
+    return sorted(
+        name
+        for name, item in catalog_tables.items()
+        if name in names and any(_date_in_window(value, window_start, window_end) for value in _item_dates(item))
+    )
+
+
+def _item_dates(item):
+    dates = []
+    for field in ("CreateTime", "CreateDate", "CreatedAt", "CreateAt", "GmtCreate", "UpdateTime", "ModifyTime", "ModifiedAt", "LastModifyTime"):
+        if item.get(field):
+            value = _parse_date(str(item[field]))
+            if value:
+                dates.append(value)
+    return dates
+
+
+def _parse_date(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.isdigit() and len(text) >= 10:
+        return datetime.fromtimestamp(int(text[:10])).date()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text[:19] if "T" in fmt else text[:10 if fmt == "%Y-%m-%d" else 19], fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _date_in_window(value, start, end):
+    return bool(value and start and end and start <= value <= end)
 
 
 def _instance_window():

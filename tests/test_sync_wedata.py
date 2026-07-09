@@ -6,7 +6,7 @@ from io import StringIO
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from dlc_mcp.sync_wedata import _catalog_table_names, _instance_window, _metadata_table_count, _sync_data_source_tasks, _sync_metadata
+from dlc_mcp.sync_wedata import _catalog_table_names, _filter_new_asset_tables, _instance_window, _metadata_table_count, _sync_data_source_tasks, _sync_metadata, _sync_partitions
 
 
 class FakeClient:
@@ -21,6 +21,11 @@ class FakeMetadataClient:
         if action == "GetTableColumns":
             return {"Response": {"Data": [{"Name": "id"}]}}
         return {"Response": {"Data": {"Items": []}}}
+
+
+class FakePartitionClient:
+    def call(self, action, payload):
+        return {"Response": {"Data": {"Items": [{"PartitionName": "dt=" + payload.get("PartitionDate", "2026-07-08"), "RowCount": 10}]}}}
 
 
 class FakeCatalogMetadataClient(FakeMetadataClient):
@@ -97,6 +102,30 @@ class SyncWeDataTest(unittest.TestCase):
             )
 
         self.assertEqual(payload["tables"]["Response"]["Data"]["Items"][0]["Columns"], [{"Name": "id"}])
+
+    def test_filter_new_asset_tables_uses_catalog_create_time(self):
+        tables = {
+            "new_table": {"Name": "new_table", "CreateTime": "2026-07-08 10:00:00"},
+            "old_table": {"Name": "old_table", "CreateTime": "2026-07-07 10:00:00"},
+            "updated_table": {"Name": "updated_table", "CreateTime": "2026-07-01 10:00:00", "UpdateTime": "2026-07-08 11:00:00"},
+        }
+
+        names = _filter_new_asset_tables(["new_table", "old_table", "updated_table"], tables, "2026-07-08", "2026-07-08")
+
+        self.assertEqual(names, ["new_table", "updated_table"])
+
+    def test_filter_new_asset_tables_fails_without_time_fields_in_strict_mode(self):
+        with patch.dict(os.environ, {"WEDATA_NEW_ASSET_STRICT": "1"}):
+            with self.assertRaises(RuntimeError):
+                _filter_new_asset_tables(["table_a"], {"table_a": {"Name": "table_a"}}, "2026-07-08", "2026-07-08")
+
+    def test_partition_sync_tags_table_name(self):
+        with patch.dict(os.environ, {"WEDATA_PARTITION_DATE": "2026-07-08"}):
+            response = _sync_partitions(FakePartitionClient(), "project", ["ads_bill_company_1d_di"], 100, progress_every=0)
+
+        item = response["Response"]["Data"]["Items"][0]
+        self.assertEqual(item["QueriedTableName"], "ads_bill_company_1d_di")
+        self.assertEqual(item["PartitionName"], "dt=2026-07-08")
 
 
 if __name__ == "__main__":
