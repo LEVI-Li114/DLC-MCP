@@ -327,6 +327,11 @@ class WeDataImportTest(unittest.TestCase):
                                     "TaskTypeId": 32,
                                     "TaskLatestVersionStatus": "Y11",
                                     "OwnerUin": "100043939904",
+                                    "CycleType": "DAY",
+                                    "ScheduleTime": "08:00",
+                                    "ScheduleDesc": "每天 08:00 调度",
+                                    "InputTableList": [{"TableName": "dwd_bill_company_di"}],
+                                    "OutputTables": "ads_bill_company_1d_di, ads_bill_company_7d_di",
                                 }
                             ]
                         }
@@ -341,13 +346,43 @@ class WeDataImportTest(unittest.TestCase):
                 "id": "20251013191831005",
                 "name": "1",
                 "task_type": "32",
-                "cycle": "",
+                "cycle": "DAY",
+                "schedule_time": "08:00",
+                "schedule_desc": "每天 08:00 调度",
                 "owner": "100043939904",
                 "status": "Y11",
-                "inputs": [],
-                "outputs": [],
+                "inputs": ["dwd_bill_company_di"],
+                "outputs": ["ads_bill_company_1d_di", "ads_bill_company_7d_di"],
             },
         )
+
+    def test_maps_task_table_names_from_nested_dependency_variants(self):
+        snapshot = snapshot_from_api_dump(
+            {
+                "tasks": {
+                    "Response": {
+                        "Data": {
+                            "Items": [
+                                {
+                                    "TaskId": "task_nested",
+                                    "TaskName": "build_ads_bill_company_1d_di",
+                                    "SourceTables": '[{"TableName":"dwd_bill_company_di"},{"Name":"dim_company"}]',
+                                    "DependencyConfig": {
+                                        "TargetTableList": [
+                                            {"DbTableName": "byai_bigdata.ads_bill_company_1d_di"},
+                                            {"ResourceName": "byai_bigdata.ads_bill_company_1d_di"},
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(snapshot["tasks"][0]["inputs"], ["dwd_bill_company_di", "dim_company"])
+        self.assertEqual(snapshot["tasks"][0]["outputs"], ["ads_bill_company_1d_di"])
 
     def test_derives_table_asset_from_layer_named_task(self):
         snapshot = snapshot_from_api_dump(
@@ -380,6 +415,56 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual(snapshot["tables"][0]["name"], "ads_bill_company_1d_di")
         self.assertEqual(snapshot["tables"][0]["layer"], "ads")
         self.assertEqual(snapshot["tables"][0]["domain"], "finance")
+
+    def test_maps_task_table_names_from_sql_when_structured_fields_missing(self):
+        snapshot = snapshot_from_api_dump(
+            {
+                "tasks": {
+                    "Response": {
+                        "Data": {
+                            "Items": [
+                                {
+                                    "TaskId": "task_sql",
+                                    "TaskName": "sql_task",
+                                    "SqlContent": """
+                                        -- ignore ods_commented
+                                        insert overwrite table ads_bill_company_1d_di
+                                        select a.company_id, b.company_name
+                                        from byai_bigdata.dwd_bill_company_di a
+                                        join dim_company b on a.company_id = b.company_id
+                                    """,
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(snapshot["tasks"][0]["outputs"], ["ads_bill_company_1d_di"])
+        self.assertEqual(snapshot["tasks"][0]["inputs"], ["dwd_bill_company_di", "dim_company"])
+
+    def test_maps_task_table_names_from_nested_sql_content(self):
+        snapshot = snapshot_from_api_dump(
+            {
+                "tasks": {
+                    "Response": {
+                        "Data": {
+                            "Items": [
+                                {
+                                    "TaskId": "task_sql_nested",
+                                    "TaskName": "nested_sql_task",
+                                    "TaskExt": '{"Sql":"create table dws_bill_company_1d_di as select * from ods_bill_company_di"}',
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(snapshot["tasks"][0]["outputs"], ["dws_bill_company_1d_di"])
+        self.assertEqual(snapshot["tasks"][0]["inputs"], ["ods_bill_company_di"])
 
     def test_maps_task_instance_time_fields(self):
         snapshot = snapshot_from_api_dump(

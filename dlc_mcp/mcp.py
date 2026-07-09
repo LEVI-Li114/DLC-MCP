@@ -14,6 +14,43 @@ TOOLS = {
         "description": "Return table metadata, columns, lineage, quality status, and core-table decision.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
     },
+    "get_table_partition_profile": {
+        "description": "Return table partition profile, row counts, recent partitions, and partition health based on synced partition facts.",
+        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "partition_date": {"type": "string"}}, "required": ["table_name"]},
+    },
+    "get_table_readiness": {
+        "description": "Return a governance readiness report for any table asset profile.",
+        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
+    },
+    "get_table_production_status": {
+        "description": "Return table-level production status from output tasks and latest task run instances.",
+        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "instance_date": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
+    },
+    "get_table_production_risk_detail": {
+        "description": "Return actionable production-risk diagnosis for one table, including producer tasks, reasons, impact, and suggestions.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "table_name": {"type": "string"},
+                "instance_date": {"type": "string"},
+                "live": {"type": "boolean"},
+            },
+            "required": ["table_name"],
+        },
+    },
+    "list_table_production_risks": {
+        "description": "List table-level production risks from output tasks and task run instances.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "layer": {"type": "string"},
+                "core_level": {"type": "string"},
+                "instance_date": {"type": "string"},
+                "status": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+        },
+    },
     "list_table_columns": {
         "description": "List fields for a table.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
@@ -63,6 +100,22 @@ TOOLS = {
         "description": "Return reusable asset value tier and core-table decision for a table.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
     },
+    "get_asset_owner_profile": {
+        "description": "Return asset ownership chain and responsibility gaps for a table.",
+        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
+    },
+    "get_asset_usage_profile": {
+        "description": "Return metadata-proxy usage signals for a table asset.",
+        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
+    },
+    "get_asset_lifecycle_profile": {
+        "description": "Return lifecycle status and governance evidence for a table asset.",
+        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
+    },
+    "get_asset_change_impact": {
+        "description": "Return bounded change impact analysis for a table asset.",
+        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "change_type": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
+    },
     "get_metric_definition": {
         "description": "Explain metric definition for ads/dws tables from fields, lineage, and tasks.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
@@ -99,6 +152,17 @@ TOOLS = {
                 "gap_type": {"type": "string"},
                 "layer": {"type": "string"},
                 "limit": {"type": "integer"},
+            },
+        },
+    },
+    "get_asset_governance_daily_report": {
+        "description": "Return a daily governance patrol report for production risks, coverage gaps, quality gaps, owner gaps, lifecycle watch items, and expert review queue.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "instance_date": {"type": "string"},
+                "layer": {"type": "string"},
+                "core_level": {"type": "string"},
             },
         },
     },
@@ -149,6 +213,25 @@ def _call_tool(store, request, live=None):
         if live and (args.get("live") or data.get("error") or not data.get("columns")):
             live.sync_table(args["table_name"])
             data = store.get_table_profile(args["table_name"])
+    elif name == "get_table_partition_profile":
+        data = store.get_table_partition_profile(args["table_name"], args.get("partition_date", ""))
+    elif name == "get_table_readiness":
+        data = store.get_table_readiness(args["table_name"])
+        if live and (args.get("live") or data.get("error") or data.get("score", 0) < 80):
+            live.sync_table(args["table_name"])
+            data = store.get_table_readiness(args["table_name"])
+    elif name == "get_table_production_status":
+        data = store.get_table_production_status(args["table_name"], args.get("instance_date", ""))
+        if live and (args.get("live") or data.get("error") or data.get("status") in {"not_run", "unknown"}):
+            live.sync_table(args["table_name"])
+            data = store.get_table_production_status(args["table_name"], args.get("instance_date", ""))
+    elif name == "get_table_production_risk_detail":
+        data = store.get_table_production_risk_detail(args["table_name"], args.get("instance_date", ""))
+        if live and (args.get("live") or data.get("error") or data.get("status") in {"not_run", "unknown"}):
+            live.sync_table(args["table_name"])
+            data = store.get_table_production_risk_detail(args["table_name"], args.get("instance_date", ""))
+    elif name == "list_table_production_risks":
+        data = store.list_table_production_risks(args.get("layer", ""), args.get("core_level", ""), args.get("instance_date", ""), args.get("status", ""), args.get("limit", 50))
     elif name == "list_table_columns":
         data = store.list_table_columns(args["table_name"])
         if live and (args.get("live") or data.get("error") or not data.get("columns")):
@@ -202,6 +285,26 @@ def _call_tool(store, request, live=None):
         if live and (args.get("live") or data.get("error")):
             live.sync_table(args["table_name"])
             data = store.get_asset_value_profile(args["table_name"])
+    elif name == "get_asset_owner_profile":
+        data = store.get_asset_owner_profile(args["table_name"])
+        if live and (args.get("live") or data.get("error") or not data.get("owner_candidates")):
+            live.sync_table(args["table_name"])
+            data = store.get_asset_owner_profile(args["table_name"])
+    elif name == "get_asset_usage_profile":
+        data = store.get_asset_usage_profile(args["table_name"])
+        if live and (args.get("live") or data.get("error") or not data.get("signals")):
+            live.sync_table(args["table_name"])
+            data = store.get_asset_usage_profile(args["table_name"])
+    elif name == "get_asset_lifecycle_profile":
+        data = store.get_asset_lifecycle_profile(args["table_name"])
+        if live and (args.get("live") or data.get("error") or data.get("lifecycle_status") in {"新建/待补齐", "疑似废弃"}):
+            live.sync_table(args["table_name"])
+            data = store.get_asset_lifecycle_profile(args["table_name"])
+    elif name == "get_asset_change_impact":
+        data = store.get_asset_change_impact(args["table_name"], args.get("change_type", "logic_change"))
+        if live and (args.get("live") or data.get("error") or (not data.get("direct_downstream") and not data.get("affected_tasks"))):
+            live.sync_table(args["table_name"])
+            data = store.get_asset_change_impact(args["table_name"], args.get("change_type", "logic_change"))
     elif name == "get_metric_definition":
         data = store.get_metric_definition(args["table_name"])
         if live and (args.get("live") or data.get("error") or not data.get("metric_fields")):
@@ -221,6 +324,8 @@ def _call_tool(store, request, live=None):
         data = store.get_asset_coverage()
     elif name == "list_asset_coverage_gaps":
         data = store.list_asset_coverage_gaps(args.get("gap_type", ""), args.get("layer", ""), args.get("limit", 50))
+    elif name == "get_asset_governance_daily_report":
+        data = store.get_asset_governance_daily_report(args.get("instance_date", ""), args.get("layer", ""), args.get("core_level", ""))
     else:
         data = store.is_core_table(args["table_name"])
 
@@ -279,6 +384,14 @@ def _format_markdown(tool_name, data):
         )
     if tool_name == "get_asset_value_profile":
         return _format_asset_value_profile(data)
+    if tool_name == "get_asset_owner_profile":
+        return _format_asset_owner_profile(data)
+    if tool_name == "get_asset_usage_profile":
+        return _format_asset_usage_profile(data)
+    if tool_name == "get_asset_lifecycle_profile":
+        return _format_asset_lifecycle_profile(data)
+    if tool_name == "get_asset_change_impact":
+        return _format_asset_change_impact(data)
     if tool_name == "get_metric_definition":
         return _format_metric_definition(data)
     if tool_name == "list_quality_gaps":
@@ -324,6 +437,48 @@ def _format_markdown(tool_name, data):
         return f"**血缘关系**\n\n上游：\n\n{upstream}\n\n下游：\n\n{downstream}"
     if tool_name == "get_table_profile":
         return _format_table_profile(data)
+    if tool_name == "get_table_partition_profile":
+        return _format_table_partition_profile(data)
+    if tool_name == "get_table_readiness":
+        return _format_table_readiness(data)
+    if tool_name == "get_table_production_status":
+        return _format_table_production_status(data)
+    if tool_name == "get_table_production_risk_detail":
+        return _format_table_production_risk_detail(data)
+    if tool_name == "list_table_production_risks":
+        rows = data.get("results", [])
+        return "\n\n".join(
+            [
+                _section(
+                    "表产出风险清单",
+                    [
+                        f"层级：`{_cell(data.get('layer'))}`",
+                        f"核心等级：`{_cell(data.get('core_level'))}`",
+                        f"实例日期：`{_cell(data.get('instance_date'))}`",
+                        f"状态：`{_cell(data.get('status'))}`",
+                        f"数量：{len(rows)}",
+                    ],
+                ),
+                _table(
+                    ["表名", "层级", "领域", "负责人", "核心等级", "价值分层", "产出状态", "产出任务数", "原因", "建议"],
+                    [
+                        [
+                            r.get("name"),
+                            r.get("layer"),
+                            r.get("domain"),
+                            r.get("owner"),
+                            r.get("core_level"),
+                            r.get("value_tier"),
+                            r.get("status_label"),
+                            r.get("producer_task_count"),
+                            "；".join(r.get("reasons") or []),
+                            "；".join(r.get("suggestions") or []),
+                        ]
+                        for r in rows
+                    ],
+                ),
+            ]
+        )
     if tool_name == "get_sync_health":
         counts = data.get("counts", {})
         signals = data.get("latest_signals", {})
@@ -404,8 +559,10 @@ def _format_markdown(tool_name, data):
                 ),
             ]
         )
+    if tool_name == "get_asset_governance_daily_report":
+        return _format_asset_governance_daily_report(data)
     if tool_name == "is_core_table":
-        return _section(f"核心表判断：{data.get('table_name')}", [f"是否核心：**{data.get('is_core')}**", f"分数：**{data.get('score')}**", f"原因：{', '.join(data.get('reasons') or [])}"])
+        return _format_core_decision(data)
     return "```json\n" + json.dumps(data, ensure_ascii=False, indent=2) + "\n```"
 
 
@@ -434,25 +591,213 @@ def _format_expert_label(label):
 
 
 def _format_asset_value_profile(data):
-    dimensions = data.get("dimensions") or {}
+    dimensions = (data.get("machine") or {}).get("dimensions") or data.get("dimensions") or {}
+    final = data.get("final") or {}
+    machine = data.get("machine") or {}
+    manual = data.get("manual") or {}
     return "\n\n".join(
         [
             _section(
                 f"资产价值模型：{data.get('table_name')}",
                 [
-                    f"价值分层：**{_cell(data.get('value_tier'))}**",
-                    f"核心等级：**{_cell(data.get('core_level'))}**",
+                    f"最终价值分层：**{_cell(data.get('value_tier'))}**",
+                    f"最终核心等级：**{_cell(data.get('core_level'))}**",
                     f"是否核心表：**{data.get('is_core')}**",
-                    f"模型来源：`{_cell(data.get('source'))}`",
-                    f"总分：**{data.get('score')}**",
-                    f"依据：{', '.join(data.get('evidence') or [])}",
+                    f"判断来源：`{_cell(data.get('source'))}`",
+                    f"最终分数：**{data.get('score')}**",
+                    f"置信度：`{_cell(data.get('confidence'))}`",
+                    f"复核建议：{_cell(data.get('review_suggestion'))}",
+                ],
+            ),
+            _section(
+                "机器初判",
+                [
+                    f"机器分数：**{machine.get('score')}**",
+                    f"机器等级：`{_cell(machine.get('core_level'))}` / `{_cell(machine.get('value_tier'))}`",
+                    f"依据：{', '.join(machine.get('evidence') or data.get('evidence') or [])}",
                 ],
             ),
             _table(
                 ["维度", "分数"],
                 [[key, value] for key, value in dimensions.items()],
             ),
+            _section(
+                "最终判断",
+                [
+                    f"等级：`{_cell(final.get('core_level'))}`",
+                    f"分层：`{_cell(final.get('value_tier'))}`",
+                    f"来源：`{_cell(final.get('source'))}`",
+                ],
+            ),
+            _section(
+                "人工标注摘要",
+                [
+                    f"等级：`{_cell(manual.get('core_level'))}`",
+                    f"分层：`{_cell(manual.get('value_tier'))}`",
+                    f"Reviewer：`{_cell(manual.get('reviewer'))}`",
+                    f"原因：{_cell(manual.get('reason'))}",
+                ] if manual else ["暂无人工标注"],
+            ),
+            _section("当前缺口", data.get("gaps") or ["暂无明显缺口"]),
             _format_expert_label(data.get("expert_label")),
+        ]
+    )
+
+
+def _format_asset_owner_profile(data):
+    return "\n\n".join(
+        [
+            _section(
+                f"资产责任画像：{data.get('table_name')}",
+                [
+                    f"表Owner：`{_cell(data.get('table_owner'))}`",
+                    f"专家Owner：`{_cell(data.get('expert_owner'))}`，Reviewer：`{_cell(data.get('expert_reviewer'))}`",
+                    f"数据源Owner：`{_cell(data.get('data_source_owner'))}`",
+                ],
+            ),
+            _section("责任人候选", data.get("owner_candidates") or ["暂无"]),
+            _section("Owner 证据", []) + "\n\n" + _table("来源 Owner".split(), [["产出任务", owner] for owner in data.get("producer_task_owners", [])] + [["消费任务", owner] for owner in data.get("consumer_task_owners", [])] + [[f"下游表 {row.get('name')}", row.get("owner")] for row in data.get("downstream_owners", [])]),
+            _section("责任缺口", data.get("gaps") or ["暂无明显缺口"]),
+            _section("处理建议", data.get("suggestions") or []),
+        ]
+    )
+
+
+def _format_asset_usage_profile(data):
+    return "\n\n".join(
+        [
+            _section(
+                f"资产使用画像：{data.get('table_name')}",
+                [
+                    f"使用等级：**{_cell(data.get('usage_level'))}**",
+                    f"证据来源：`{_cell(data.get('usage_source'))}`（当前为元数据代理证据，不是真实查询日志）",
+                    f"下游数：**{data.get('downstream_count', 0)}**，消费任务数：**{data.get('consumer_task_count', 0)}**，产出任务数：**{data.get('producer_task_count', 0)}**",
+                    f"质量规则数：**{data.get('quality_rule_count', 0)}**，最近运行实例数：**{data.get('latest_run_count', 0)}**",
+                    f"专家使用场景：{_cell(data.get('expert_use_case'))}",
+                ],
+            ),
+            _section("使用信号", data.get("signals") or ["暂无元数据使用信号"]),
+            _section("当前缺口", data.get("gaps") or []),
+            _section("处理建议", data.get("suggestions") or []),
+        ]
+    )
+
+
+def _format_asset_lifecycle_profile(data):
+    return "\n\n".join(
+        [
+            _section(
+                f"资产生命周期：{data.get('table_name')}",
+                [
+                    f"生命周期状态：**{_cell(data.get('lifecycle_status'))}**",
+                    f"最近产出时间：`{_cell(data.get('latest_run_time'))}`",
+                    f"最近质量检查：`{_cell(data.get('latest_quality_check'))}`",
+                    f"专家更新时间：`{_cell(data.get('expert_updated_at'))}`",
+                    f"产出任务：**{data.get('producer_task_count', 0)}**，消费任务：**{data.get('consumer_task_count', 0)}**，下游：**{data.get('downstream_count', 0)}**",
+                ],
+            ),
+            _section("生命周期证据", data.get("evidence") or []),
+            _section("当前缺口", data.get("gaps") or ["暂无明显缺口"]),
+            _section("治理建议", data.get("suggestions") or []),
+        ]
+    )
+
+
+def _format_asset_change_impact(data):
+    return "\n\n".join(
+        [
+            _section(
+                f"资产变更影响分析：{data.get('table_name')}",
+                [
+                    f"变更类型：`{_cell(data.get('change_type'))}`",
+                    f"风险等级：**{_cell(data.get('risk_level'))}**",
+                    f"直接下游：**{len(data.get('direct_downstream') or [])}**，间接下游：**{len(data.get('indirect_downstream') or [])}**，影响任务：**{len(data.get('affected_tasks') or [])}**",
+                ],
+            ),
+            _section("直接下游", []) + "\n\n" + _table(["下游表", "经由"], [[row.get("downstream"), row.get("via")] for row in data.get("direct_downstream", [])]),
+            _section("间接下游", []) + "\n\n" + _table(["上游", "下游", "经由"], [[row.get("upstream"), row.get("downstream"), row.get("via")] for row in data.get("indirect_downstream", [])]),
+            _section("影响任务", []) + "\n\n" + _table(["TaskId", "任务名", "方向", "Owner", "状态"], [[row.get("id"), row.get("name"), row.get("direction"), row.get("owner"), row.get("status")] for row in data.get("affected_tasks", [])]),
+            _section("核心下游资产", [f"{row.get('name')}（{row.get('core_level')} / {row.get('value_tier')}）" for row in data.get("affected_core_assets", [])] or ["暂无"]),
+            _section("变更前检查", data.get("checks") or []),
+            _section("处理建议", data.get("suggestions") or []),
+        ]
+    )
+
+
+def _format_asset_governance_daily_report(data):
+    summary = data.get("summary") or {}
+    return "\n\n".join(
+        [
+            _section(
+                "资产巡检日报",
+                [
+                    f"日期：`{_cell(data.get('instance_date'))}`",
+                    f"层级：`{_cell(data.get('layer'))}`，核心等级：`{_cell(data.get('core_level'))}`",
+                    f"同步状态：**{_cell(summary.get('sync_status'))}**",
+                    f"产出风险：**{summary.get('production_risk_count', 0)}**（失败 {summary.get('failed_count', 0)}，未执行 {summary.get('not_run_count', 0)}，执行中 {summary.get('running_count', 0)}，未知 {summary.get('unknown_count', 0)}）",
+                    f"画像缺口：**{summary.get('coverage_gap_count', 0)}**，质量缺口：**{summary.get('quality_gap_count', 0)}**，Owner缺口：**{summary.get('owner_gap_count', 0)}**",
+                    f"生命周期关注：**{summary.get('lifecycle_watch_count', 0)}**，专家评审：**{summary.get('expert_review_count', 0)}**",
+                ],
+            ),
+            _section("今日优先动作", data.get("top_actions") or []),
+            _section("产出风险 Top 表", []) + "\n\n" + _table(["表名", "层级", "Owner", "核心等级", "状态", "原因"], [[row.get("name"), row.get("layer"), row.get("owner"), row.get("core_level"), row.get("status_label"), "；".join(row.get("reasons") or [])] for row in data.get("production_risks", [])]),
+            _section("资产画像缺口", []) + "\n\n" + _table(["表名", "层级", "Owner", "缺口"], [[row.get("name"), row.get("layer"), row.get("owner"), "、".join(row.get("gaps") or [])] for row in data.get("coverage_gaps", [])]),
+            _section("质量规则缺口", []) + "\n\n" + _table(["表名", "层级", "Owner", "下游", "质量规则"], [[row.get("name"), row.get("layer"), row.get("owner"), row.get("downstream_count"), row.get("quality_rule_count")] for row in data.get("quality_gaps", [])]),
+            _section("Owner 责任缺口", []) + "\n\n" + _table(["表名", "层级", "Owner", "候选责任人", "缺口"], [[row.get("name"), row.get("layer"), row.get("owner"), "、".join(row.get("owner_candidates") or []), "、".join(row.get("gaps") or [])] for row in data.get("owner_gaps", [])]),
+            _section("生命周期关注", []) + "\n\n" + _table(["表名", "层级", "Owner", "状态", "最近产出", "缺口"], [[row.get("name"), row.get("layer"), row.get("owner"), row.get("lifecycle_status"), row.get("latest_run_time"), "、".join(row.get("gaps") or [])] for row in data.get("lifecycle_watch", [])]),
+            _section("专家评审队列", []) + "\n\n" + _table(["表名", "层级", "领域", "Owner", "下游", "质量规则"], [[row.get("name"), row.get("layer"), row.get("domain"), row.get("owner"), row.get("downstream_count"), row.get("quality_rule_count")] for row in data.get("expert_review_queue", [])]),
+            _section("说明", data.get("notes") or []),
+        ]
+    )
+
+
+def _format_core_decision(data):
+    machine = data.get("machine") or {}
+    final = data.get("final") or {}
+    manual = data.get("manual") or {}
+    dimensions = machine.get("dimensions") or {}
+    return "\n\n".join(
+        [
+            _section(
+                f"核心资产判断：{data.get('table_name')}",
+                [
+                    f"最终结论：**{'核心资产' if data.get('is_core') else '非核心/待观察'}**",
+                    f"核心等级：**{_cell(data.get('core_level'))}**",
+                    f"价值分层：**{_cell(data.get('value_tier'))}**",
+                    f"判断来源：`{_cell(data.get('source'))}`",
+                    f"最终分数：**{data.get('score')}**",
+                    f"置信度：`{_cell(data.get('confidence'))}`",
+                ],
+            ),
+            _section(
+                "机器初判",
+                [
+                    f"机器分数：**{machine.get('score')}**",
+                    f"机器等级：`{_cell(machine.get('core_level'))}` / `{_cell(machine.get('value_tier'))}`",
+                    f"任务依赖：{_cell(machine.get('task_dependency'))}",
+                    f"依据：{', '.join(machine.get('evidence') or data.get('reasons') or [])}",
+                ],
+            ),
+            _table(["维度", "分数"], [[key, value] for key, value in dimensions.items()]),
+            _section(
+                "人工标注",
+                [
+                    f"等级：`{_cell(manual.get('core_level'))}`",
+                    f"分层：`{_cell(manual.get('value_tier'))}`",
+                    f"Reviewer：`{_cell(manual.get('reviewer'))}`",
+                    f"原因：{_cell(manual.get('reason'))}",
+                ] if manual else ["暂无人工标注"],
+            ),
+            _section(
+                "最终判断",
+                [
+                    f"等级：`{_cell(final.get('core_level'))}`",
+                    f"分层：`{_cell(final.get('value_tier'))}`",
+                    f"来源：`{_cell(final.get('source'))}`",
+                ],
+            ),
+            _section("当前缺口", data.get("gaps") or ["暂无明显缺口"]),
+            _section("复核建议", [data.get("review_suggestion", "")]),
         ]
     )
 
@@ -540,8 +885,8 @@ def _format_table_profile(data):
             + "\n\n下游：\n\n"
             + _table(["表名", "经由"], [[r.get("downstream"), r.get("via")] for r in lineage.get("downstream", [])]),
             _section("相关任务", [f"任务数：{len(data.get('tasks', []))}"]) + "\n\n" + _table(
-                ["TaskId", "任务名", "方向", "状态", "负责人"],
-                [[t.get("id"), t.get("name"), t.get("direction"), t.get("status"), t.get("owner")] for t in data.get("tasks", [])],
+                ["TaskId", "任务名", "方向", "状态", "负责人", "调度周期", "调度时间", "调度说明"],
+                [[t.get("id"), t.get("name"), t.get("direction"), t.get("status"), t.get("owner"), t.get("cycle"), t.get("schedule_time"), t.get("schedule_desc")] for t in data.get("tasks", [])],
             ),
             _format_profile_data_source(source),
             _section("质量监控", [f"是否有监控：{bool(quality.get('rule_count'))}", f"规则数：{quality.get('rule_count')}", f"最新状态：`{_cell(quality.get('latest_status'))}`"])
@@ -555,6 +900,147 @@ def _format_table_profile(data):
                 [[r.get("task_id"), r.get("task_name"), r.get("instance_date"), r.get("start_time"), r.get("end_time"), r.get("duration_seconds"), r.get("status")] for r in data.get("latest_runs", [])],
             ),
             _section("当前缺口", data.get("gaps") or ["暂无明显缺口"]),
+        ]
+    )
+
+
+def _format_table_partition_profile(data):
+    target = data.get("target_partition") or {}
+    latest = data.get("latest_partition") or {}
+    earliest = data.get("earliest_partition") or {}
+    return "\n\n".join(
+        [
+            _section(
+                f"表分区画像：{data.get('table_name')}",
+                [
+                    f"查询分区日期：`{_cell(data.get('partition_date'))}`",
+                    f"是否分区表：**{data.get('is_partitioned')}**",
+                    f"分区数量：**{data.get('partition_count', 0)}**",
+                    f"最新分区：`{_cell(latest.get('partition_name'))}`",
+                    f"最早分区：`{_cell(earliest.get('partition_name'))}`",
+                    f"总行数：**{data.get('total_rows', 0)}**",
+                    f"总存储字节：**{data.get('total_storage_bytes', 0)}**",
+                    f"健康状态：**{_cell(data.get('health_label'))}** (`{_cell(data.get('health_status'))}`)",
+                ],
+            ),
+            _section("目标分区", []) + "\n\n" + _table(["分区", "日期", "行数", "存储字节", "文件数", "更新时间"], [[target.get("partition_name"), target.get("partition_date"), target.get("row_count"), target.get("storage_bytes"), target.get("file_count"), target.get("updated_at")]] if target else []),
+            _section("最近分区", []) + "\n\n" + _table(["分区", "日期", "行数", "存储字节", "文件数", "更新时间"], [[row.get("partition_name"), row.get("partition_date"), row.get("row_count"), row.get("storage_bytes"), row.get("file_count"), row.get("updated_at")] for row in data.get("recent_partitions", [])]),
+            _section("判断依据", data.get("reasons") or []),
+            _section("处理建议", data.get("suggestions") or []),
+        ]
+    )
+
+
+def _format_table_readiness(data):
+    summary = data.get("summary") or {}
+    return "\n\n".join(
+        [
+            _section(
+                f"表资产治理就绪度：{data.get('table_name')}",
+                [
+                    f"验收状态：**{_cell(data.get('status'))}**",
+                    f"完整度分数：**{data.get('score')}**",
+                    f"层级：`{_cell(summary.get('layer'))}`，领域：`{_cell(summary.get('domain'))}`，Owner：`{_cell(summary.get('owner'))}`",
+                    f"核心等级：`{_cell(summary.get('core_level'))}`，价值分层：`{_cell(summary.get('value_tier'))}`，置信度：`{_cell(summary.get('confidence'))}`",
+                ],
+            ),
+            _section("画像维度检查", []) + "\n\n" + _table(
+                ["维度", "状态", "证据"],
+                [[row.get("name"), row.get("status"), row.get("evidence")] for row in data.get("checks", [])],
+            ),
+            _section("相关任务明细", []) + "\n\n" + _table(
+                ["TaskId", "任务名", "方向", "责任人", "调度周期", "调度时间", "调度说明", "任务状态"],
+                [[row.get("task_id"), row.get("task_name"), row.get("direction"), row.get("owner"), row.get("cycle"), row.get("schedule_time"), row.get("schedule_desc"), row.get("status")] for row in data.get("related_tasks", [])],
+            ),
+            _section("最近任务执行实例", []) + "\n\n" + _table(
+                ["TaskId", "任务名", "方向", "责任人", "执行状态", "开始时间", "结束时间", "耗时秒"],
+                [[row.get("task_id"), row.get("task_name"), row.get("direction"), row.get("owner"), row.get("execution_status"), row.get("start_time"), row.get("end_time"), row.get("duration_seconds")] for row in data.get("task_runs", [])],
+            ),
+            _section("当前缺口", data.get("gaps") or ["暂无明显缺口"]),
+            _section("治理动作建议", data.get("next_actions") or []),
+            _section("核心/价值判断摘要", [
+                f"最终结论：**{'核心资产' if (data.get('profile') or {}).get('core', {}).get('is_core') else '非核心/待观察'}**",
+                f"复核建议：{_cell((data.get('profile') or {}).get('core', {}).get('review_suggestion', ''))}",
+            ]),
+        ]
+    )
+
+
+def _format_table_production_status(data):
+    return "\n\n".join(
+        [
+            _section(
+                f"表产出状态：{data.get('table_name')}",
+                [
+                    f"查询日期：`{_cell(data.get('instance_date'))}`",
+                    f"汇总状态：**{_cell(data.get('status_label'))}** (`{_cell(data.get('status'))}`)",
+                    f"产出任务数：**{data.get('producer_task_count')}**",
+                ],
+            ),
+            _section("产出任务实例", []) + "\n\n" + _table(
+                ["TaskId", "任务名", "责任人", "调度时间", "原始状态", "状态", "开始时间", "结束时间", "耗时秒"],
+                [
+                    [
+                        task.get("task_id"),
+                        task.get("task_name"),
+                        task.get("owner"),
+                        task.get("schedule_time"),
+                        (task.get("latest_run") or {}).get("raw_status"),
+                        (task.get("latest_run") or {}).get("status_label"),
+                        (task.get("latest_run") or {}).get("start_time"),
+                        (task.get("latest_run") or {}).get("end_time"),
+                        (task.get("latest_run") or {}).get("duration_seconds"),
+                    ]
+                    for task in data.get("tasks", [])
+                ],
+            ),
+            _section("判断依据", data.get("reasons") or []),
+            _section("建议", data.get("suggestions") or ["暂无"]),
+        ]
+    )
+
+
+def _format_table_production_risk_detail(data):
+    table = data.get("table") or {}
+    core = data.get("core") or {}
+    quality = data.get("quality") or {}
+    production = data.get("production") or {}
+    impact = data.get("impact") or {}
+    return "\n\n".join(
+        [
+            _section(
+                f"表产出风险诊断：{data.get('table_name')}",
+                [
+                    f"查询日期：`{_cell(data.get('instance_date'))}`",
+                    f"汇总状态：**{_cell(data.get('status_label'))}** (`{_cell(data.get('status'))}`)",
+                    f"层级：`{_cell(table.get('layer'))}`，领域：`{_cell(table.get('domain'))}`，Owner：`{_cell(table.get('owner'))}`",
+                    f"核心等级：`{_cell(core.get('core_level'))}`，价值分层：`{_cell(core.get('value_tier'))}`，分数：**{core.get('score', 0)}**",
+                    f"下游影响数：**{impact.get('downstream_count', 0)}**，质量规则数：**{quality.get('rule_count', 0)}**",
+                ],
+            ),
+            _section("产出任务实例", []) + "\n\n" + _table(
+                ["TaskId", "任务名", "责任人", "调度时间", "原始状态", "状态", "开始时间", "结束时间", "耗时秒"],
+                [
+                    [
+                        task.get("task_id"),
+                        task.get("task_name"),
+                        task.get("owner"),
+                        task.get("schedule_time"),
+                        (task.get("latest_run") or {}).get("raw_status"),
+                        (task.get("latest_run") or {}).get("status_label"),
+                        (task.get("latest_run") or {}).get("start_time"),
+                        (task.get("latest_run") or {}).get("end_time"),
+                        (task.get("latest_run") or {}).get("duration_seconds"),
+                    ]
+                    for task in production.get("tasks", [])
+                ],
+            ),
+            _section("影响面", [f"上游数：{impact.get('upstream_count', 0)}", f"下游数：{impact.get('downstream_count', 0)}"])
+            + "\n\n"
+            + _table(["下游表", "经由"], [[row.get("downstream"), row.get("via")] for row in impact.get("downstream", [])]),
+            _section("风险判断", data.get("diagnosis") or []),
+            _section("判断依据", data.get("reasons") or []),
+            _section("处理建议", data.get("suggestions") or ["暂无"]),
         ]
     )
 

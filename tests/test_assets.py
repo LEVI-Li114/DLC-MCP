@@ -46,6 +46,10 @@ def make_store():
         {
             "id": "task_001",
             "name": "ads_customer_revenue_daily",
+            "cycle": "DAY",
+            "schedule_time": "08:00",
+            "schedule_desc": "每天 08:00 调度",
+            "owner": "data-finance",
             "outputs": ["ads_customer_revenue_daily"],
         }
     )
@@ -134,6 +138,83 @@ class AssetStoreTest(unittest.TestCase):
         self.assertEqual(value["core_level"], "P2")
         self.assertFalse(value["is_core"])
         self.assertEqual(value["dimensions"]["usage_heat"], 0)
+        self.assertIn("machine", value)
+        self.assertIn("manual", value)
+        self.assertIn("final", value)
+        self.assertEqual(value["machine"]["task_dependency"], {"producer_task_count": 1, "consumer_task_count": 0, "total_task_count": 1})
+        self.assertIn("缺最近运行实例", value["gaps"])
+
+    def test_manual_label_overrides_machine_decision_with_confidence(self):
+        store = make_store()
+        store.upsert_expert_label(
+            {
+                "asset_name": "ads_customer_revenue_daily",
+                "core_level": "P1",
+                "value_tier": "核心",
+                "reviewer": "data-team",
+                "reason": "财务看板核心依赖",
+            }
+        )
+
+        value = store.get_asset_value_profile("ads_customer_revenue_daily")
+
+        self.assertEqual(value["source"], "manual_override")
+        self.assertEqual(value["core_level"], "P1")
+        self.assertTrue(value["is_core"])
+        self.assertEqual(value["manual"]["reviewer"], "data-team")
+        self.assertIn(value["confidence"], {"medium", "high"})
+        self.assertIn("缺", value["review_suggestion"])
+
+    def test_asset_owner_profile_collects_responsibility_chain(self):
+        owner = make_store().get_asset_owner_profile("ads_customer_revenue_daily")
+
+        self.assertEqual(owner["table_owner"], "data-finance")
+        self.assertEqual(owner["data_source_owner"], "100043939904")
+        self.assertEqual(owner["producer_task_owners"], ["data-finance"])
+        self.assertIn("data-finance", owner["owner_candidates"])
+        self.assertTrue(owner["suggestions"])
+
+    def test_asset_usage_profile_uses_metadata_proxy_signals(self):
+        usage = make_store().get_asset_usage_profile("ads_customer_revenue_daily")
+
+        self.assertEqual(usage["usage_source"], "metadata_proxy")
+        self.assertEqual(usage["downstream_count"], 1)
+        self.assertEqual(usage["producer_task_count"], 1)
+        self.assertEqual(usage["quality_rule_count"], 1)
+        self.assertIn("缺真实查询日志", usage["gaps"])
+        self.assertTrue(usage["signals"])
+
+    def test_asset_lifecycle_profile_reports_state_from_available_evidence(self):
+        store = make_store()
+        store.upsert_task_run(
+            {
+                "task_id": "task_001",
+                "instance_id": "inst_lifecycle",
+                "instance_date": "2026-07-08",
+                "start_time": "2026-07-08 08:00:00",
+                "end_time": "2026-07-08 08:05:00",
+                "duration_seconds": 300,
+                "status": "success",
+            }
+        )
+
+        lifecycle = store.get_asset_lifecycle_profile("ads_customer_revenue_daily")
+
+        self.assertIn(lifecycle["lifecycle_status"], {"活跃", "稳定", "待治理"})
+        self.assertEqual(lifecycle["latest_run_time"], "2026-07-08 08:05:00")
+        self.assertEqual(lifecycle["producer_task_count"], 1)
+        self.assertTrue(lifecycle["evidence"])
+        self.assertTrue(lifecycle["suggestions"])
+
+    def test_asset_change_impact_lists_downstream_and_tasks(self):
+        impact = make_store().get_asset_change_impact("ads_customer_revenue_daily", "schema_change")
+
+        self.assertEqual(impact["change_type"], "schema_change")
+        self.assertEqual(impact["direct_downstream"][0]["downstream"], "bi_finance_dashboard")
+        self.assertTrue(impact["affected_tasks"])
+        self.assertIn(impact["risk_level"], {"低", "中", "高"})
+        self.assertTrue(impact["checks"])
+        self.assertTrue(impact["suggestions"])
 
     def test_metric_definition_explains_ads_and_dws_roles(self):
         store = make_store()
@@ -182,6 +263,189 @@ class AssetStoreTest(unittest.TestCase):
         self.assertIn("quality", gaps["results"][0]["gap_keys"])
         self.assertIn("缺质量规则", gaps["results"][0]["gaps"])
         self.assertEqual(gaps["supported_gap_types"][0], "fields")
+
+    def test_asset_governance_daily_report_aggregates_patrol_sections(self):
+        report = make_store().get_asset_governance_daily_report("2026-07-08", layer="ads")
+
+        self.assertEqual(report["instance_date"], "2026-07-08")
+        self.assertEqual(report["layer"], "ads")
+        self.assertIn("summary", report)
+        self.assertIn("production_risk_count", report["summary"])
+        self.assertIn("coverage_gaps", report)
+        self.assertIn("quality_gaps", report)
+        self.assertIn("owner_gaps", report)
+        self.assertIn("lifecycle_watch", report)
+        self.assertTrue(report["top_actions"])
+        self.assertLessEqual(len(report["production_risks"]), 20)
+
+    def test_asset_governance_daily_report_filters_core_level(self):
+        store = make_store()
+        store.upsert_expert_label(
+            {
+                "asset_name": "ads_customer_revenue_daily",
+                "core_level": "P1",
+                "value_tier": "核心",
+                "owner": "data-finance",
+                "reviewer": "data-team",
+                "reason": "核心看板",
+            }
+        )
+
+        report = store.get_asset_governance_daily_report("2026-07-08", layer="ads", core_level="P1")
+
+        self.assertEqual(report["core_level"], "P1")
+        self.assertTrue(all(item.get("name") == "ads_customer_revenue_daily" for item in report["owner_gaps"] + report["lifecycle_watch"]))
+
+    def test_table_partition_profile_reports_volume_and_health(self):
+        store = make_store()
+        for day, rows in [("2026-07-07", 1200), ("2026-07-06", 1100), ("2026-07-05", 1000)]:
+            store.upsert_table_partition(
+                {
+                    "table_name": "ads_customer_revenue_daily",
+                    "partition_name": f"dt={day}",
+                    "partition_date": day,
+                    "row_count": rows,
+                    "storage_bytes": rows * 10,
+                    "file_count": 2,
+                    "updated_at": f"{day} 08:00:00",
+                    "collected_at": "2026-07-08 09:00:00",
+                }
+            )
+
+        profile = store.get_table_partition_profile("ads_customer_revenue_daily", "2026-07-07")
+
+        self.assertTrue(profile["is_partitioned"])
+        self.assertEqual(profile["partition_count"], 3)
+        self.assertEqual(profile["target_partition"]["row_count"], 1200)
+        self.assertEqual(profile["total_rows"], 3300)
+        self.assertEqual(profile["health_status"], "normal")
+        self.assertEqual([row["partition_date"] for row in profile["recent_partitions"]], ["2026-07-07", "2026-07-06", "2026-07-05"])
+
+    def test_table_partition_profile_flags_missing_and_empty_partitions(self):
+        store = make_store()
+        store.upsert_table_partition({"table_name": "ads_customer_revenue_daily", "partition_name": "dt=2026-07-06", "partition_date": "2026-07-06", "row_count": 1000})
+        store.upsert_table_partition({"table_name": "ads_customer_revenue_daily", "partition_name": "dt=2026-07-07", "partition_date": "2026-07-07", "row_count": 0})
+
+        missing = store.get_table_partition_profile("ads_customer_revenue_daily", "2026-07-05")
+        empty = store.get_table_partition_profile("ads_customer_revenue_daily", "2026-07-07")
+
+        self.assertEqual(missing["health_status"], "missing_partition")
+        self.assertEqual(empty["health_status"], "empty_partition")
+        self.assertIn("空分区", empty["health_label"])
+
+    def test_table_readiness_reports_profile_completeness_and_actions(self):
+        readiness = make_store().get_table_readiness("ads_customer_revenue_daily")
+
+        self.assertEqual(readiness["table_name"], "ads_customer_revenue_daily")
+        self.assertIn(readiness["status"], {"部分通过", "通过"})
+        self.assertGreater(readiness["score"], 0)
+        self.assertEqual(readiness["summary"]["layer"], "ads")
+        self.assertIn("缺最近运行实例", readiness["gaps"])
+        self.assertTrue(any("WEDATA_INSTANCE" in action for action in readiness["next_actions"]))
+        self.assertEqual(readiness["related_tasks"][0]["task_name"], "ads_customer_revenue_daily")
+        self.assertEqual(readiness["related_tasks"][0]["owner"], "data-finance")
+        self.assertEqual(readiness["related_tasks"][0]["cycle"], "DAY")
+        self.assertEqual(readiness["related_tasks"][0]["schedule_time"], "08:00")
+        self.assertEqual(readiness["related_tasks"][0]["schedule_desc"], "每天 08:00 调度")
+        self.assertEqual(readiness["task_runs"][0]["execution_status"], "未执行")
+        self.assertEqual([check["name"] for check in readiness["checks"]][:3], ["基础信息", "字段", "血缘"])
+
+    def test_table_production_status_summarizes_output_task_runs(self):
+        store = make_store()
+        store.upsert_task_run(
+            {
+                "task_id": "task_001",
+                "instance_id": "inst_001",
+                "instance_date": "2026-07-08",
+                "start_time": "2026-07-08 08:00:00",
+                "end_time": "2026-07-08 08:05:00",
+                "duration_seconds": 300,
+                "status": "COMPLETED",
+            }
+        )
+
+        status = store.get_table_production_status("ads_customer_revenue_daily", "2026-07-08")
+
+        self.assertEqual(status["status"], "success")
+        self.assertEqual(status["status_label"], "成功")
+        self.assertEqual(status["producer_task_count"], 1)
+        self.assertEqual(status["tasks"][0]["owner"], "data-finance")
+        self.assertEqual(status["tasks"][0]["schedule_time"], "08:00")
+        self.assertEqual(status["tasks"][0]["latest_run"]["raw_status"], "COMPLETED")
+        self.assertEqual(status["tasks"][0]["latest_run"]["duration_seconds"], 300)
+
+    def test_table_production_status_handles_missing_task_or_run(self):
+        store = make_store()
+        no_run = store.get_table_production_status("ads_customer_revenue_daily", "2026-07-08")
+        no_task = store.get_table_production_status("dws_customer_revenue_1d_di", "2026-07-08")
+
+        self.assertEqual(no_run["status"], "not_run")
+        self.assertIn("没有匹配的运行实例", "；".join(no_run["reasons"]))
+        self.assertEqual(no_task["status"], "not_run")
+        self.assertIn("未找到产出任务", no_task["reasons"])
+
+    def test_table_production_risks_lists_non_success_tables(self):
+        store = make_store()
+        store.upsert_task_run(
+            {
+                "task_id": "task_001",
+                "instance_id": "inst_success",
+                "instance_date": "2026-07-08",
+                "start_time": "2026-07-08 08:00:00",
+                "end_time": "2026-07-08 08:05:00",
+                "duration_seconds": 300,
+                "status": "COMPLETED",
+            }
+        )
+        store.upsert_task({"id": "task_dws", "name": "dws_customer_revenue_1d_di", "owner": "data-finance", "outputs": ["dws_customer_revenue_1d_di"]})
+
+        risks = store.list_table_production_risks(layer="dws", instance_date="2026-07-08", limit=10)
+
+        self.assertEqual([item["name"] for item in risks["results"]], ["dws_customer_revenue_1d_di"])
+        self.assertEqual(risks["results"][0]["status"], "not_run")
+        self.assertEqual(risks["results"][0]["status_label"], "未执行")
+        self.assertIn("core_level", risks["results"][0])
+        self.assertIn("value_tier", risks["results"][0])
+        self.assertNotIn("ads_customer_revenue_daily", [item["name"] for item in risks["results"]])
+
+        filtered = store.list_table_production_risks(layer="dws", status="not_run", instance_date="2026-07-08", limit=10)
+        self.assertEqual(filtered["results"][0]["name"], "dws_customer_revenue_1d_di")
+
+    def test_table_production_risk_detail_explains_missing_run(self):
+        store = make_store()
+        store.upsert_task({"id": "task_dws", "name": "dws_customer_revenue_1d_di", "owner": "data-finance", "outputs": ["dws_customer_revenue_1d_di"]})
+
+        detail = store.get_table_production_risk_detail("dws_customer_revenue_1d_di", "2026-07-08")
+
+        self.assertEqual(detail["status"], "not_run")
+        self.assertEqual(detail["status_label"], "未执行")
+        self.assertEqual(detail["table"]["layer"], "dws")
+        self.assertIn("core_level", detail["core"])
+        self.assertEqual(detail["impact"]["downstream_count"], 1)
+        self.assertIn("没有匹配的运行实例", "；".join(detail["reasons"]))
+        self.assertTrue(detail["diagnosis"])
+        self.assertTrue(detail["suggestions"])
+
+    def test_table_production_risk_detail_explains_failed_run(self):
+        store = make_store()
+        store.upsert_task({"id": "task_dws", "name": "dws_customer_revenue_1d_di", "owner": "data-finance", "outputs": ["dws_customer_revenue_1d_di"]})
+        store.upsert_task_run(
+            {
+                "task_id": "task_dws",
+                "instance_id": "inst_failed",
+                "instance_date": "2026-07-08",
+                "start_time": "2026-07-08 07:00:00",
+                "end_time": "2026-07-08 07:03:00",
+                "duration_seconds": 180,
+                "status": "FAILED",
+            }
+        )
+
+        detail = store.get_table_production_risk_detail("dws_customer_revenue_1d_di", "2026-07-08")
+
+        self.assertEqual(detail["status"], "failed")
+        self.assertIn("存在失败实例", "；".join(detail["diagnosis"]))
+        self.assertIn("优先联系产出任务负责人", "；".join(detail["suggestions"]))
 
 
 if __name__ == "__main__":

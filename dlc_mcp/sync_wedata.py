@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 from .assets import AssetStore
@@ -26,6 +27,7 @@ def main():
     dump = {"tasks": tasks_response}
     task_snapshot = snapshot_from_api_dump(dump)
     table_names = sorted({table for task in task_snapshot["tasks"] for table in task.get("outputs", [])})
+    catalog_tables = {}
 
     if os.environ.get("WEDATA_SYNC_TABLE_CATALOG", "1") == "1":
         tables_response = _list_all(client, "ListTable", {}, page_size)
@@ -33,10 +35,12 @@ def main():
         with open(tables_path, "w", encoding="utf-8") as f:
             json.dump(tables_response, f, ensure_ascii=False, indent=2)
         dump["tables"] = tables_response
-        print(f"saved raw table catalog dump to {tables_path}")
+        catalog_tables = _catalog_tables_by_name(tables_response)
+        table_names = sorted(set(table_names) | set(catalog_tables))
+        print(f"saved raw table catalog dump to {tables_path}", flush=True)
 
     if os.environ.get("WEDATA_SYNC_METADATA") == "1":
-        metadata_dump = _sync_metadata(client, project_id, table_names, page_size, work_dir)
+        metadata_dump = _sync_metadata(client, project_id, table_names, page_size, work_dir, catalog_tables)
         dump.update(_merge_metadata_dump(dump, metadata_dump))
 
     if os.environ.get("WEDATA_SYNC_DATA_SOURCES") == "1":
@@ -71,15 +75,17 @@ def main():
     import_wedata_snapshot(store, snapshot_from_api_dump(dump))
 
     total = len(tasks_response["Response"]["Data"]["Items"])
-    print(f"synced {total} WeData tasks into {db_path}")
-    print(f"saved raw task dump to {tasks_path}")
+    print(f"synced {total} WeData tasks into {db_path}", flush=True)
+    print(f"saved raw task dump to {tasks_path}", flush=True)
     if "task_instances" in dump:
         run_total = len(dump["task_instances"]["Response"]["Data"]["Items"])
-        print(f"synced {run_total} WeData task instances")
+        print(f"synced {run_total} WeData task instances", flush=True)
     if "tables" in dump:
-        print(f"synced metadata for {len(dump['tables']['Response']['Data']['Items'])} tables")
+        print(f"synced table catalog for {_response_item_count(dump['tables'])} tables", flush=True)
+    if os.environ.get("WEDATA_SYNC_METADATA") == "1":
+        print(f"synced metadata details for {_metadata_table_count(metadata_dump)} tables", flush=True)
     if "data_sources" in dump:
-        print(f"synced {len(dump['data_sources']['Response']['Data']['Items'])} WeData data sources")
+        print(f"synced {len(dump['data_sources']['Response']['Data']['Items'])} WeData data sources", flush=True)
 
 
 def _list_all(client, action, payload, page_size, max_pages=None):
@@ -123,13 +129,38 @@ def _merge_metadata_dump(dump, metadata_dump):
     return metadata_dump
 
 
-def _sync_data_source_tasks(client, data_sources_response):
+def _sync_data_source_tasks(client, data_sources_response, progress_every=10):
     related = {}
-    for item in data_sources_response.get("Response", {}).get("Data", {}).get("Items") or []:
+    items = data_sources_response.get("Response", {}).get("Data", {}).get("Items") or []
+    total = len(items)
+    for index, item in enumerate(items, start=1):
         data_source_id = item.get("Id") or item.get("DataSourceId") or item.get("DatasourceId")
         if data_source_id:
             related[str(data_source_id)] = client.call("GetDataSourceRelatedTasks", {"Id": int(data_source_id)})
+        if progress_every and (index == total or index % progress_every == 0):
+            print(f"synced related tasks for {index}/{total} data sources", flush=True)
     return related
+
+
+def _response_item_count(response):
+    return len(response.get("Response", {}).get("Data", {}).get("Items") or [])
+
+
+def _catalog_table_names(response):
+    return sorted(_catalog_tables_by_name(response))
+
+
+def _catalog_tables_by_name(response):
+    return {
+        name: item
+        for item in response.get("Response", {}).get("Data", {}).get("Items") or []
+        for name in [item.get("Name") or item.get("TableName")]
+        if name
+    }
+
+
+def _metadata_table_count(metadata_dump):
+    return _response_item_count(metadata_dump.get("tables", {}))
 
 
 def _instance_window():
@@ -141,45 +172,34 @@ def _instance_window():
     return f"{start:%Y-%m-%d} 00:00:00", f"{today:%Y-%m-%d} 23:59:59"
 
 
-def _sync_metadata(client, project_id, table_names, page_size, work_dir):
+def _sync_metadata(client, project_id, table_names, page_size, work_dir, catalog_tables=None):
     if os.environ.get("WEDATA_METADATA_TABLES"):
         table_names = [name.strip() for name in os.environ["WEDATA_METADATA_TABLES"].split(",") if name.strip()]
     limit = int(os.environ.get("WEDATA_METADATA_TABLE_LIMIT", "50"))
     table_names = table_names[:limit]
+    # ponytail: bounded threads; lower WEDATA_METADATA_WORKERS if Tencent throttles.
+    workers = max(1, int(os.environ.get("WEDATA_METADATA_WORKERS", "4")))
     tables = []
     columns = {}
     lineage = []
     quality_rules = []
 
-    for table_name in table_names:
-        table_response = client.call("ListTable", {"PageNumber": 1, "PageSize": 20, "Keyword": table_name})
-        matches = [item for item in table_response.get("Response", {}).get("Data", {}).get("Items", []) if item.get("Name") == table_name]
-        if not matches:
-            continue
-        table = matches[0]
-        guid = table.get("Guid")
-        if guid:
-            column_response = client.call("GetTableColumns", {"TableGuid": guid})
-            table["Columns"] = column_response.get("Response", {}).get("Data") or []
-            columns[table_name] = column_response
-            for direction in ("OUTPUT",):
-                lineage_response = _list_all(
-                    client,
-                    "ListLineage",
-                    {"ResourceUniqueId": guid, "ResourceType": "TABLE", "Direction": direction, "Platform": "WEDATA"},
-                    page_size,
-                )
-                for item in lineage_response.get("Response", {}).get("Data", {}).get("Items", []) or []:
-                    item["QueriedTableName"] = table_name
-                    lineage.append(item)
-        quality_response = _list_all(
-            client,
-            "ListQualityRules",
-            {"ProjectId": project_id, "Filters": [{"Name": "TableName", "Values": [table_name]}]},
-            page_size,
-        )
-        quality_rules.extend(quality_response.get("Response", {}).get("Data", {}).get("Items", []) or [])
-        tables.append(table)
+    total = len(table_names)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(_sync_one_metadata_table, client, project_id, table_name, page_size, (catalog_tables or {}).get(table_name))
+            for table_name in table_names
+        ]
+        for index, future in enumerate(as_completed(futures), start=1):
+            table_name, table, column_response, table_lineage, table_quality_rules = future.result()
+            if table:
+                tables.append(table)
+            if column_response:
+                columns[table_name] = column_response
+            lineage.extend(table_lineage)
+            quality_rules.extend(table_quality_rules)
+            if index == total or index % 10 == 0:
+                print(f"synced metadata for {index}/{total} tables", flush=True)
 
     payload = {
         "tables": {"Response": {"Data": {"Items": tables}}},
@@ -189,8 +209,42 @@ def _sync_metadata(client, project_id, table_names, page_size, work_dir):
     path = os.path.join(work_dir, "wedata_metadata.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"payload": payload, "columns": columns}, f, ensure_ascii=False, indent=2)
-    print(f"saved raw metadata dump to {path}")
+    print(f"saved raw metadata dump to {path}", flush=True)
     return payload
+
+
+def _sync_one_metadata_table(client, project_id, table_name, page_size, catalog_table=None):
+    table = dict(catalog_table or {})
+    if not table:
+        table_response = client.call("ListTable", {"PageNumber": 1, "PageSize": 20, "Keyword": table_name})
+        matches = [item for item in table_response.get("Response", {}).get("Data", {}).get("Items", []) if item.get("Name") == table_name]
+        if not matches:
+            return table_name, None, None, [], []
+        table = matches[0]
+
+    column_response = None
+    table_lineage = []
+    guid = table.get("Guid")
+    if guid:
+        column_response = client.call("GetTableColumns", {"TableGuid": guid})
+        table["Columns"] = column_response.get("Response", {}).get("Data") or []
+        lineage_response = _list_all(
+            client,
+            "ListLineage",
+            {"ResourceUniqueId": guid, "ResourceType": "TABLE", "Direction": "OUTPUT", "Platform": "WEDATA"},
+            page_size,
+        )
+        for item in lineage_response.get("Response", {}).get("Data", {}).get("Items", []) or []:
+            item["QueriedTableName"] = table_name
+            table_lineage.append(item)
+
+    quality_response = _list_all(
+        client,
+        "ListQualityRules",
+        {"ProjectId": project_id, "Filters": [{"Name": "TableName", "Values": [table_name]}]},
+        page_size,
+    )
+    return table_name, table, column_response, table_lineage, quality_response.get("Response", {}).get("Data", {}).get("Items", []) or []
 
 
 if __name__ == "__main__":

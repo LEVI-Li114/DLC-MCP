@@ -1,0 +1,2 @@
+asset_name,layer,domain,owner,use_case,core_level,value_tier,reviewer,reason,metric_definition
+ads_bill_company_1d_di,ads,财务分析,data-finance,账单公司维度分析,P1,核心,data-team,财务分析核心看板依赖,公司账单收入、成本、消耗等指标口径

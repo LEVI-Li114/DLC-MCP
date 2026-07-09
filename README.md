@@ -55,6 +55,11 @@ Update this list whenever a new MCP tool is added.
 | `search_assets(query)` | Search table assets by name, domain, or description. |
 | `search_tasks(query, live)` | Search WeData ETL tasks by id, name, owner, or status. |
 | `get_table_profile(table_name, live)` | Return metadata, columns, lineage, quality summary, related tasks, and core-table decision. |
+| `get_table_partition_profile(table_name, partition_date)` | Return partition volume, recent partitions, and partition health. |
+| `get_table_readiness(table_name, live)` | Return a governance readiness report for any table asset profile. |
+| `get_table_production_status(table_name, instance_date, live)` | Return table-level production status from output tasks and latest task run instances. |
+| `get_table_production_risk_detail(table_name, instance_date, live)` | Return actionable production-risk diagnosis for one table. |
+| `list_table_production_risks(layer, core_level, instance_date, status, limit)` | List table-level production risks. |
 | `list_table_columns(table_name, live)` | List table fields. |
 | `get_quality_status(table_name, live)` | Show quality rules and monitoring status. |
 | `get_table_lineage(table_name, live)` | Return upstream and downstream assets. |
@@ -65,6 +70,10 @@ Update this list whenever a new MCP tool is added.
 | `list_data_source_tasks(data_source_id, live)` | List tasks related to one data source. |
 | `get_table_risk_profile(table_name, live)` | Explain governance risk from layer, downstream dependencies, quality rules, and task runs. |
 | `get_asset_value_profile(table_name, live)` | Return asset value tier and core-table decision. |
+| `get_asset_owner_profile(table_name, live)` | Return asset ownership chain and responsibility gaps. |
+| `get_asset_usage_profile(table_name, live)` | Return metadata-proxy usage signals for a table asset. |
+| `get_asset_lifecycle_profile(table_name, live)` | Return lifecycle status and governance evidence. |
+| `get_asset_change_impact(table_name, change_type, live)` | Return bounded change impact analysis for a table asset. |
 | `get_metric_definition(table_name, live)` | Explain ads/dws metric definitions from fields, lineage, and related tasks. |
 | `list_quality_gaps(layer, domain, limit)` | List high-impact tables with no quality rules. |
 | `get_expert_label(asset_type, asset_name)` | Return expert label for one asset. |
@@ -73,6 +82,7 @@ Update this list whenever a new MCP tool is added.
 | `get_sync_health()` | Return sync health, asset counts, latest observed sync signals, and current data gaps. |
 | `get_asset_coverage()` | Return asset coverage by layer for fields, lineage, quality rules, tasks, data sources, and runs. |
 | `list_asset_coverage_gaps(gap_type, layer, limit)` | List tables with missing asset profile coverage, filtered by gap type or layer. |
+| `get_asset_governance_daily_report(instance_date, layer, core_level)` | Return a daily governance patrol report. |
 | `is_core_table(table_name)` | Explain whether a table is core and why. |
 
 ## Development

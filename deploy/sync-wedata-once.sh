@@ -25,3 +25,14 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
   | DLC_MCP_DB="$DLC_MCP_DB" "$PYTHON_BIN" -m dlc_mcp.server >/dev/null
 
 echo "MCP smoke test passed"
+
+if [ "${DLC_MCP_SYNC_HEALTH_CHECK:-1}" = "1" ]; then
+  echo
+  echo "== Asset foundation check =="
+  GAP_LIMIT="${DLC_MCP_SYNC_GAP_LIMIT:-20}"
+  GAP_TYPES="${DLC_MCP_SYNC_GAP_TYPES:-fields,lineage,quality,tasks,runs,data_source}"
+  "$PYTHON_BIN" -m dlc_mcp.check_foundation \
+    --db "$DLC_MCP_DB" \
+    --gap-types "$GAP_TYPES" \
+    --gap-limit "$GAP_LIMIT"
+fi

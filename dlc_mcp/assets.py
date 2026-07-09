@@ -52,6 +52,8 @@ class AssetStore:
                 name text not null default '',
                 task_type text not null default '',
                 cycle text not null default '',
+                schedule_time text not null default '',
+                schedule_desc text not null default '',
                 owner text not null default '',
                 status text not null default ''
             );
@@ -90,6 +92,17 @@ class AssetStore:
                 owner text not null default '',
                 primary key (data_source_id, task_id)
             );
+            create table if not exists table_partitions (
+                table_name text not null,
+                partition_name text not null,
+                partition_date text not null default '',
+                row_count integer not null default 0,
+                storage_bytes integer not null default 0,
+                file_count integer not null default 0,
+                updated_at text not null default '',
+                collected_at text not null default '',
+                primary key (table_name, partition_name)
+            );
             create table if not exists expert_labels (
                 asset_type text not null,
                 asset_name text not null,
@@ -108,6 +121,8 @@ class AssetStore:
         )
         self._add_column_if_missing("tables", "source_guid", "text not null default ''")
         self._add_column_if_missing("tables", "data_source_id", "text not null default ''")
+        self._add_column_if_missing("tasks", "schedule_time", "text not null default ''")
+        self._add_column_if_missing("tasks", "schedule_desc", "text not null default ''")
         self.conn.commit()
 
     def upsert_table(self, item):
@@ -187,12 +202,14 @@ class AssetStore:
     def upsert_task(self, item):
         self.conn.execute(
             """
-            insert into tasks (id, name, task_type, cycle, owner, status)
-            values (?, ?, ?, ?, ?, ?)
+            insert into tasks (id, name, task_type, cycle, schedule_time, schedule_desc, owner, status)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(id) do update set
                 name = excluded.name,
                 task_type = excluded.task_type,
                 cycle = excluded.cycle,
+                schedule_time = excluded.schedule_time,
+                schedule_desc = excluded.schedule_desc,
                 owner = excluded.owner,
                 status = excluded.status
             """,
@@ -201,6 +218,8 @@ class AssetStore:
                 item.get("name", ""),
                 item.get("task_type", ""),
                 item.get("cycle", ""),
+                item.get("schedule_time", ""),
+                item.get("schedule_desc", ""),
                 item.get("owner", ""),
                 item.get("status", ""),
             ),
@@ -255,6 +274,32 @@ class AssetStore:
                     item.get("owner", ""),
                 ),
             )
+        self.conn.commit()
+
+    def upsert_table_partition(self, item):
+        self.conn.execute(
+            """
+            insert into table_partitions (table_name, partition_name, partition_date, row_count, storage_bytes, file_count, updated_at, collected_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(table_name, partition_name) do update set
+                partition_date = excluded.partition_date,
+                row_count = excluded.row_count,
+                storage_bytes = excluded.storage_bytes,
+                file_count = excluded.file_count,
+                updated_at = excluded.updated_at,
+                collected_at = excluded.collected_at
+            """,
+            (
+                item["table_name"],
+                item["partition_name"],
+                item.get("partition_date", ""),
+                int(item.get("row_count") or 0),
+                int(item.get("storage_bytes") or 0),
+                int(item.get("file_count") or 0),
+                item.get("updated_at", ""),
+                item.get("collected_at", ""),
+            ),
+        )
         self.conn.commit()
 
     def list_data_sources(self, query=""):
@@ -433,6 +478,60 @@ class AssetStore:
             "supported_gap_types": ["fields", "quality", "lineage", "upstream", "downstream", "tasks", "runs", "data_source"],
         }
 
+    def get_asset_governance_daily_report(self, instance_date="", layer="", core_level=""):
+        sync_health = self.get_sync_health()
+        production_risks = self.list_table_production_risks(layer, core_level, instance_date, "", 20)["results"]
+        status_counts = _governance_status_counts(production_risks)
+        coverage_gaps = self.list_asset_coverage_gaps("", layer, 20)["results"]
+        quality_gaps = self.list_quality_gaps(layer, "", 20)["results"]
+        expert_queue = self.list_expert_review_queue(layer, 20)["results"]
+        owner_gaps = []
+        lifecycle_watch = []
+        for table in self._governance_report_candidates(layer, 100):
+            core = self.is_core_table(table["name"])
+            if core_level and core.get("core_level") != core_level:
+                continue
+            owner = self.get_asset_owner_profile(table["name"])
+            if owner.get("gaps"):
+                owner_gaps.append(_governance_owner_gap_item(table, owner))
+            lifecycle = self.get_asset_lifecycle_profile(table["name"])
+            if lifecycle.get("lifecycle_status") in {"新建/待补齐", "疑似废弃", "待治理"}:
+                lifecycle_watch.append(_governance_lifecycle_watch_item(table, lifecycle))
+            if len(owner_gaps) >= 20 and len(lifecycle_watch) >= 20:
+                break
+        owner_gaps = owner_gaps[:20]
+        lifecycle_watch = lifecycle_watch[:20]
+        summary = {
+            "sync_status": sync_health.get("status", ""),
+            "production_risk_count": len(production_risks),
+            "failed_count": status_counts.get("failed", 0),
+            "not_run_count": status_counts.get("not_run", 0),
+            "running_count": status_counts.get("running", 0),
+            "unknown_count": status_counts.get("unknown", 0),
+            "coverage_gap_count": len(coverage_gaps),
+            "quality_gap_count": len(quality_gaps),
+            "expert_review_count": len(expert_queue),
+            "owner_gap_count": len(owner_gaps),
+            "lifecycle_watch_count": len(lifecycle_watch),
+        }
+        return {
+            "instance_date": instance_date,
+            "layer": layer,
+            "core_level": core_level,
+            "summary": summary,
+            "production_risks": production_risks,
+            "coverage_gaps": coverage_gaps,
+            "quality_gaps": quality_gaps,
+            "expert_review_queue": expert_queue,
+            "owner_gaps": owner_gaps,
+            "lifecycle_watch": lifecycle_watch,
+            "top_actions": _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue),
+            "notes": [
+                "巡检日报基于当前本地资产库已同步事实生成，不会触发批量实时同步。",
+                "如果某类清单为空，可能表示暂无风险，也可能表示对应同步开关或数据源尚未覆盖。",
+            ],
+        }
+
     def upsert_expert_label(self, item):
         self.conn.execute(
             """
@@ -478,6 +577,77 @@ class AssetStore:
         if not row:
             return {"error": "expert_label_not_found", "asset_type": asset_type, "asset_name": asset_name}
         return dict(row)
+
+    def list_core_candidates(self, layer="", limit=100):
+        args = []
+        filters = ["el.asset_type = 'table'"]
+        if layer:
+            filters.append("(coalesce(nullif(t.layer, ''), el.domain) = ? or t.layer = ?)")
+            args.extend([layer, layer])
+        args.append(limit)
+        rows = self._all(
+            f"""
+            select
+                el.asset_name as name,
+                coalesce(nullif(t.layer, ''), '') as layer,
+                coalesce(nullif(t.domain, ''), el.domain) as domain,
+                coalesce(nullif(t.owner, ''), el.owner) as owner,
+                el.core_level,
+                el.value_tier,
+                el.use_case,
+                el.reviewer,
+                el.reason,
+                case when t.name is null then 0 else 1 end as table_synced,
+                coalesce(c.column_count, 0) as column_count,
+                coalesce(q.rule_count, 0) as quality_rule_count,
+                coalesce(d.downstream_count, 0) as downstream_count,
+                coalesce(u.upstream_count, 0) as upstream_count,
+                coalesce(tt.task_count, 0) as task_count,
+                coalesce(r.run_count, 0) as run_count,
+                coalesce(nullif(t.data_source_id, ''), '') as data_source_id
+            from expert_labels el
+            left join tables t on t.name = el.asset_name
+            left join (select table_name, count(*) as column_count from columns group by table_name) c on c.table_name = el.asset_name
+            left join (select table_name, count(*) as rule_count from quality_rules group by table_name) q on q.table_name = el.asset_name
+            left join (select upstream, count(*) as downstream_count from lineage group by upstream) d on d.upstream = el.asset_name
+            left join (select downstream, count(*) as upstream_count from lineage group by downstream) u on u.downstream = el.asset_name
+            left join (select table_name, count(distinct task_id) as task_count from task_tables group by table_name) tt on tt.table_name = el.asset_name
+            left join (
+                select tt.table_name, count(distinct r.instance_id) as run_count
+                from task_tables tt
+                join task_runs r on r.task_id = tt.task_id
+                where tt.direction = 'output'
+                group by tt.table_name
+            ) r on r.table_name = el.asset_name
+            where {" and ".join(filters)}
+            order by
+                case el.core_level when 'P0' then 1 when 'P1' then 2 when 'P2' then 3 else 9 end,
+                el.asset_name
+            limit ?
+            """,
+            tuple(args),
+        )
+        results = []
+        for row in rows:
+            item = dict(row)
+            gaps = []
+            if not item["table_synced"]:
+                gaps.append("表未同步")
+            if item["column_count"] == 0:
+                gaps.append("缺字段信息")
+            if item["upstream_count"] == 0 and item["downstream_count"] == 0:
+                gaps.append("缺血缘信息")
+            if item["quality_rule_count"] == 0:
+                gaps.append("缺质量规则")
+            if item["task_count"] == 0:
+                gaps.append("缺相关任务")
+            if item["run_count"] == 0:
+                gaps.append("缺最近运行实例")
+            if not item["data_source_id"]:
+                gaps.append("缺数据源关联")
+            item["gaps"] = gaps
+            results.append(item)
+        return {"layer": layer, "limit": limit, "results": results}
 
     def list_expert_review_queue(self, layer="", limit=50):
         args = []
@@ -567,7 +737,7 @@ class AssetStore:
     def get_table_tasks(self, table_name):
         rows = self._all(
             """
-            select t.id, t.name, t.task_type, t.cycle, t.owner, t.status, tt.direction
+            select t.id, t.name, t.task_type, t.cycle, t.schedule_time, t.schedule_desc, t.owner, t.status, tt.direction
             from task_tables tt
             join tasks t on t.id = tt.task_id
             where tt.table_name = ?
@@ -581,7 +751,7 @@ class AssetStore:
         like = f"%{query}%"
         rows = self._all(
             """
-            select id, name, task_type, cycle, owner, status
+            select id, name, task_type, cycle, schedule_time, schedule_desc, owner, status
             from tasks
             where id like ? or name like ? or owner like ? or status like ?
             order by name
@@ -615,45 +785,390 @@ class AssetStore:
             "gaps": self._table_profile_gaps(table_name, table_data, rules),
         }
 
+    def get_table_partition_profile(self, table_name, partition_date=""):
+        if not self._one("select 1 from tables where name = ?", (table_name,)):
+            return {"error": "table_not_found", "table_name": table_name}
+        all_rows = [dict(row) for row in self._all("select * from table_partitions where table_name = ? order by partition_date desc, partition_name desc", (table_name,))]
+        recent = all_rows[:30]
+        target = None
+        if partition_date:
+            target = next((row for row in all_rows if row.get("partition_date") == partition_date or partition_date in row.get("partition_name", "")), None)
+        elif all_rows:
+            target = all_rows[0]
+        status = _partition_health_status(target, recent, partition_date)
+        return {
+            "table_name": table_name,
+            "partition_date": partition_date,
+            "is_partitioned": bool(all_rows),
+            "partition_count": len(all_rows),
+            "latest_partition": all_rows[0] if all_rows else None,
+            "earliest_partition": all_rows[-1] if all_rows else None,
+            "target_partition": target,
+            "recent_partitions": recent,
+            "total_rows": sum(row.get("row_count") or 0 for row in all_rows),
+            "total_storage_bytes": sum(row.get("storage_bytes") or 0 for row in all_rows),
+            "health_status": status,
+            "health_label": _partition_health_label(status),
+            "reasons": _partition_health_reasons(status, target, recent, partition_date),
+            "suggestions": _partition_health_suggestions(status),
+        }
+
+    def get_table_readiness(self, table_name):
+        profile = self.get_table_profile(table_name)
+        if profile.get("error"):
+            return profile
+        checks = _table_readiness_checks(profile)
+        scored = [check for check in checks if check.get("scored", True)]
+        points = sum(_readiness_points(check["status"]) for check in scored)
+        score = round(points / len(scored) * 100) if scored else 0
+        status = "通过" if score >= 80 else "部分通过" if score >= 50 else "未通过"
+        return {
+            "table_name": table_name,
+            "status": status,
+            "score": score,
+            "summary": {
+                "layer": profile["table"].get("layer", ""),
+                "domain": profile["table"].get("domain", ""),
+                "owner": profile["table"].get("owner", ""),
+                "core_level": profile["core"].get("core_level", ""),
+                "value_tier": profile["core"].get("value_tier", ""),
+                "confidence": profile["core"].get("confidence", ""),
+            },
+            "checks": checks,
+            "related_tasks": _table_readiness_tasks(profile.get("tasks", [])),
+            "task_runs": self._table_task_run_summaries(table_name),
+            "gaps": profile.get("gaps", []),
+            "next_actions": _table_readiness_actions(profile.get("gaps", [])),
+            "profile": profile,
+        }
+
+    def get_table_production_status(self, table_name, instance_date=""):
+        if not self._one("select 1 from tables where name = ?", (table_name,)):
+            return {"error": "table_not_found", "table_name": table_name}
+        tasks = self._all(
+            """
+            select t.id, t.name, t.task_type, t.cycle, t.schedule_time, t.schedule_desc, t.owner, t.status
+            from task_tables tt
+            join tasks t on t.id = tt.task_id
+            where tt.table_name = ? and tt.direction = 'output'
+            order by t.name
+            """,
+            (table_name,),
+        )
+        task_items = [_production_task_status(dict(task), instance_date, self._task_runs_for_status(task["id"], instance_date)) for task in tasks]
+        status = _production_overall_status(task_items)
+        return {
+            "table_name": table_name,
+            "instance_date": instance_date,
+            "status": status,
+            "status_label": _production_status_label(status),
+            "producer_task_count": len(task_items),
+            "tasks": task_items,
+            "reasons": _production_reasons(task_items, status),
+            "suggestions": _production_suggestions(task_items, status),
+        }
+
+    def get_table_production_risk_detail(self, table_name, instance_date=""):
+        profile = self.get_table_profile(table_name)
+        if profile.get("error"):
+            return profile
+        production = self.get_table_production_status(table_name, instance_date)
+        lineage = profile.get("lineage") or {}
+        impact = {
+            "upstream_count": len(lineage.get("upstream") or []),
+            "downstream_count": len(lineage.get("downstream") or []),
+            "downstream": (lineage.get("downstream") or [])[:10],
+        }
+        return {
+            "table_name": table_name,
+            "instance_date": instance_date,
+            "table": profile.get("table") or {},
+            "core": profile.get("core") or {},
+            "quality": profile.get("quality") or {},
+            "production": production,
+            "status": production.get("status", "unknown"),
+            "status_label": production.get("status_label") or _production_status_label(production.get("status", "unknown")),
+            "impact": impact,
+            "reasons": production.get("reasons", []),
+            "suggestions": _production_risk_detail_suggestions(profile, production),
+            "diagnosis": _production_risk_diagnosis(profile, production),
+        }
+
+    def get_asset_owner_profile(self, table_name):
+        profile = self.get_table_profile(table_name)
+        if profile.get("error"):
+            return profile
+        table = profile.get("table") or {}
+        data_source = profile.get("data_source") or {}
+        expert = profile.get("expert_label") or {}
+        tasks = profile.get("tasks") or []
+        producer_task_owners = _dedupe(task.get("owner") for task in tasks if task.get("direction") == "output")
+        consumer_task_owners = _dedupe(task.get("owner") for task in tasks if task.get("direction") == "input")
+        downstream_names = [row.get("downstream") for row in (profile.get("lineage") or {}).get("downstream", []) if row.get("downstream")]
+        downstream_owners = self._table_owner_rows(downstream_names)
+        owners = {
+            "table_owner": table.get("owner", ""),
+            "expert_owner": expert.get("owner", ""),
+            "expert_reviewer": expert.get("reviewer", ""),
+            "data_source_owner": data_source.get("owner", ""),
+            "producer_task_owners": producer_task_owners,
+            "consumer_task_owners": consumer_task_owners,
+            "downstream_owners": downstream_owners,
+        }
+        owner_candidates = _dedupe([owners["expert_owner"], owners["table_owner"], *producer_task_owners, owners["data_source_owner"]])
+        gaps = _owner_profile_gaps(owners)
+        return {
+            "table_name": table_name,
+            **owners,
+            "owner_candidates": owner_candidates,
+            "gaps": gaps,
+            "suggestions": _owner_profile_suggestions(gaps, owner_candidates),
+        }
+
+    def get_asset_usage_profile(self, table_name):
+        profile = self.get_table_profile(table_name)
+        if profile.get("error"):
+            return profile
+        lineage = profile.get("lineage") or {}
+        quality = profile.get("quality") or {}
+        task_counts = self._task_dependency_counts(table_name)
+        latest_run_count = len(profile.get("latest_runs") or [])
+        expert = profile.get("expert_label") or {}
+        counts = {
+            "downstream_count": len(lineage.get("downstream") or []),
+            "consumer_task_count": task_counts.get("consumer_task_count", 0),
+            "producer_task_count": task_counts.get("producer_task_count", 0),
+            "quality_rule_count": quality.get("rule_count", 0),
+            "latest_run_count": latest_run_count,
+        }
+        signals = _usage_signals(counts, expert)
+        gaps = ["缺真实查询日志"]
+        if not signals:
+            gaps.append("缺使用证据")
+        usage_level = _usage_level(counts, expert)
+        return {
+            "table_name": table_name,
+            "usage_source": "metadata_proxy",
+            **counts,
+            "expert_use_case": expert.get("use_case", ""),
+            "usage_level": usage_level,
+            "signals": signals,
+            "gaps": gaps,
+            "suggestions": _usage_profile_suggestions(usage_level, gaps),
+        }
+
+    def get_asset_lifecycle_profile(self, table_name):
+        profile = self.get_table_profile(table_name)
+        if profile.get("error"):
+            return profile
+        lineage = profile.get("lineage") or {}
+        quality = profile.get("quality") or {}
+        latest_runs = profile.get("latest_runs") or []
+        task_counts = self._task_dependency_counts(table_name)
+        data_source_id = (profile.get("table") or {}).get("data_source_id", "")
+        data_source_task_create_time = self._max_data_source_task_create_time(data_source_id) if data_source_id else ""
+        latest_quality_check = _max_non_empty(rule.get("last_checked_at") for rule in quality.get("rules", []))
+        latest_run_time = _max_non_empty([run.get("end_time") or run.get("start_time") or run.get("instance_date") for run in latest_runs])
+        expert = profile.get("expert_label") or {}
+        context = {
+            "latest_run_time": latest_run_time,
+            "latest_quality_check": latest_quality_check,
+            "expert_updated_at": expert.get("updated_at", ""),
+            "data_source_task_create_time": data_source_task_create_time,
+            "producer_task_count": task_counts.get("producer_task_count", 0),
+            "consumer_task_count": task_counts.get("consumer_task_count", 0),
+            "downstream_count": len(lineage.get("downstream") or []),
+            "gaps": profile.get("gaps") or [],
+        }
+        status = _lifecycle_status(context)
+        return {
+            "table_name": table_name,
+            "lifecycle_status": status,
+            **context,
+            "evidence": _lifecycle_evidence(context),
+            "suggestions": _lifecycle_suggestions(status, context["gaps"]),
+        }
+
+    def get_asset_change_impact(self, table_name, change_type="logic_change"):
+        profile = self.get_table_profile(table_name)
+        if profile.get("error"):
+            return profile
+        lineage = profile.get("lineage") or {}
+        direct_downstream = lineage.get("downstream") or []
+        direct_names = [row.get("downstream") for row in direct_downstream if row.get("downstream")]
+        indirect_downstream = []
+        if direct_names:
+            rows = self._all(
+                f"""
+                select upstream, downstream, via
+                from lineage
+                where upstream in ({','.join(['?'] * len(direct_names))})
+                  and downstream != ?
+                order by upstream, downstream
+                limit 20
+                """,
+                tuple([*direct_names, table_name]),
+            )
+            indirect_downstream = [dict(row) for row in rows]
+        affected_tasks = self.get_table_tasks(table_name).get("tasks", [])
+        affected_core_assets = []
+        for name in direct_names[:20]:
+            core = self.is_core_table(name)
+            if not core.get("error") and core.get("core_level") in {"P0", "P1"}:
+                affected_core_assets.append({"name": name, "core_level": core.get("core_level"), "value_tier": core.get("value_tier")})
+        core = profile.get("core") or {}
+        risk_level = _change_risk_level(change_type, core, len(direct_downstream), len(indirect_downstream), len(affected_tasks))
+        return {
+            "table_name": table_name,
+            "change_type": change_type or "logic_change",
+            "risk_level": risk_level,
+            "direct_downstream": direct_downstream,
+            "indirect_downstream": indirect_downstream,
+            "affected_tasks": affected_tasks,
+            "affected_core_assets": affected_core_assets,
+            "checks": _change_checks(change_type),
+            "suggestions": _change_suggestions(change_type, risk_level),
+        }
+
+    def list_table_production_risks(self, layer="", core_level="", instance_date="", status="", limit=50):
+        candidates = self._production_risk_candidates(layer, max(limit * 4, 200))
+        results = []
+        for table in candidates:
+            core = self.is_core_table(table["name"])
+            if core_level and core.get("core_level") != core_level:
+                continue
+            production = self.get_table_production_status(table["name"], instance_date)
+            production_status = production.get("status", "unknown")
+            if status and production_status != status:
+                continue
+            if production_status == "success":
+                continue
+            item = _production_risk_item(table, core, production)
+            results.append(item)
+            if len(results) >= limit:
+                break
+        return {
+            "layer": layer,
+            "core_level": core_level,
+            "instance_date": instance_date,
+            "status": status,
+            "limit": limit,
+            "results": results,
+        }
+
+    def _production_risk_candidates(self, layer="", limit=200):
+        args = []
+        layer_filter = ""
+        if layer:
+            layer_filter = "where t.layer = ?"
+            args.append(layer)
+        args.append(limit)
+        rows = self._all(
+            f"""
+            select
+                t.name, t.layer, t.domain, t.owner,
+                coalesce(d.downstream_count, 0) as downstream_count,
+                coalesce(u.upstream_count, 0) as upstream_count,
+                coalesce(q.rule_count, 0) as quality_rule_count,
+                coalesce(tt.task_count, 0) as task_count,
+                coalesce(pt.producer_task_count, 0) as producer_task_count
+            from tables t
+            left join (select upstream, count(*) as downstream_count from lineage group by upstream) d on d.upstream = t.name
+            left join (select downstream, count(*) as upstream_count from lineage group by downstream) u on u.downstream = t.name
+            left join (select table_name, count(*) as rule_count from quality_rules group by table_name) q on q.table_name = t.name
+            left join (select table_name, count(distinct task_id) as task_count from task_tables group by table_name) tt on tt.table_name = t.name
+            left join (select table_name, count(distinct task_id) as producer_task_count from task_tables where direction = 'output' group by table_name) pt on pt.table_name = t.name
+            {layer_filter}
+            order by
+                case t.layer when 'ads' then 1 when 'dws' then 2 when 'dwd' then 3 when 'dim' then 4 when 'ods' then 5 else 9 end,
+                producer_task_count desc,
+                downstream_count desc,
+                t.name
+            limit ?
+            """,
+            tuple(args),
+        )
+        return [dict(row) for row in rows]
+
+    def _governance_report_candidates(self, layer="", limit=100):
+        args = []
+        layer_filter = ""
+        if layer:
+            layer_filter = "where t.layer = ?"
+            args.append(layer)
+        args.append(limit)
+        rows = self._all(
+            f"""
+            select
+                t.name, t.layer, t.domain, t.owner,
+                coalesce(d.downstream_count, 0) as downstream_count,
+                coalesce(tt.task_count, 0) as task_count,
+                coalesce(pt.producer_task_count, 0) as producer_task_count
+            from tables t
+            left join (select upstream, count(*) as downstream_count from lineage group by upstream) d on d.upstream = t.name
+            left join (select table_name, count(distinct task_id) as task_count from task_tables group by table_name) tt on tt.table_name = t.name
+            left join (select table_name, count(distinct task_id) as producer_task_count from task_tables where direction = 'output' group by table_name) pt on pt.table_name = t.name
+            {layer_filter}
+            order by
+                case t.layer when 'ads' then 1 when 'dws' then 2 when 'dwd' then 3 when 'dim' then 4 when 'ods' then 5 else 9 end,
+                downstream_count desc,
+                task_count desc,
+                producer_task_count desc,
+                t.name
+            limit ?
+            """,
+            tuple(args),
+        )
+        return [dict(row) for row in rows]
+
     def get_asset_value_profile(self, table_name):
         table = self._one("select * from tables where name = ?", (table_name,))
         if not table:
             return {"error": "table_not_found", "table_name": table_name}
+        table = dict(table)
         label = self._label_or_none("table", table_name)
         downstream_count = self._one("select count(*) as n from lineage where upstream = ?", (table_name,))["n"]
+        upstream_count = self._one("select count(*) as n from lineage where downstream = ?", (table_name,))["n"]
         rule_count = self._one("select count(*) as n from quality_rules where table_name = ?", (table_name,))["n"]
         latest_runs = self._latest_output_task_runs(table_name)
         failed_runs = [run for run in latest_runs if _is_bad_run_status(run.get("status", ""))]
+        task_counts = self._task_dependency_counts(table_name)
+        gaps = self._table_profile_gaps(table_name, self._table_dict(self._one("select * from tables where name = ?", (table_name,))), self._all("select * from quality_rules where table_name = ?", (table_name,)))
 
-        if label and (label.get("value_tier") or label.get("core_level")):
-            value_tier = label.get("value_tier") or _value_tier_from_core_level(label.get("core_level", ""))
-            core_level = label.get("core_level") or _core_level_from_value_tier(value_tier)
-            return {
-                "table_name": table_name,
-                "value_tier": value_tier,
-                "core_level": core_level,
-                "is_core": core_level in {"P0", "P1", "核心"},
-                "score": 100,
-                "source": "expert",
-                "dimensions": {"expert_override": 100},
-                "evidence": [f"expert label: {core_level or value_tier}", label.get("reason", "")],
-                "expert_label": label,
-            }
+        machine_dimensions = _asset_value_dimensions(table, downstream_count, rule_count, failed_runs, task_counts, latest_runs)
+        machine_score = sum(machine_dimensions.values())
+        machine_core_level = _core_level_from_score(machine_score)
+        machine_value_tier = _value_tier_from_score(machine_score)
+        machine = {
+            "score": machine_score,
+            "core_level": machine_core_level,
+            "value_tier": machine_value_tier,
+            "is_core": machine_core_level in {"P0", "P1"},
+            "dimensions": machine_dimensions,
+            "evidence": _asset_value_evidence(table, downstream_count, upstream_count, rule_count, failed_runs, task_counts, latest_runs),
+            "task_dependency": task_counts,
+        }
+        manual = _manual_decision(label)
+        final = _final_asset_decision(machine, manual)
+        confidence = _asset_decision_confidence(gaps, label, machine_score)
+        review_suggestion = _asset_review_suggestion(machine, manual, gaps)
 
-        dimensions = _asset_value_dimensions(dict(table), downstream_count, rule_count, failed_runs)
-        score = sum(dimensions.values())
-        value_tier = _value_tier_from_score(score)
-        core_level = _core_level_from_score(score)
         return {
             "table_name": table_name,
-            "value_tier": value_tier,
-            "core_level": core_level,
-            "is_core": core_level in {"P0", "P1"},
-            "score": score,
-            "source": "model",
-            "dimensions": dimensions,
-            "evidence": _asset_value_evidence(dict(table), downstream_count, rule_count, failed_runs),
-            "expert_label": None,
+            "value_tier": final["value_tier"],
+            "core_level": final["core_level"],
+            "is_core": final["is_core"],
+            "score": final["score"],
+            "source": final["source"],
+            "dimensions": machine_dimensions,
+            "evidence": machine["evidence"],
+            "expert_label": label,
+            "machine": machine,
+            "manual": manual,
+            "final": final,
+            "confidence": confidence,
+            "gaps": gaps,
+            "review_suggestion": review_suggestion,
         }
 
     def get_metric_definition(self, table_name):
@@ -786,7 +1301,21 @@ class AssetStore:
         value = self.get_asset_value_profile(table_name)
         if value.get("error"):
             return value
-        return {"table_name": table_name, "is_core": value["is_core"], "score": value["score"], "reasons": value["evidence"], "core_level": value["core_level"], "value_tier": value["value_tier"]}
+        return {
+            "table_name": table_name,
+            "is_core": value["is_core"],
+            "score": value["score"],
+            "reasons": value["evidence"],
+            "core_level": value["core_level"],
+            "value_tier": value["value_tier"],
+            "source": value["source"],
+            "machine": value.get("machine"),
+            "manual": value.get("manual"),
+            "final": value.get("final"),
+            "confidence": value.get("confidence"),
+            "gaps": value.get("gaps", []),
+            "review_suggestion": value.get("review_suggestion", ""),
+        }
 
     def _one(self, sql, args=()):
         return self.conn.execute(sql, args).fetchone()
@@ -832,6 +1361,16 @@ class AssetStore:
         )
         return row["n"] if row else 0
 
+    def _max_data_source_task_create_time(self, data_source_id):
+        row = self._one("select max(nullif(create_time, '')) as value from data_source_tasks where data_source_id = ?", (data_source_id,))
+        return row["value"] if row and row["value"] else ""
+
+    def _table_owner_rows(self, table_names):
+        if not table_names:
+            return []
+        placeholders = ",".join(["?"] * len(table_names))
+        return [dict(row) for row in self._all(f"select name, owner from tables where name in ({placeholders}) order by name", tuple(table_names))]
+
     def _latest_output_task_runs(self, table_name):
         rows = self._all(
             """
@@ -846,6 +1385,64 @@ class AssetStore:
             (table_name,),
         )
         return [dict(row) for row in rows if row["instance_date"]]
+
+    def _table_task_run_summaries(self, table_name):
+        rows = self._all(
+            """
+            select
+                t.id as task_id,
+                t.name as task_name,
+                t.owner,
+                t.cycle,
+                t.schedule_time,
+                t.schedule_desc,
+                tt.direction,
+                r.instance_id,
+                r.instance_date,
+                r.start_time,
+                r.end_time,
+                r.duration_seconds,
+                r.status
+            from task_tables tt
+            join tasks t on t.id = tt.task_id
+            left join task_runs r on r.task_id = t.id
+            where tt.table_name = ?
+              and (r.instance_id is null or r.instance_id = (
+                  select r2.instance_id
+                  from task_runs r2
+                  where r2.task_id = t.id
+                  order by r2.instance_date desc, r2.start_time desc
+                  limit 1
+              ))
+            order by tt.direction, t.name
+            """,
+            (table_name,),
+        )
+        return [_task_run_summary(dict(row)) for row in rows]
+
+    def _task_runs_for_status(self, task_id, instance_date=""):
+        date_filter = "and instance_date like ?" if instance_date else ""
+        args = [task_id]
+        if instance_date:
+            args.append(f"{instance_date}%")
+        rows = self._all(
+            f"""
+            select task_id, instance_id, instance_date, start_time, end_time, duration_seconds, status
+            from task_runs
+            where task_id = ?
+            {date_filter}
+            order by instance_date desc, start_time desc
+            limit 1
+            """,
+            tuple(args),
+        )
+        return [dict(row) for row in rows]
+
+    def _task_dependency_counts(self, table_name):
+        producer = self._one("select count(distinct task_id) as n from task_tables where table_name = ? and direction = 'output'", (table_name,))["n"]
+        consumer = self._one("select count(distinct task_id) as n from task_tables where table_name = ? and direction = 'input'", (table_name,))["n"]
+        total = self._one("select count(distinct task_id) as n from task_tables where table_name = ?", (table_name,))["n"]
+        return {"producer_task_count": producer, "consumer_task_count": consumer, "total_task_count": total}
 
     def _label_or_none(self, asset_type, asset_name):
         label = self.get_expert_label(asset_type, asset_name)
@@ -880,6 +1477,520 @@ class AssetStore:
         return gaps
 
 
+def _readiness_points(status):
+    return {"通过": 1, "部分通过": 0.5, "缺失": 0}.get(status, 0)
+
+
+def _table_readiness_tasks(tasks):
+    return [
+        {
+            "task_id": task.get("id", ""),
+            "task_name": task.get("name", ""),
+            "direction": task.get("direction", ""),
+            "owner": task.get("owner", ""),
+            "cycle": task.get("cycle", ""),
+            "schedule_time": task.get("schedule_time") or task.get("cycle", ""),
+            "schedule_desc": task.get("schedule_desc", ""),
+            "status": task.get("status", ""),
+        }
+        for task in tasks
+    ]
+
+
+def _task_run_summary(row):
+    return {
+        "task_id": row.get("task_id", ""),
+        "task_name": row.get("task_name", ""),
+        "direction": row.get("direction", ""),
+        "owner": row.get("owner", ""),
+        "cycle": row.get("cycle", ""),
+        "schedule_time": row.get("schedule_time") or row.get("cycle", ""),
+        "schedule_desc": row.get("schedule_desc", ""),
+        "instance_id": row.get("instance_id", ""),
+        "instance_date": row.get("instance_date", ""),
+        "execution_status": row.get("status") or "未执行",
+        "start_time": row.get("start_time", ""),
+        "end_time": row.get("end_time", ""),
+        "duration_seconds": row.get("duration_seconds") or 0,
+    }
+
+
+def _production_task_status(task, instance_date, runs):
+    latest_run = runs[0] if runs else None
+    raw_status = latest_run.get("status", "") if latest_run else ""
+    return {
+        "task_id": task.get("id", ""),
+        "task_name": task.get("name", ""),
+        "owner": task.get("owner", ""),
+        "cycle": task.get("cycle", ""),
+        "schedule_time": task.get("schedule_time") or task.get("cycle", ""),
+        "schedule_desc": task.get("schedule_desc", ""),
+        "task_status": task.get("status", ""),
+        "latest_run": {
+            "instance_id": latest_run.get("instance_id", "") if latest_run else "",
+            "instance_date": latest_run.get("instance_date", instance_date) if latest_run else instance_date,
+            "raw_status": raw_status,
+            "status": _normalize_run_status(raw_status) if latest_run else "not_run",
+            "status_label": _production_status_label(_normalize_run_status(raw_status) if latest_run else "not_run"),
+            "start_time": latest_run.get("start_time", "") if latest_run else "",
+            "end_time": latest_run.get("end_time", "") if latest_run else "",
+            "duration_seconds": latest_run.get("duration_seconds", 0) if latest_run else 0,
+        },
+    }
+
+
+def _partition_health_status(target, recent, requested_date):
+    if not recent:
+        return "unknown"
+    if requested_date and not target:
+        return "missing_partition"
+    if not target:
+        return "unknown"
+    if int(target.get("row_count") or 0) == 0:
+        return "empty_partition"
+    average = _partition_recent_average(target, recent)
+    if average and target.get("row_count", 0) < average * 0.5:
+        return "row_count_drop"
+    if average and target.get("row_count", 0) > average * 2:
+        return "row_count_spike"
+    return "normal"
+
+
+def _partition_recent_average(target, recent):
+    values = [int(row.get("row_count") or 0) for row in recent if row.get("partition_name") != (target or {}).get("partition_name") and int(row.get("row_count") or 0) > 0]
+    return sum(values) / len(values) if values else 0
+
+
+def _partition_health_label(status):
+    return {
+        "normal": "正常",
+        "missing_partition": "缺目标分区",
+        "empty_partition": "空分区",
+        "row_count_drop": "行数突降",
+        "row_count_spike": "行数暴涨",
+        "unknown": "未知",
+    }.get(status, status or "未知")
+
+
+def _partition_health_reasons(status, target, recent, requested_date):
+    if status == "unknown":
+        return ["未找到分区统计事实，无法判断分区健康。"]
+    if status == "missing_partition":
+        return [f"未找到目标分区：{requested_date}。"]
+    reasons = [f"目标分区：{target.get('partition_name')}，行数：{target.get('row_count', 0)}。"]
+    average = _partition_recent_average(target, recent)
+    if average:
+        reasons.append(f"最近非目标分区平均行数：{average:.0f}。")
+    if status == "empty_partition":
+        reasons.append("目标分区行数为 0。")
+    elif status == "row_count_drop":
+        reasons.append("目标分区行数低于近期平均的 50%。")
+    elif status == "row_count_spike":
+        reasons.append("目标分区行数高于近期平均的 200%。")
+    else:
+        reasons.append("目标分区存在且行数在近期范围内。")
+    return reasons
+
+
+def _partition_health_suggestions(status):
+    return {
+        "normal": ["分区数据量正常，可结合产出状态和质量规则继续观察。"],
+        "missing_partition": ["检查产出任务是否写入目标分区，并确认调度日期参数是否正确。"],
+        "empty_partition": ["检查上游是否为空、过滤条件是否异常，或产出任务是否只创建了空分区。"],
+        "row_count_drop": ["对比近 7 天输入数据和 SQL 条件，确认是否存在上游缺数或过滤条件异常。"],
+        "row_count_spike": ["检查是否重复写入、笛卡尔积、去重失效或上游数据异常放大。"],
+        "unknown": ["同步分区统计元数据后再判断，避免直接对大表执行实时 count(*)。"],
+    }.get(status, ["补充分区统计事实后复核。"])
+
+
+def _normalize_run_status(status):
+    value = (status or "").lower()
+    if value in {"", "none"}:
+        return "not_run"
+    if value in {"success", "succeed", "succeeded", "passed", "completed", "complete", "y", "y11", "ok"}:
+        return "success"
+    if value in {"fail", "failed", "failure", "error", "exception", "terminated", "timeout"}:
+        return "failed"
+    if value in {"running", "executing", "waiting", "queued", "pending", "created", "ready"}:
+        return "running"
+    return "unknown"
+
+
+def _production_overall_status(tasks):
+    if not tasks:
+        return "not_run"
+    statuses = [task.get("latest_run", {}).get("status", "not_run") for task in tasks]
+    if any(status == "failed" for status in statuses):
+        return "failed"
+    if any(status == "running" for status in statuses):
+        return "running"
+    if statuses and all(status == "success" for status in statuses):
+        return "success"
+    if any(status == "success" for status in statuses):
+        return "partial_success"
+    if all(status == "not_run" for status in statuses):
+        return "not_run"
+    return "unknown"
+
+
+def _production_status_label(status):
+    return {
+        "success": "成功",
+        "failed": "失败",
+        "running": "执行中",
+        "not_run": "未执行",
+        "partial_success": "部分成功",
+        "unknown": "未知",
+    }.get(status, status or "未知")
+
+
+def _production_reasons(tasks, status):
+    if not tasks:
+        return ["未找到产出任务"]
+    reasons = [f"{len(tasks)} 个产出任务", f"汇总状态：{_production_status_label(status)}"]
+    for task in tasks:
+        run = task.get("latest_run", {})
+        if run.get("raw_status"):
+            reasons.append(f"任务 {task.get('task_name')} 最近实例状态 {run.get('raw_status')}")
+        else:
+            reasons.append(f"任务 {task.get('task_name')} 没有匹配的运行实例")
+        if task.get("owner"):
+            reasons.append(f"任务负责人 {task.get('owner')}")
+    return reasons
+
+
+def _production_suggestions(tasks, status):
+    if not tasks:
+        return ["检查 `ListTasks` inputs/outputs 或 SQL 解析是否识别该表的产出任务。"]
+    suggestions = []
+    if status == "failed":
+        suggestions.append("优先联系产出任务负责人排查失败实例，并确认下游影响范围。")
+    if status == "running":
+        suggestions.append("任务仍在执行中，关注是否超过预期调度耗时。")
+    if status == "not_run":
+        suggestions.append("找到产出任务但没有匹配运行实例，扩大实例同步窗口或确认 `WEDATA_INSTANCE_KEYWORDS` 命中任务。")
+    if status == "unknown":
+        suggestions.append("存在未知 WeData 实例状态，保留原始状态并补充状态映射。")
+    return suggestions
+
+
+def _production_risk_item(table, core, production):
+    status = production.get("status", "unknown")
+    return {
+        "name": table.get("name", ""),
+        "layer": table.get("layer", ""),
+        "domain": table.get("domain", ""),
+        "owner": table.get("owner", ""),
+        "core_level": core.get("core_level", ""),
+        "value_tier": core.get("value_tier", ""),
+        "is_core": core.get("is_core", False),
+        "score": core.get("score", 0),
+        "status": status,
+        "status_label": production.get("status_label") or _production_status_label(status),
+        "producer_task_count": production.get("producer_task_count", 0),
+        "downstream_count": table.get("downstream_count", 0),
+        "quality_rule_count": table.get("quality_rule_count", 0),
+        "reasons": production.get("reasons", []),
+        "suggestions": production.get("suggestions", []),
+        "tasks": production.get("tasks", []),
+    }
+
+
+def _production_risk_diagnosis(profile, production):
+    table = profile.get("table") or {}
+    core = profile.get("core") or {}
+    lineage = profile.get("lineage") or {}
+    tasks = production.get("tasks") or []
+    status = production.get("status", "unknown")
+    diagnosis = []
+    if not tasks:
+        diagnosis.append("未找到产出任务，无法确认该表由哪个 WeData 任务产出。")
+    elif status == "not_run":
+        diagnosis.append("找到产出任务但没有匹配运行实例。")
+    elif status == "failed":
+        diagnosis.append("存在失败实例，优先联系产出任务负责人。")
+    elif status == "running":
+        diagnosis.append("产出任务仍在执行中，需关注是否超过预期调度耗时。")
+    elif status == "partial_success":
+        diagnosis.append("部分产出任务成功，仍需确认未成功任务是否影响最终表产出。")
+    elif status == "unknown":
+        diagnosis.append("存在未知实例状态，需补充 WeData 状态映射后再判断。")
+    else:
+        diagnosis.append("产出状态正常，可结合下游影响继续观察。")
+    if lineage.get("downstream"):
+        diagnosis.append("该表存在下游依赖，需评估影响范围。")
+    if core.get("core_level") in {"P0", "P1"} or (table.get("layer") or "").lower() in {"ads", "dws"}:
+        diagnosis.append("该表为核心等级或 ADS/DWS 关键层资产，建议提升处理优先级。")
+    return diagnosis
+
+
+def _production_risk_detail_suggestions(profile, production):
+    table = profile.get("table") or {}
+    core = profile.get("core") or {}
+    lineage = profile.get("lineage") or {}
+    tasks = production.get("tasks") or []
+    suggestions = list(production.get("suggestions") or [])
+    if tasks:
+        suggestions.append("先查看产出任务实例，确认失败原因或实例是否漏同步。")
+    else:
+        suggestions.append("如无产出任务，补齐 task_tables 产出关系或检查 ListTasks inputs/outputs 解析。")
+    if lineage.get("downstream"):
+        suggestions.append("同步/核对下游依赖 Owner，避免风险传递到看板或应用层。")
+    if core.get("core_level") in {"P0", "P1"} or (table.get("layer") or "").lower() in {"ads", "dws"}:
+        suggestions.append("优先纳入当天监控跟进清单，并确认告警接收人与 SLA。")
+    return list(dict.fromkeys(suggestions))
+
+
+def _dedupe(values):
+    result = []
+    for value in values:
+        if value and value not in result:
+            result.append(value)
+    return result
+
+
+def _max_non_empty(values):
+    values = [value for value in values if value]
+    return max(values) if values else ""
+
+
+def _owner_profile_gaps(owners):
+    gaps = []
+    if not owners.get("table_owner"):
+        gaps.append("缺表Owner")
+    if not owners.get("producer_task_owners"):
+        gaps.append("缺产出任务Owner")
+    if not owners.get("data_source_owner"):
+        gaps.append("缺数据源Owner")
+    primary = _dedupe([owners.get("table_owner"), *owners.get("producer_task_owners", []), owners.get("data_source_owner")])
+    if len(primary) > 1:
+        gaps.append("Owner不一致")
+    return gaps
+
+
+def _owner_profile_suggestions(gaps, owner_candidates):
+    suggestions = []
+    if "缺表Owner" in gaps:
+        suggestions.append("补齐表资产 Owner，作为治理责任主入口。")
+    if "缺产出任务Owner" in gaps:
+        suggestions.append("补齐产出任务 Owner，确保产出问题可定位到处理人。")
+    if "缺数据源Owner" in gaps:
+        suggestions.append("补齐数据源 Owner，便于源端变更或同步异常时协同排查。")
+    if "Owner不一致" in gaps:
+        suggestions.append("核对表、产出任务和数据源 Owner 是否需要统一或明确分工。")
+    if owner_candidates:
+        suggestions.append(f"建议优先联系：{owner_candidates[0]}。")
+    return suggestions or ["责任链路较完整，可进入 SLA、质量和变更流程治理。"]
+
+
+def _usage_signals(counts, expert):
+    signals = []
+    if counts.get("downstream_count", 0):
+        signals.append(f"存在 {counts.get('downstream_count')} 个下游血缘依赖。")
+    if counts.get("consumer_task_count", 0):
+        signals.append(f"存在 {counts.get('consumer_task_count')} 个消费任务。")
+    if counts.get("producer_task_count", 0):
+        signals.append(f"存在 {counts.get('producer_task_count')} 个产出任务。")
+    if counts.get("quality_rule_count", 0):
+        signals.append(f"配置了 {counts.get('quality_rule_count')} 条质量规则。")
+    if counts.get("latest_run_count", 0):
+        signals.append(f"最近有 {counts.get('latest_run_count')} 条产出运行实例。")
+    if expert.get("use_case"):
+        signals.append(f"专家标注使用场景：{expert.get('use_case')}。")
+    return signals
+
+
+def _usage_level(counts, expert):
+    if counts.get("downstream_count", 0) >= 5 or counts.get("consumer_task_count", 0) >= 5 or expert.get("use_case"):
+        return "高"
+    if counts.get("downstream_count", 0) or counts.get("consumer_task_count", 0) or counts.get("latest_run_count", 0):
+        return "中"
+    if counts.get("producer_task_count", 0) or counts.get("quality_rule_count", 0):
+        return "低"
+    return "未知"
+
+
+def _usage_profile_suggestions(usage_level, gaps):
+    suggestions = ["接入 BI、网关或查询日志后，可将当前 metadata_proxy 升级为真实使用热度。"]
+    if usage_level == "高":
+        suggestions.append("将该资产纳入重点保障清单，优先补齐 SLA、质量规则和 Owner。")
+    elif usage_level in {"低", "未知"}:
+        suggestions.append("结合业务 Owner 复核使用价值，判断是否需要沉淀场景或进入下线观察。")
+    if "缺真实查询日志" in gaps:
+        suggestions.append("当前使用画像不包含真实查询次数、访问用户数和最近访问时间。")
+    return suggestions
+
+
+def _lifecycle_status(context):
+    gaps = set(context.get("gaps") or [])
+    if {"缺字段信息", "缺相关任务"} & gaps:
+        return "新建/待补齐"
+    if context.get("latest_run_time") or context.get("downstream_count", 0) or context.get("consumer_task_count", 0):
+        return "活跃"
+    if not context.get("downstream_count", 0) and not context.get("consumer_task_count", 0) and not context.get("latest_run_time"):
+        return "疑似废弃"
+    if gaps:
+        return "待治理"
+    return "稳定"
+
+
+def _lifecycle_evidence(context):
+    evidence = []
+    if context.get("latest_run_time"):
+        evidence.append(f"最近产出时间：{context.get('latest_run_time')}。")
+    if context.get("latest_quality_check"):
+        evidence.append(f"最近质量检查：{context.get('latest_quality_check')}。")
+    if context.get("expert_updated_at"):
+        evidence.append(f"专家标注更新时间：{context.get('expert_updated_at')}。")
+    if context.get("data_source_task_create_time"):
+        evidence.append(f"数据源关联任务创建时间：{context.get('data_source_task_create_time')}。")
+    evidence.append(f"产出任务 {context.get('producer_task_count', 0)} 个，消费任务 {context.get('consumer_task_count', 0)} 个，下游 {context.get('downstream_count', 0)} 个。")
+    return evidence
+
+
+def _lifecycle_suggestions(status, gaps):
+    suggestions = []
+    if status == "新建/待补齐":
+        suggestions.append("优先补齐字段、任务、血缘、质量规则等基础画像。")
+    if status == "疑似废弃":
+        suggestions.append("与 Owner 确认是否仍有业务使用，必要时进入下线观察。")
+    if status == "活跃":
+        suggestions.append("保持产出、质量和 Owner 监控，纳入日常资产巡检。")
+    if gaps:
+        suggestions.append("按当前缺口逐项补齐治理证据：" + "、".join(gaps))
+    return suggestions or ["生命周期状态稳定，建议定期复核使用场景和下游依赖。"]
+
+
+def _change_risk_level(change_type, core, direct_count, indirect_count, affected_task_count):
+    if core.get("core_level") in {"P0", "P1"} or (change_type in {"offline", "schema_change"} and direct_count):
+        return "高"
+    if direct_count >= 5 or indirect_count >= 10 or affected_task_count >= 5:
+        return "高"
+    if direct_count or indirect_count or affected_task_count:
+        return "中"
+    return "低"
+
+
+def _change_checks(change_type):
+    checks = ["确认变更窗口、回滚方案和通知范围。", "核对直接下游和关键任务依赖。"]
+    if change_type == "schema_change":
+        checks.append("逐字段确认新增、删除、改名、类型变更对下游 SQL 的影响。")
+    elif change_type == "delay":
+        checks.append("确认 SLA 延迟是否影响下游报表或应用刷新。")
+    elif change_type == "offline":
+        checks.append("确认所有下游已迁移或停止使用，并保留下线审批记录。")
+    else:
+        checks.append("确认口径逻辑变更是否影响指标解释和历史对比。")
+    return checks
+
+
+def _change_suggestions(change_type, risk_level):
+    suggestions = []
+    if risk_level == "高":
+        suggestions.append("建议发起正式变更评审，并要求核心下游 Owner 确认。")
+    elif risk_level == "中":
+        suggestions.append("建议通知直接下游 Owner，并在变更后观察产出与质量结果。")
+    else:
+        suggestions.append("影响面较小，仍建议记录变更原因和回滚方式。")
+    if change_type == "schema_change":
+        suggestions.append("变更前后对比字段清单，并补充兼容期或别名字段。")
+    elif change_type == "offline":
+        suggestions.append("下线前保留只读观察期，确认无新增访问或任务依赖。")
+    elif change_type == "delay":
+        suggestions.append("同步调整 SLA 告警阈值，并通知依赖方刷新时间变化。")
+    return suggestions
+
+
+def _governance_status_counts(production_risks):
+    counts = {"failed": 0, "not_run": 0, "running": 0, "unknown": 0, "partial_success": 0}
+    for item in production_risks:
+        status = item.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _governance_owner_gap_item(table, owner_profile):
+    return {
+        "name": table.get("name", ""),
+        "layer": table.get("layer", ""),
+        "owner": table.get("owner", ""),
+        "owner_candidates": owner_profile.get("owner_candidates", []),
+        "gaps": owner_profile.get("gaps", []),
+    }
+
+
+def _governance_lifecycle_watch_item(table, lifecycle_profile):
+    return {
+        "name": table.get("name", ""),
+        "layer": table.get("layer", ""),
+        "owner": table.get("owner", ""),
+        "lifecycle_status": lifecycle_profile.get("lifecycle_status", ""),
+        "latest_run_time": lifecycle_profile.get("latest_run_time", ""),
+        "gaps": lifecycle_profile.get("gaps", []),
+    }
+
+
+def _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue):
+    actions = []
+    failed = [item for item in production_risks if item.get("status") == "failed"]
+    not_run = [item for item in production_risks if item.get("status") == "not_run"]
+    if failed:
+        actions.append(f"优先处理 {len(failed)} 张失败产出表：{failed[0].get('name')}。")
+    if not_run:
+        actions.append(f"排查 {len(not_run)} 张未执行产出表，先确认任务实例是否漏同步：{not_run[0].get('name')}。")
+    if quality_gaps:
+        actions.append(f"补齐 {len(quality_gaps)} 张质量规则缺口表，优先从 {quality_gaps[0].get('name')} 开始。")
+    if owner_gaps:
+        actions.append(f"明确 {len(owner_gaps)} 张 Owner 缺口表责任人，优先处理 {owner_gaps[0].get('name')}。")
+    if lifecycle_watch:
+        actions.append(f"复核 {len(lifecycle_watch)} 张生命周期关注表，确认是否待补齐或疑似废弃。")
+    if expert_queue:
+        actions.append(f"推进 {len(expert_queue)} 张高影响资产专家评审，优先处理 {expert_queue[0].get('name')}。")
+    if not actions:
+        actions.append("暂无高优先级治理动作，建议保持同步健康检查和核心资产抽检。")
+    return actions
+
+
+def _table_readiness_checks(profile):
+    table = profile.get("table", {})
+    lineage = profile.get("lineage", {})
+    quality = profile.get("quality", {})
+    core = profile.get("core", {})
+    checks = []
+    basics = [table.get("layer"), table.get("domain"), table.get("owner"), table.get("description")]
+    checks.append(_readiness_check("基础信息", "通过" if sum(1 for item in basics if item) >= 3 else "部分通过" if any(basics) else "缺失", f"层级={table.get('layer', '')}, 领域={table.get('domain', '')}, Owner={table.get('owner', '')}"))
+    checks.append(_readiness_check("字段", "通过" if profile.get("columns") else "缺失", f"字段数={len(profile.get('columns', []))}"))
+    upstream_count = len(lineage.get("upstream", []))
+    downstream_count = len(lineage.get("downstream", []))
+    checks.append(_readiness_check("血缘", "通过" if upstream_count and downstream_count else "部分通过" if upstream_count or downstream_count else "缺失", f"上游={upstream_count}, 下游={downstream_count}"))
+    checks.append(_readiness_check("质量规则", "通过" if quality.get("rule_count", 0) else "缺失", f"规则数={quality.get('rule_count', 0)}, 最新状态={quality.get('latest_status', '')}"))
+    checks.append(_readiness_check("任务", "通过" if profile.get("tasks") else "缺失", f"任务数={len(profile.get('tasks', []))}"))
+    checks.append(_readiness_check("运行实例", "通过" if profile.get("latest_runs") else "缺失", f"最近实例数={len(profile.get('latest_runs', []))}"))
+    source = profile.get("data_source") or {}
+    checks.append(_readiness_check("数据源", "通过" if source else "缺失", f"数据源={source.get('name') or table.get('data_source_id') or ''}"))
+    checks.append(_readiness_check("核心/价值判断", "通过" if core.get("final") or core.get("machine") else "部分通过" if core else "缺失", f"等级={core.get('core_level', '')}, 分层={core.get('value_tier', '')}, 置信度={core.get('confidence', '')}"))
+    expert = profile.get("expert_label") or {}
+    checks.append(_readiness_check("人工标注", "通过" if expert and not expert.get("error") else "缺失", f"Reviewer={expert.get('reviewer', '')}, 原因={expert.get('reason', '')}", scored=False))
+    return checks
+
+
+def _readiness_check(name, status, evidence, scored=True):
+    return {"name": name, "status": status, "evidence": evidence, "scored": scored}
+
+
+def _table_readiness_actions(gaps):
+    actions = {
+        "缺字段信息": "开启 `WEDATA_SYNC_METADATA=1`，检查 `ListTable` 是否返回 GUID 以及 `GetTableColumns` 权限。",
+        "缺血缘信息": "检查 `ListLineage` 权限和表 GUID，必要时确认 WeData 是否维护血缘。",
+        "缺质量规则": "与数仓/治理 Owner 确认是否需要补充分区产出、主键/非空、金额/数量合理性等质量规则。",
+        "缺相关任务": "检查 `ListTasks` 返回的 inputs/outputs 是否包含该表，并核对任务表解析映射。",
+        "缺最近运行实例": "扩大 `WEDATA_INSTANCE_LOOKBACK_DAYS` 或设置 `WEDATA_INSTANCE_KEYWORDS` 命中相关任务。",
+        "缺数据源关联": "检查 `ListTable` 是否返回 data_source_id，并开启 `WEDATA_SYNC_DATA_SOURCES=1`。",
+    }
+    return [actions.get(gap, f"补齐：{gap}") for gap in gaps] or ["画像信息较完整，可进入 Owner 核对、质量规则复核和使用场景沉淀。"]
+
+
+
 def _is_bad_run_status(status):
     value = (status or "").lower()
     return value not in {"", "success", "succeed", "passed", "y", "y11", "completed"}
@@ -896,41 +2007,70 @@ def _risk_suggestions(rule_count, downstream_count, failed_runs):
     return suggestions
 
 
-def _asset_value_dimensions(table, downstream_count, rule_count, failed_runs):
+def _asset_value_dimensions(table, downstream_count, rule_count, failed_runs, task_counts=None, latest_runs=None):
+    task_counts = task_counts or {}
+    latest_runs = latest_runs or []
     name = table["name"].lower()
     domain = (table["domain"] or "").lower()
     layer = (table["layer"] or "").lower()
-    business_value = 0
+
+    business_signal = 0
     if domain in {"finance", "revenue", "business", "customer", "order"} or _has_business_keyword(name):
-        business_value = 30
+        business_signal = 20
     elif domain:
-        business_value = 15
+        business_signal = 10
 
-    lineage_impact = 0
-    if downstream_count >= 10:
-        lineage_impact = 25
+    downstream_lineage = 0
+    if downstream_count >= 20:
+        downstream_lineage = 30
+    elif downstream_count >= 10:
+        downstream_lineage = 22
     elif downstream_count >= 5:
-        lineage_impact = 15
+        downstream_lineage = 20
     elif downstream_count > 0:
-        lineage_impact = 8
+        downstream_lineage = 8
 
-    layer_position = {"dwd": 15, "dws": 15, "ads": 15, "dim": 10, "ods": 5}.get(layer, 0)
-    governance = 10 if rule_count else 0
-    stability = 0 if failed_runs else 5
+    consumer_count = int(task_counts.get("consumer_task_count") or 0)
+    producer_count = int(task_counts.get("producer_task_count") or 0)
+    task_dependency = 0
+    if consumer_count >= 20:
+        task_dependency += 20
+    elif consumer_count >= 10:
+        task_dependency += 15
+    elif consumer_count >= 5:
+        task_dependency += 10
+    elif consumer_count > 0:
+        task_dependency += 5
+    if producer_count >= 2:
+        task_dependency += 5
+    elif producer_count >= 1:
+        task_dependency += 3
+
+    layer_position = {"ads": 15, "dws": 15, "dwd": 12, "dim": 10, "ods": 5}.get(layer, 0)
+    quality_governance = 10 if rule_count >= 5 else 6 if rule_count else 0
+    run_stability = 0
+    if latest_runs and not failed_runs:
+        run_stability = 10
+    elif latest_runs:
+        run_stability = 3
     if name.startswith("tmp_") or name.endswith(("_tmp", "_test", "_bak", "_back")):
-        business_value -= 30
-        lineage_impact = min(lineage_impact, 5)
+        business_signal = max(0, business_signal - 10)
+        downstream_lineage = min(downstream_lineage, 5)
+        layer_position = max(0, layer_position - 10)
     return {
-        "business_value": max(0, business_value),
-        "lineage_impact": lineage_impact,
+        "downstream_lineage": downstream_lineage,
+        "task_dependency": task_dependency,
         "layer_position": layer_position,
-        "governance_readiness": governance,
-        "run_stability": stability,
+        "quality_governance": quality_governance,
+        "run_stability": run_stability,
+        "business_signal": business_signal,
         "usage_heat": 0,
     }
 
 
-def _asset_value_evidence(table, downstream_count, rule_count, failed_runs):
+def _asset_value_evidence(table, downstream_count, upstream_count, rule_count, failed_runs, task_counts=None, latest_runs=None):
+    task_counts = task_counts or {}
+    latest_runs = latest_runs or []
     evidence = []
     name = table["name"].lower()
     if table["domain"]:
@@ -939,12 +2079,89 @@ def _asset_value_evidence(table, downstream_count, rule_count, failed_runs):
         evidence.append("business-critical keywords in table name")
     if downstream_count:
         evidence.append(f"{downstream_count} downstream assets")
+    if upstream_count:
+        evidence.append(f"{upstream_count} upstream assets")
+    if task_counts.get("consumer_task_count"):
+        evidence.append(f"{task_counts['consumer_task_count']} consuming tasks")
+    if task_counts.get("producer_task_count"):
+        evidence.append(f"{task_counts['producer_task_count']} producing tasks")
     if table["layer"]:
         evidence.append(f"{table['layer']} layer")
     evidence.append(f"{rule_count} quality rules")
+    if latest_runs and not failed_runs:
+        evidence.append("latest output task runs succeeded")
     if failed_runs:
         evidence.append(f"{len(failed_runs)} latest task runs abnormal")
     return evidence
+
+
+def _manual_decision(label):
+    if not label:
+        return None
+    core_level = label.get("core_level") or _core_level_from_value_tier(label.get("value_tier", ""))
+    value_tier = label.get("value_tier") or _value_tier_from_core_level(core_level)
+    score_adjustment = 0
+    if not label.get("core_level") and value_tier:
+        if "核心" in value_tier:
+            score_adjustment = 20
+        elif "重要" in value_tier:
+            score_adjustment = 10
+        elif "非核心" in value_tier or "普通" in value_tier:
+            score_adjustment = -30 if "非核心" in value_tier else 0
+    return {
+        "core_level": core_level,
+        "value_tier": value_tier,
+        "is_core": core_level in {"P0", "P1", "核心"} or "核心" in value_tier,
+        "score_adjustment": score_adjustment,
+        "reviewer": label.get("reviewer", ""),
+        "reason": label.get("reason", ""),
+        "source": "expert_label",
+    }
+
+
+def _final_asset_decision(machine, manual):
+    if manual and (manual.get("core_level") or manual.get("value_tier")):
+        if manual.get("core_level"):
+            core_level = manual["core_level"]
+            value_tier = manual.get("value_tier") or _value_tier_from_core_level(core_level)
+            score = max(machine["score"], 100 if core_level in {"P0", "P1"} else machine["score"])
+            return {"core_level": core_level, "value_tier": value_tier, "is_core": core_level in {"P0", "P1", "核心"}, "score": score, "source": "manual_override"}
+        score = max(0, machine["score"] + manual.get("score_adjustment", 0))
+        return {
+            "core_level": _core_level_from_score(score),
+            "value_tier": manual.get("value_tier") or _value_tier_from_score(score),
+            "is_core": score >= 70 or manual.get("is_core", False),
+            "score": score,
+            "source": "manual_adjusted",
+        }
+    return {"core_level": machine["core_level"], "value_tier": machine["value_tier"], "is_core": machine["is_core"], "score": machine["score"], "source": "model"}
+
+
+def _asset_decision_confidence(gaps, label, machine_score):
+    critical_gaps = {"缺血缘信息", "缺相关任务", "缺最近运行实例"}
+    missing_critical = len(critical_gaps & set(gaps or []))
+    if label and label.get("core_level"):
+        return "high" if missing_critical <= 1 else "medium"
+    if missing_critical >= 2:
+        return "low"
+    if gaps:
+        return "medium"
+    return "high" if machine_score >= 50 else "medium"
+
+
+def _asset_review_suggestion(machine, manual, gaps):
+    suggestions = []
+    if manual and manual.get("core_level") and abs(_core_rank(manual.get("core_level")) - _core_rank(machine.get("core_level"))) >= 2:
+        suggestions.append("人工标注与机器评分差异较大，建议复核血缘、任务依赖和业务使用场景。")
+    if not manual and machine.get("score", 0) >= 70:
+        suggestions.append("机器判断为核心候选，建议补充人工标注确认 Owner、场景和核心等级。")
+    if gaps:
+        suggestions.append("当前判断受数据缺口影响：" + "、".join(gaps))
+    return " ".join(suggestions) or "当前证据较完整，可按现有判断进入后续资产治理。"
+
+
+def _core_rank(level):
+    return {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "核心": 1}.get(level or "", 4)
 
 
 def _has_business_keyword(name):

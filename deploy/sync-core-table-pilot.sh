@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="${1:-/etc/dlc-mcp/env}"
+PILOT_TABLE="${DLC_MCP_CORE_TABLE_PILOT:-ads_bill_company_1d_di}"
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "missing env file: $ENV_FILE" >&2
+  exit 1
+fi
+
+set -a
+. "$ENV_FILE"
+set +a
+
+: "${WEDATA_PROJECT_ID:?missing WEDATA_PROJECT_ID}"
+: "${DLC_MCP_DB:=/data/dlc-mcp/assets.db}"
+
+WORK_DIR="${DLC_MCP_SYNC_DIR:-/data/dlc-mcp/sync}"
+mkdir -p "$WORK_DIR"
+
+PYTHON_BIN="${DLC_MCP_PYTHON:-python3}"
+GAP_LIMIT="${DLC_MCP_SYNC_GAP_LIMIT:-20}"
+GAP_TYPES="${DLC_MCP_SYNC_GAP_TYPES:-fields,lineage,quality,tasks,runs,data_source}"
+
+export WEDATA_SYNC_TABLE_CATALOG=1
+export WEDATA_SYNC_METADATA=1
+export WEDATA_METADATA_TABLES="$PILOT_TABLE"
+export WEDATA_METADATA_TABLE_LIMIT=1
+export WEDATA_METADATA_WORKERS=1
+export WEDATA_SYNC_DATA_SOURCES=1
+export WEDATA_SYNC_INSTANCES=1
+export WEDATA_INSTANCE_KEYWORDS="$PILOT_TABLE"
+export WEDATA_INSTANCE_MAX_PAGES="${WEDATA_INSTANCE_MAX_PAGES:-20}"
+export WEDATA_INSTANCE_LOOKBACK_DAYS="${WEDATA_INSTANCE_LOOKBACK_DAYS:-2}"
+
+echo "== Core table pilot: $PILOT_TABLE =="
+echo "db: $DLC_MCP_DB"
+echo "sync dir: $WORK_DIR"
+
+echo
+echo "== Import core candidate label =="
+"$PYTHON_BIN" -m dlc_mcp.import_core_candidates docs/core-asset-candidates.csv --db "$DLC_MCP_DB"
+
+echo
+echo "== Sync scoped WeData assets =="
+"$PYTHON_BIN" -m dlc_mcp.sync_wedata
+
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  | DLC_MCP_DB="$DLC_MCP_DB" "$PYTHON_BIN" -m dlc_mcp.server >/dev/null
+
+echo "MCP smoke test passed"
+
+if [ "${DLC_MCP_SYNC_HEALTH_CHECK:-1}" = "1" ]; then
+  echo
+  echo "== Asset foundation check =="
+  "$PYTHON_BIN" -m dlc_mcp.check_foundation \
+    --db "$DLC_MCP_DB" \
+    --gap-types "$GAP_TYPES" \
+    --gap-limit "$GAP_LIMIT"
+
+  echo
+  echo "== Table readiness check =="
+  "$PYTHON_BIN" -m dlc_mcp.check_table "$PILOT_TABLE" --db "$DLC_MCP_DB"
+fi
+
+echo
+echo "== Table profile smoke command =="
+printf 'DLC_MCP_DB=%q %q -m dlc_mcp.server <<EOF\n' "$DLC_MCP_DB" "$PYTHON_BIN"
+printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"get_table_profile\",\"arguments\":{\"table_name\":\"$PILOT_TABLE\"}}}"
+printf 'EOF\n'

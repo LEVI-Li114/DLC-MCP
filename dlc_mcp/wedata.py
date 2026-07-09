@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 
 from .assets import AssetStore
@@ -123,12 +124,213 @@ def _task_from_api(item):
         "id": str(_get(item, "TaskId", "Id", "id")),
         "name": _get(item, "TaskName", "Name", "name"),
         "task_type": str(_get(item, "TaskType", "TaskTypeId", "Type", "taskType")),
-        "cycle": _get(item, "CycleType", "Cycle", "cycle"),
+        "cycle": _get(item, "CycleType", "Cycle", "CycleUnit", "cycle"),
+        "schedule_time": _task_schedule_time(item),
+        "schedule_desc": _task_schedule_desc(item),
         "owner": str(_get(item, "Owner", "OwnerName", "OwnerUin", "ResponsibleUser", "owner")),
         "status": _get(item, "Status", "TaskLatestVersionStatus", "State", "status"),
-        "inputs": _get(item, "Inputs", "InputTables", "inputs", default=[]),
-        "outputs": _get(item, "Outputs", "OutputTables", "outputs", default=[]),
+        "inputs": _task_table_names(item, "input"),
+        "outputs": _task_table_names(item, "output"),
     }
+
+
+def _task_schedule_time(item):
+    return _get(
+        item,
+        "ScheduleTime",
+        "SchedulerTime",
+        "TriggerTime",
+        "CrontabExpression",
+        "CronExpression",
+        "StartTime",
+        "ExecutionStartTime",
+    )
+
+
+def _task_schedule_desc(item):
+    desc = _get(item, "ScheduleDesc", "CycleDesc", "ScheduleDescription", "TaskAction")
+    if desc:
+        return desc
+    parts = [
+        _get(item, "CycleType", "Cycle", "CycleUnit"),
+        _get(item, "ScheduleTime", "SchedulerTime", "TriggerTime", "CrontabExpression", "CronExpression"),
+    ]
+    return " ".join(str(part) for part in parts if part)
+
+
+INPUT_TABLE_FIELDS = (
+    "Inputs",
+    "InputTables",
+    "InputTableList",
+    "InputTableNames",
+    "SourceTables",
+    "SourceTableList",
+    "SourceTableNames",
+    "Sources",
+    "ReadTables",
+    "ReadTableList",
+    "DependencyTables",
+    "DependencyTableList",
+    "UpstreamTables",
+)
+
+OUTPUT_TABLE_FIELDS = (
+    "Outputs",
+    "OutputTables",
+    "OutputTableList",
+    "OutputTableNames",
+    "TargetTables",
+    "TargetTableList",
+    "TargetTableNames",
+    "Targets",
+    "WriteTables",
+    "WriteTableList",
+    "SinkTables",
+    "ResultTables",
+    "DownstreamTables",
+)
+
+TABLE_NAME_FIELDS = (
+    "TableName",
+    "Name",
+    "tableName",
+    "name",
+    "Table",
+    "table",
+    "SourceTable",
+    "TargetTable",
+    "DbTableName",
+    "DatabaseTable",
+    "ResourceName",
+)
+
+
+def _task_table_names(item, direction):
+    fields = INPUT_TABLE_FIELDS if direction == "input" else OUTPUT_TABLE_FIELDS
+    names = []
+    for field in fields:
+        names.extend(_table_names_from_value(item.get(field)))
+    config = item.get("DependencyConfig") or item.get("TaskDependency") or item.get("Dependency") or {}
+    if isinstance(config, str):
+        config = _json_dict(config)
+    if isinstance(config, dict):
+        config_fields = INPUT_TABLE_FIELDS if direction == "input" else OUTPUT_TABLE_FIELDS
+        for field in config_fields:
+            names.extend(_table_names_from_value(config.get(field)))
+    if not names:
+        names.extend(_sql_table_names(_task_sql_text(item), direction))
+    return _dedupe_table_names(names)
+
+
+def _table_names_from_value(value):
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        parsed = None
+        if stripped.startswith(("[", "{")):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+        if parsed is not None:
+            return _table_names_from_value(parsed)
+        return [_normalize_table_name(part) for part in re.split(r"[,;\n\s]+", stripped) if _normalize_table_name(part)]
+    if isinstance(value, dict):
+        for field in TABLE_NAME_FIELDS:
+            if value.get(field):
+                return _table_names_from_value(value[field])
+        names = []
+        for field in INPUT_TABLE_FIELDS + OUTPUT_TABLE_FIELDS + ("Items", "List", "Tables", "tables"):
+            if field in value:
+                names.extend(_table_names_from_value(value[field]))
+        return names
+    if isinstance(value, list):
+        names = []
+        for item in value:
+            names.extend(_table_names_from_value(item))
+        return names
+    return [_normalize_table_name(str(value))]
+
+
+def _normalize_table_name(name):
+    value = str(name or "").strip().strip("`'\"")
+    if not value:
+        return ""
+    value = value.split(".")[-1]
+    if value.startswith(("${", "$[")):
+        return ""
+    return value if _layer_from_name(value) or "_" in value else ""
+
+
+def _dedupe_table_names(names):
+    result = []
+    seen = set()
+    for name in names:
+        if name and name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
+
+
+SQL_FIELDS = (
+    "Sql",
+    "SQL",
+    "SqlContent",
+    "ScriptContent",
+    "Content",
+    "TaskContent",
+    "CodeContent",
+    "TaskSql",
+    "QuerySql",
+)
+
+
+def _task_sql_text(item):
+    chunks = []
+    for field in SQL_FIELDS:
+        value = item.get(field)
+        if isinstance(value, str) and value.strip():
+            chunks.append(value)
+    for container in (item.get("TaskExt") or {}, item.get("Properties") or {}, item.get("Params") or {}):
+        if isinstance(container, str):
+            container = _json_dict(container)
+        if isinstance(container, dict):
+            for field in SQL_FIELDS:
+                value = container.get(field)
+                if isinstance(value, str) and value.strip():
+                    chunks.append(value)
+    return "\n".join(chunks)
+
+
+def _sql_table_names(sql, direction):
+    if not sql:
+        return []
+    text = _strip_sql_comments(sql)
+    if direction == "output":
+        patterns = [
+            r"\binsert\s+(?:overwrite\s+|into\s+)?(?:table\s+)?([`\w.]+)",
+            r"\bcreate\s+(?:or\s+replace\s+)?table\s+([`\w.]+)",
+        ]
+    else:
+        patterns = [r"\bfrom\s+([`\w.]+)", r"\bjoin\s+([`\w.]+)"]
+    names = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            name = _normalize_table_name(match.group(1))
+            if name and not _is_sql_keyword_name(name):
+                names.append(name)
+    return _dedupe_table_names(names)
+
+
+def _strip_sql_comments(sql):
+    text = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    text = re.sub(r"--.*?$", " ", text, flags=re.MULTILINE)
+    return text
+
+
+def _is_sql_keyword_name(name):
+    return name.lower() in {"select", "where", "lateral", "values", "unnest"}
 
 
 def _derived_output_table(task_name):
