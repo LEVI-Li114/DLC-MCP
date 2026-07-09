@@ -6,7 +6,6 @@ import time
 from datetime import datetime, timedelta
 
 from .assets import AssetStore
-from .sync_wedata import _list_all
 from .sync_table_fields import _call_with_retries
 from .tencentcloud import TencentCloudClient
 from .wedata import import_wedata_snapshot, snapshot_from_api_dump
@@ -25,13 +24,13 @@ def main():
     client = TencentCloudClient.wedata_from_env()
     store = AssetStore(sqlite3.connect(db_path))
     store.init_schema()
-    catalog = _call_with_retries(lambda: _list_all(client, "ListTable", {}, page_size), "ListTable", args)
+    catalog = _list_all_retried(client, "ListTable", {}, page_size, args)
     tables = snapshot_from_api_dump({"tables": catalog})["tables"]
     report = {"table_count": len(tables), "failures": []}
     dump = {"tables": catalog}
 
     if args.sync_tasks:
-        tasks = _call_with_retries(lambda: _list_all(client, "ListTasks", {"ProjectId": project_id}, page_size), "ListTasks", args)
+        tasks = _list_all_retried(client, "ListTasks", {"ProjectId": project_id}, page_size, args)
         dump["tasks"] = tasks
         report["task_count"] = len(tasks.get("Response", {}).get("Data", {}).get("Items") or [])
 
@@ -49,7 +48,7 @@ def main():
         }
         if args.instance_keyword:
             payload["Keyword"] = args.instance_keyword
-        instances = _call_with_retries(lambda: _list_all(client, "ListTaskInstances", payload, page_size, max_pages=args.instance_max_pages), "ListTaskInstances", args)
+        instances = _list_all_retried(client, "ListTaskInstances", payload, page_size, args, max_pages=args.instance_max_pages)
         dump["task_instances"] = instances
         report["instance_window"] = {"start": start_time, "end": end_time}
         report["task_instance_count"] = len(instances.get("Response", {}).get("Data", {}).get("Items") or [])
@@ -102,7 +101,7 @@ def _sync_lineage_quality(client, project_id, tables, page_size, args, report):
         if args.sync_lineage and guid:
             try:
                 response = _call_with_retries(
-                    lambda: _list_all(client, "ListLineage", {"ResourceUniqueId": guid, "ResourceType": "TABLE", "Direction": "OUTPUT", "Platform": "WEDATA"}, page_size),
+                    lambda: _list_all_retried(client, "ListLineage", {"ResourceUniqueId": guid, "ResourceType": "TABLE", "Direction": "OUTPUT", "Platform": "WEDATA"}, page_size, args),
                     "ListLineage",
                     args,
                 )
@@ -119,7 +118,7 @@ def _sync_lineage_quality(client, project_id, tables, page_size, args, report):
         if args.sync_quality and name:
             try:
                 response = _call_with_retries(
-                    lambda: _list_all(client, "ListQualityRules", {"ProjectId": project_id, "Filters": [{"Name": "TableName", "Values": [name]}]}, page_size),
+                    lambda: _list_all_retried(client, "ListQualityRules", {"ProjectId": project_id, "Filters": [{"Name": "TableName", "Values": [name]}]}, page_size, args),
                     "ListQualityRules",
                     args,
                 )
@@ -140,6 +139,45 @@ def _sync_lineage_quality(client, project_id, tables, page_size, args, report):
         "lineage": {"Response": {"Data": {"Items": lineage}}},
         "quality_rules": {"Response": {"Data": {"Items": quality_rules}}},
     }
+
+
+def _list_all_retried(client, action, payload, page_size, args, max_pages=None):
+    first = _call_page(client, action, payload, 1, page_size, args)
+    data = first.get("Response", {}).get("Data", {})
+    total_pages = int(data.get("TotalPageNumber") or data.get("PageCount") or _pages_from_total(data, page_size) or 1)
+    items = list(data.get("Items") or [])
+    stop_page = min(total_pages, max_pages or total_pages)
+
+    for page in range(2, stop_page + 1):
+        _sleep(args)
+        response = _call_page(client, action, payload, page, page_size, args)
+        items.extend(response.get("Response", {}).get("Data", {}).get("Items") or [])
+        if args.progress_every and (page == stop_page or page % args.progress_every == 0):
+            print(f"{action} pages {page}/{stop_page} items={len(items)}", flush=True)
+
+    first["Response"]["Data"]["Items"] = items
+    first["Response"]["Data"]["PageNumber"] = 1
+    first["Response"]["Data"]["PageSize"] = page_size
+    first["Response"]["Data"]["TotalPageNumber"] = total_pages
+    first["Response"]["Data"]["SyncedPageNumber"] = stop_page
+    return first
+
+
+def _call_page(client, action, payload, page, page_size, args):
+    response = _call_with_retries(
+        lambda: client.call(action, {**payload, "PageNumber": page, "PageSize": page_size}),
+        f"{action} page {page}",
+        args,
+    )
+    if "Error" in response.get("Response", {}):
+        error = response["Response"]["Error"]
+        raise RuntimeError(f"{action} page {page} failed: {error.get('Code')} {error.get('Message')}")
+    return response
+
+
+def _pages_from_total(data, page_size):
+    total = int(data.get("TotalCount") or 0)
+    return (total + page_size - 1) // page_size if total else 0
 
 
 def _instance_window(args):
