@@ -396,7 +396,7 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual(store.list_data_source_tasks("ds_001")["tasks"][0]["task_name"], "sync_mysql_prod")
         self.assertEqual(store.search_assets("sync_mysql_prod")["results"], [])
 
-    def test_data_source_related_layer_task_maps_output_table_without_global_task(self):
+    def test_data_source_related_layer_task_name_alone_stays_unresolved(self):
         store = AssetStore(sqlite3.connect(":memory:"))
         store.init_schema()
         import_wedata_snapshot(
@@ -412,10 +412,12 @@ class WeDataImportTest(unittest.TestCase):
             },
         )
 
+        inventory = store.get_data_source_inventory(data_source_name="crm_fxiaoke_tx")
+
         self.assertEqual(store.search_tasks("m2c_ods_crm_payment_plan_df")["results"], [])
-        self.assertEqual(store.search_assets("m2c_ods_crm_payment_plan_df")["results"][0]["data_source_id"], "ds_001")
-        self.assertEqual(store.get_data_source_inventory(data_source_name="crm_fxiaoke_tx")["tasks"][0]["parse_status"], "已解析")
-        self.assertEqual(store.get_data_source_inventory(data_source_name="crm_fxiaoke_tx")["tables"][0]["parse_status"], "缺字段")
+        self.assertEqual(store.search_assets("m2c_ods_crm_payment_plan_df")["results"], [])
+        self.assertEqual(inventory["tasks"][0]["parse_status"], "未解析")
+        self.assertEqual(inventory["tables"], [])
         edges = [dict(row) for row in store._all("select source_type, source_id, target_type, target_id, relation_type, evidence_source, confidence from asset_edges order by relation_type")]
         self.assertIn(
             {
@@ -429,18 +431,58 @@ class WeDataImportTest(unittest.TestCase):
             },
             edges,
         )
-        self.assertIn(
-            {
-                "source_type": "data_source",
-                "source_id": "ds_001",
-                "target_type": "table",
-                "target_id": "m2c_ods_crm_payment_plan_df",
-                "relation_type": "inferred_output_table",
-                "evidence_source": "data_source_related_task_name",
-                "confidence": "medium",
-            },
-            edges,
+        self.assertFalse(any(edge["target_id"] == "m2c_ods_crm_payment_plan_df" and edge["target_type"] == "table" for edge in edges))
+
+    def test_data_source_related_task_uses_parsed_task_output_table(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        import_wedata_snapshot(
+            store,
+            snapshot_from_api_dump(
+                {
+                    "tasks": {
+                        "Response": {
+                            "Data": {
+                                "Items": [
+                                    {
+                                        "TaskId": "sync_aliyun",
+                                        "TaskName": "m2c_ods_cloud_cost_aliyun_day_di",
+                                        "Sql": "insert overwrite table ods_cloud_cost_aliyun_day_di select * from raw_bill;",
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "data_sources": {"Response": {"Data": {"Items": [{"Id": "ds_001", "Name": "crm_fxiaoke_tx"}]}}},
+                    "data_source_tasks": {
+                        "ds_001": {
+                            "Response": {
+                                "Data": [
+                                    {
+                                        "ProjectId": "project",
+                                        "ProjectName": "prod",
+                                        "TaskInfo": [
+                                            {
+                                                "TaskType": "DataDevelopment",
+                                                "TaskList": [{"TaskId": "sync_aliyun", "TaskName": "m2c_ods_cloud_cost_aliyun_day_di"}],
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                }
+            ),
         )
+
+        inventory = store.get_data_source_inventory(data_source_name="crm_fxiaoke_tx")
+
+        self.assertEqual(store.search_assets("m2c_ods_cloud_cost_aliyun_day_di")["results"], [])
+        self.assertEqual(inventory["tasks"][0]["parse_status"], "已解析")
+        self.assertEqual(inventory["tasks"][0]["tables"], [{"table_name": "ods_cloud_cost_aliyun_day_di", "direction": "output"}])
+        self.assertEqual([table["name"] for table in inventory["tables"]], ["ods_cloud_cost_aliyun_day_di"])
+        self.assertEqual(inventory["tables"][0]["parse_status"], "缺字段")
 
     def test_cleanup_removes_old_task_name_derived_tables(self):
         store = AssetStore(sqlite3.connect(":memory:"))

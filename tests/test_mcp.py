@@ -1,8 +1,59 @@
+import os
 import sqlite3
 import unittest
+from unittest.mock import patch
 
 from dlc_mcp.assets import AssetStore
+from dlc_mcp.live import LiveWeData
 from dlc_mcp.mcp import handle_request
+
+
+class FakeWeDataClient:
+    def __init__(self):
+        self.calls = []
+
+    def call(self, action, payload):
+        self.calls.append((action, dict(payload)))
+        if action == "ListDataSources":
+            return {"Response": {"Data": {"Items": [{"Id": 57738, "Name": "crm_fxiaoke_tx", "Type": "MYSQL"}], "TotalPageNumber": 1}}}
+        if action == "GetDataSourceRelatedTasks":
+            return {
+                "Response": {
+                    "Data": [
+                        {
+                            "ProjectId": "project",
+                            "ProjectName": "prod",
+                            "TaskInfo": [
+                                {
+                                    "TaskType": "DataDevelopment",
+                                    "TaskList": [
+                                        {
+                                            "TaskId": "20250808124139850",
+                                            "TaskName": "m2c_ods_cloud_cost_aliyun_day_di",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        if action == "ListTasks" and payload.get("TaskName"):
+            return {
+                "Response": {
+                    "Data": {
+                        "Items": [
+                            {
+                                "TaskId": "20250808124139850",
+                                "TaskName": "m2c_ods_cloud_cost_aliyun_day_di",
+                                "Sql": "insert overwrite table ods_cloud_cost_aliyun_day_di select * from raw_bill",
+                            }
+                        ],
+                        "TotalPageNumber": 1,
+                    }
+                }
+            }
+        return {"Response": {"Data": {"Items": [], "TotalPageNumber": 1}}}
 
 
 class McpTest(unittest.TestCase):
@@ -58,6 +109,13 @@ class McpTest(unittest.TestCase):
                 "owner": "data-platform",
                 "description": "Production MySQL",
                 "config": {"host": "mysql.internal", "database": "crm"},
+            }
+        )
+        self.store.upsert_task(
+            {
+                "id": "sync_002",
+                "name": "m2c_ods_crm_payment_plan_df",
+                "outputs": ["m2c_ods_crm_payment_plan_df"],
             }
         )
         self.store.replace_data_source_tasks(
@@ -569,6 +627,30 @@ class McpTest(unittest.TestCase):
         )
 
         self.assertIn("live_ds", response["result"]["content"][0]["text"])
+
+    def test_live_data_source_inventory_fetches_related_task_definition(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        client = FakeWeDataClient()
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}):
+            live = LiveWeData(store, client=client)
+        response = handle_request(
+            store,
+            {
+                "jsonrpc": "2.0",
+                "id": 27,
+                "method": "tools/call",
+                "params": {"name": "get_data_source_inventory", "arguments": {"data_source_name": "crm_fxiaoke_tx", "live": True}},
+            },
+            live,
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("m2c_ods_cloud_cost_aliyun_day_di", text)
+        self.assertIn("ods_cloud_cost_aliyun_day_di", text)
+        self.assertNotIn("| m2c_ods_cloud_cost_aliyun_day_di | 缺字段 |", text)
+        self.assertTrue(any(call[0] == "ListTasks" and call[1].get("TaskName") == "m2c_ods_cloud_cost_aliyun_day_di" for call in client.calls))
+
     def test_tools_list_includes_governance_issue_inventory(self):
         store = AssetStore(sqlite3.connect(":memory:"))
         store.init_schema()

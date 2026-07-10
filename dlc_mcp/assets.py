@@ -389,29 +389,15 @@ class AssetStore:
                 {"task_name": item.get("task_name", ""), "project_id": item.get("project_id", ""), "project_name": item.get("project_name", "")},
                 commit=False,
             )
-            table_name = _data_source_task_output_table(item.get("task_name", ""))
-            if table_name:
-                self.conn.execute(
-                    "insert or ignore into task_tables (task_id, table_name, direction) values (?, ?, 'output')",
-                    (item["task_id"], table_name),
-                )
-                self.conn.execute(
-                    """
-                    insert into tables (name, data_source_id)
-                    values (?, ?)
-                    on conflict(name) do update set
-                        data_source_id = coalesce(nullif(excluded.data_source_id, ''), tables.data_source_id)
-                    """,
-                    (table_name, data_source_id),
-                )
+            for table_name in _parsed_output_tables_for_task(self.conn, item["task_id"]):
                 self.upsert_asset_edge(
                     "data_source",
                     data_source_id,
                     "table",
                     table_name,
                     "inferred_output_table",
-                    "data_source_related_task_name",
-                    "medium",
+                    "parsed_wedata_task_output",
+                    "high",
                     {"task_id": item["task_id"], "task_name": item.get("task_name", "")},
                     commit=False,
                 )
@@ -421,8 +407,8 @@ class AssetStore:
                     "table",
                     table_name,
                     "writes_table",
-                    "data_source_related_task_name",
-                    "medium",
+                    "parsed_wedata_task_output",
+                    "high",
                     {"data_source_id": data_source_id, "task_name": item.get("task_name", "")},
                     commit=False,
                 )
@@ -503,7 +489,7 @@ class AssetStore:
             """,
             (source_data["id"],),
         ):
-            mappings = [dict(item) for item in self._all("select table_name, direction from task_tables where task_id = ? order by direction, table_name", (row["task_id"],))]
+            mappings = [dict(item) for item in self._all("select table_name, direction from task_tables where task_id = ? and direction = 'output' order by direction, table_name", (row["task_id"],))]
             task = dict(row)
             task["tables"] = mappings
             task["parse_status"] = "已解析" if mappings else "未解析"
@@ -1688,7 +1674,7 @@ class AssetStore:
                 select distinct tt.table_name
                 from data_source_tasks dst
                 join task_tables tt on tt.task_id = dst.task_id
-                where dst.data_source_id = ?
+                where dst.data_source_id = ? and tt.direction = 'output'
                 order by tt.table_name
                 """,
                 (data_source_id,),
@@ -2726,16 +2712,19 @@ def _owner_name(owner_id):
     return aliases.get(str(owner_id), str(owner_id))
 
 
-def _data_source_task_output_table(task_name):
-    name = str(task_name or "").strip()
-    if not name:
-        return ""
-    parts = [part for part in name.lower().split("_") if part]
-    if not any(part in {"ods", "dwd", "dim", "dws", "ads"} for part in parts):
-        return ""
-    if name.endswith(("_check", "_test", "_tmp")):
-        return ""
-    return name
+def _parsed_output_tables_for_task(conn, task_id):
+    return [
+        row["table_name"]
+        for row in conn.execute(
+            """
+            select table_name
+            from task_tables
+            where task_id = ? and direction = 'output'
+            order by table_name
+            """,
+            (task_id,),
+        )
+    ]
 
 
 def _table_ddl(table_name, columns):

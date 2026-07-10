@@ -64,6 +64,12 @@ def main():
         with open(related_tasks_path, "w", encoding="utf-8") as f:
             json.dump(related_tasks, f, ensure_ascii=False, indent=2)
         dump["data_source_tasks"] = related_tasks
+        related_task_definitions = _sync_related_task_definitions(client, project_id, related_tasks, page_size)
+        if _response_item_count(related_task_definitions):
+            related_task_definitions_path = os.path.join(work_dir, "wedata_data_source_task_definitions.json")
+            with open(related_task_definitions_path, "w", encoding="utf-8") as f:
+                json.dump(related_task_definitions, f, ensure_ascii=False, indent=2)
+            dump["tasks"] = _merge_task_responses(dump.get("tasks", {}), related_task_definitions)
 
     if os.environ.get("WEDATA_SYNC_INSTANCES") == "1":
         instance_payload = {"ProjectId": project_id}
@@ -155,6 +161,65 @@ def _sync_data_source_tasks(client, data_sources_response, progress_every=10):
         if progress_every and (index == total or index % progress_every == 0):
             print(f"synced related tasks for {index}/{total} data sources", flush=True)
     return related
+
+
+def _sync_related_task_definitions(client, project_id, related_tasks, page_size, progress_every=20):
+    definitions = []
+    seen_task_ids = set()
+    tasks = _flatten_related_tasks(related_tasks)
+    total = len(tasks)
+    for index, task in enumerate(tasks, start=1):
+        task_id = str(task.get("task_id") or "")
+        task_name = task.get("task_name") or ""
+        if task_id and task_id in seen_task_ids:
+            continue
+        response = _list_all(client, "ListTasks", {"ProjectId": project_id, "TaskName": task_name}, page_size)
+        for item in response.get("Response", {}).get("Data", {}).get("Items") or []:
+            if _task_matches_related_item(item, task):
+                definitions.append(item)
+                if task_id:
+                    seen_task_ids.add(task_id)
+                break
+        if progress_every and (index == total or index % progress_every == 0):
+            print(f"synced definitions for {index}/{total} data source related tasks", flush=True)
+    return {"Response": {"Data": {"Items": definitions}}}
+
+
+def _flatten_related_tasks(related_tasks):
+    tasks = []
+    for response in related_tasks.values():
+        for project in response.get("Response", {}).get("Data") or []:
+            for group in project.get("TaskInfo") or []:
+                for item in group.get("TaskList") or []:
+                    tasks.append(
+                        {
+                            "task_id": str(item.get("TaskId") or item.get("Id") or item.get("id") or ""),
+                            "task_name": item.get("TaskName") or item.get("Name") or item.get("name") or "",
+                        }
+                    )
+    return tasks
+
+
+def _task_matches_related_item(item, related):
+    task_id = str(item.get("TaskId") or item.get("Id") or item.get("id") or "")
+    task_name = item.get("TaskName") or item.get("Name") or item.get("name") or ""
+    related_id = str(related.get("task_id") or "")
+    related_name = related.get("task_name") or ""
+    return bool((related_id and task_id == related_id) or (related_name and task_name == related_name))
+
+
+def _merge_task_responses(primary, extra):
+    primary_items = primary.get("Response", {}).get("Data", {}).get("Items") or []
+    extra_items = extra.get("Response", {}).get("Data", {}).get("Items") or []
+    by_id = {}
+    for item in [*primary_items, *extra_items]:
+        task_id = str(item.get("TaskId") or item.get("Id") or item.get("id") or "")
+        key = task_id or item.get("TaskName") or item.get("Name") or item.get("name") or ""
+        if key:
+            by_id[key] = {**by_id.get(key, {}), **item}
+    merged = primary or {"Response": {"Data": {}}}
+    merged.setdefault("Response", {}).setdefault("Data", {})["Items"] = list(by_id.values())
+    return merged
 
 
 def _sync_partitions(client, project_id, table_names, page_size, progress_every=10, catalog_tables=None):

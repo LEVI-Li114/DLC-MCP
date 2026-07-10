@@ -249,6 +249,7 @@ Restart Codex, then ask:
 - Downstream lineage: supported through optional `ListLineage` sync
 - Quality rules: supported through optional `ListQualityRules` sync
 - Data source listing, configuration lookup, related task count, and related task details: supported through `ListDataSources` and `GetDataSourceRelatedTasks`
+- Data source related task table parsing: `GetDataSourceRelatedTasks` only proves that a data source is related to a WeData task. The inventory does not treat the related task name as a table name. The sync first fetches/imports the related task definition and then uses the task parser to extract input/output tables from explicit task fields or SQL. If an older sync created fake tables derived from task names such as `m2c_ods_*`, run `python3 -m dlc_mcp.cleanup_derived_tables --apply` against the affected database after verifying the dry-run output.
 - Metadata database/table listing: supported after optional metadata sync
 - Usage heat: not supported yet; needs query logs or BI/report access logs
 

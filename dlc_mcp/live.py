@@ -1,6 +1,7 @@
 import os
 from datetime import datetime, timedelta
 
+from .sync_wedata import _merge_task_responses, _sync_related_task_definitions
 from .tencentcloud import TencentCloudClient
 from .wedata import import_wedata_snapshot, snapshot_from_api_dump
 
@@ -62,7 +63,11 @@ class LiveWeData:
             data_source_id = item.get("Id") or item.get("DataSourceId") or item.get("DatasourceId")
             if data_source_id:
                 related[str(data_source_id)] = self.client.call("GetDataSourceRelatedTasks", {"Id": int(data_source_id)})
-        self._import({"data_sources": data, "data_source_tasks": related})
+        task_definitions = _sync_related_task_definitions(self.client, self.project_id, related, self.page_size)
+        payload = {"data_sources": data, "data_source_tasks": related}
+        if task_definitions.get("Response", {}).get("Data", {}).get("Items"):
+            payload["tasks"] = _merge_task_responses({}, task_definitions)
+        self._import(payload)
 
     def _list_all(self, action, payload, max_pages=None):
         first = self.client.call(action, {**payload, "PageNumber": 1, "PageSize": self.page_size})

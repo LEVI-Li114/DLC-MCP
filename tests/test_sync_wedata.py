@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
@@ -6,12 +7,63 @@ from io import StringIO
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from dlc_mcp.sync_wedata import _catalog_table_names, _filter_new_asset_tables, _instance_window, _list_all, _metadata_table_count, _partition_payload, _sync_data_source_tasks, _sync_metadata, _sync_partitions, partition_payload_candidates
+from dlc_mcp.assets import AssetStore
+from dlc_mcp.sync_wedata import _catalog_table_names, _filter_new_asset_tables, _instance_window, _list_all, _metadata_table_count, _partition_payload, _sync_data_source_tasks, _sync_metadata, _sync_partitions, main, partition_payload_candidates
 
 
 class FakeClient:
     def call(self, action, payload):
         return {"Response": {"Data": {"Items": [{"TaskId": payload["Id"]}]}}}
+
+
+class FakeDataSourceTaskDefinitionClient:
+    def __init__(self):
+        self.calls = []
+
+    def call(self, action, payload):
+        self.calls.append((action, dict(payload)))
+        if action == "ListTasks" and payload.get("TaskName"):
+            return {
+                "Response": {
+                    "Data": {
+                        "Items": [
+                            {
+                                "TaskId": "20250808124139850",
+                                "TaskName": "m2c_ods_cloud_cost_aliyun_day_di",
+                                "Sql": "insert overwrite table ods_cloud_cost_aliyun_day_di select * from raw_bill",
+                            }
+                        ],
+                        "TotalPageNumber": 1,
+                    }
+                }
+            }
+        if action == "ListTasks":
+            return {"Response": {"Data": {"Items": [], "TotalPageNumber": 1}}}
+        if action == "ListDataSources":
+            return {"Response": {"Data": {"Items": [{"Id": 57738, "Name": "crm_fxiaoke_tx"}], "TotalPageNumber": 1}}}
+        if action == "GetDataSourceRelatedTasks":
+            return {
+                "Response": {
+                    "Data": [
+                        {
+                            "ProjectId": "project",
+                            "ProjectName": "prod",
+                            "TaskInfo": [
+                                {
+                                    "TaskType": "DataDevelopment",
+                                    "TaskList": [
+                                        {
+                                            "TaskId": "20250808124139850",
+                                            "TaskName": "m2c_ods_cloud_cost_aliyun_day_di",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        return {"Response": {"Data": {"Items": [], "TotalPageNumber": 1}}}
 
 
 class FakePagedErrorClient:
@@ -94,6 +146,33 @@ class SyncWeDataTest(unittest.TestCase):
         self.assertEqual(sorted(related), ["1", "2"])
         self.assertIn("synced related tasks for 1/2 data sources", output.getvalue())
         self.assertIn("synced related tasks for 2/2 data sources", output.getvalue())
+
+    def test_sync_data_sources_fetches_related_task_definitions(self):
+        client = FakeDataSourceTaskDefinitionClient()
+        with TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "assets.db")
+            with patch.dict(
+                os.environ,
+                {
+                    "WEDATA_PROJECT_ID": "project",
+                    "DLC_MCP_DB": db_path,
+                    "DLC_MCP_SYNC_DIR": tmpdir,
+                    "WEDATA_SYNC_TABLE_CATALOG": "0",
+                    "WEDATA_SYNC_DATA_SOURCES": "1",
+                    "WEDATA_SYNC_METADATA": "0",
+                    "WEDATA_SYNC_PARTITIONS": "0",
+                    "WEDATA_SYNC_INSTANCES": "0",
+                },
+            ), patch("dlc_mcp.sync_wedata.TencentCloudClient.wedata_from_env", return_value=client), redirect_stdout(StringIO()):
+                main()
+
+            self.assertTrue(any(call[0] == "GetDataSourceRelatedTasks" for call in client.calls))
+            self.assertTrue(any(call[0] == "ListTasks" and call[1].get("TaskName") == "m2c_ods_cloud_cost_aliyun_day_di" for call in client.calls))
+            store = AssetStore(sqlite3.connect(db_path))
+            inventory = store.get_data_source_inventory(data_source_name="crm_fxiaoke_tx")
+            self.assertEqual(inventory["tasks"][0]["parse_status"], "已解析")
+            self.assertEqual(inventory["tasks"][0]["tables"], [{"table_name": "ods_cloud_cost_aliyun_day_di", "direction": "output"}])
+            self.assertEqual([table["name"] for table in inventory["tables"]], ["ods_cloud_cost_aliyun_day_di"])
 
     def test_list_all_raises_on_later_page_error(self):
         with self.assertRaises(RuntimeError):
