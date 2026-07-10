@@ -520,6 +520,22 @@ class AssetGovernanceIssueInventoryTest(unittest.TestCase):
         self.assertEqual(data["results"], [])
         self.assertIn("missing_quality_rules", data["supported_issue_types"])
 
+    def test_daily_report_includes_governance_issue_summaries(self):
+        store = self._store()
+        store.upsert_table({"name": "ads_revenue", "layer": "ads", "owner": "finance"})
+        store.upsert_table({"name": "unknown_table", "layer": "unknown", "owner": ""})
+
+        report = store.get_asset_governance_daily_report()
+
+        self.assertIn("issue_summary_by_type", report)
+        self.assertGreaterEqual(report["issue_summary_by_type"]["missing_quality_rules"], 1)
+        self.assertGreaterEqual(report["issue_summary_by_type"]["unknown_layer"], 1)
+        self.assertIn("issue_summary_by_severity", report)
+        self.assertIn("issue_summary_by_owner", report)
+        self.assertIn("unknown owner", report["issue_summary_by_owner"])
+        self.assertIn("top_governance_issues", report)
+        self.assertIn("responsibility_buckets", report)
+
 
 if __name__ == "__main__":
     unittest.main()

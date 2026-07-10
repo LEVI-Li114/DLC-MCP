@@ -599,6 +599,12 @@ class AssetStore:
                 break
         owner_gaps = owner_gaps[:20]
         lifecycle_watch = lifecycle_watch[:20]
+        issue_inventory = self.get_asset_governance_issue_inventory(layer, core_level, "", 100)
+        governance_issues = issue_inventory["results"]
+        issue_summary_by_type = _governance_issue_counts(governance_issues, "issue_type")
+        issue_summary_by_severity = _governance_issue_counts(governance_issues, "severity")
+        issue_summary_by_owner = _governance_issue_counts(governance_issues, "owner")
+        responsibility_buckets = _governance_responsibility_buckets(governance_issues)
         summary = {
             "sync_status": sync_health.get("status", ""),
             "production_risk_count": len(production_risks),
@@ -611,6 +617,7 @@ class AssetStore:
             "expert_review_count": len(expert_queue),
             "owner_gap_count": len(owner_gaps),
             "lifecycle_watch_count": len(lifecycle_watch),
+            "governance_issue_count": len(governance_issues),
         }
         return {
             "instance_date": instance_date,
@@ -623,6 +630,11 @@ class AssetStore:
             "expert_review_queue": expert_queue,
             "owner_gaps": owner_gaps,
             "lifecycle_watch": lifecycle_watch,
+            "issue_summary_by_type": issue_summary_by_type,
+            "issue_summary_by_severity": issue_summary_by_severity,
+            "issue_summary_by_owner": issue_summary_by_owner,
+            "top_governance_issues": governance_issues[:20],
+            "responsibility_buckets": responsibility_buckets,
             "top_actions": _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue),
             "notes": [
                 "巡检日报基于当前本地资产库已同步事实生成，不会触发批量实时同步。",
@@ -2024,6 +2036,41 @@ def _governance_issues_for_table(table):
     if _profile_incomplete(table):
         issues.append(_governance_issue(table, "profile_incomplete", "profile_coverage_gap", "Prioritize missing profile facts by issue inventory entries."))
     return issues
+
+
+def _governance_issue_counts(issues, key):
+    counts = {}
+    for issue in issues:
+        value = issue.get(key) or "unknown"
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _governance_responsibility_buckets(issues):
+    buckets = {
+        "data_platform": [],
+        "warehouse_owner": [],
+        "bi_owner": [],
+        "business_owner": [],
+        "unknown_owner": [],
+    }
+    for issue in issues:
+        bucket = _governance_responsibility_bucket(issue)
+        if len(buckets[bucket]) < 20:
+            buckets[bucket].append(issue)
+    return buckets
+
+
+def _governance_responsibility_bucket(issue):
+    if issue.get("owner") == "unknown owner":
+        return "unknown_owner"
+    if issue.get("issue_type") in {"partition_unsupported", "missing_task_runs"}:
+        return "data_platform"
+    if issue.get("issue_type") in {"missing_quality_rules", "missing_task_mapping", "unknown_layer", "missing_owner"}:
+        return "warehouse_owner"
+    if issue.get("issue_type") == "missing_data_source":
+        return "data_platform"
+    return "business_owner"
 
 
 def _governance_issue(table, issue_type, root_cause, next_check):
