@@ -34,6 +34,26 @@ class CheckFoundationTest(unittest.TestCase):
         self.assertNotIn("jsonrpc", report.lower())
         self.assertNotIn('"result"', report)
 
+    def test_renders_service_inspection_baselines_when_supplied(self):
+        conn = sqlite3.connect(":memory:")
+        store = AssetStore(conn)
+        store.init_schema()
+
+        report = render_foundation_report(
+            store,
+            "service.db",
+            ["quality"],
+            5,
+            report_source="latest service asset inspection",
+            quality_rule_count=62,
+            unknown_layer_count=2141,
+        )
+
+        self.assertIn("## 巡检来源", report)
+        self.assertIn("latest service asset inspection", report)
+        self.assertIn("质量规则基线：**62**", report)
+        self.assertIn("unknown 层表基线：**2141**", report)
+
 
 if __name__ == "__main__":
     unittest.main()

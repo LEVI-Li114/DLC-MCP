@@ -32,14 +32,14 @@ def _parse_args():
     return parser.parse_args()
 
 
-def render_foundation_report(store, db_path, gap_types=None, gap_limit=20):
+def render_foundation_report(store, db_path, gap_types=None, gap_limit=20, report_source="", quality_rule_count=None, unknown_layer_count=None):
     health = store.get_sync_health()
     coverage = store.get_asset_coverage()
     gap_types = gap_types or _split_csv(DEFAULT_GAP_TYPES)
 
     sections = [
         "# DLC-MCP 资产底座检查报告",
-        _section("检查对象", [f"数据库：`{_cell(db_path)}`"]),
+        _format_inspection_source(db_path, report_source, quality_rule_count, unknown_layer_count),
         _format_health(health),
         _format_coverage(coverage),
         _format_core_candidates(store.list_core_candidates(limit=gap_limit)),
@@ -48,6 +48,17 @@ def render_foundation_report(store, db_path, gap_types=None, gap_limit=20):
         sections.append(_format_gaps(store.list_asset_coverage_gaps(gap_type=gap_type, limit=gap_limit)))
     sections.append(_format_next_actions(health, coverage))
     return "\n\n".join(section for section in sections if section)
+
+
+def _format_inspection_source(db_path, report_source="", quality_rule_count=None, unknown_layer_count=None):
+    lines = [f"数据库：`{_cell(db_path)}`"]
+    if report_source:
+        lines.append(f"来源：{_cell(report_source)}")
+    if quality_rule_count is not None:
+        lines.append(f"质量规则基线：**{quality_rule_count}**（来自最新服务端资产库巡检）")
+    if unknown_layer_count is not None:
+        lines.append(f"unknown 层表基线：**{unknown_layer_count}**（来自最新服务端资产库巡检）")
+    return _section("巡检来源", lines)
 
 
 def _format_health(health):
