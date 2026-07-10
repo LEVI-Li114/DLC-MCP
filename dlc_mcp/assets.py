@@ -1665,7 +1665,21 @@ class AssetStore:
     def _data_source_table_names(self, data_source_id):
         names = {
             row["name"]
-            for row in self._all("select name from tables where data_source_id = ? order by name", (data_source_id,))
+            for row in self._all(
+                """
+                select t.name
+                from tables t
+                where t.data_source_id = ?
+                  and (
+                    nullif(t.source_guid, '') is not null
+                    or nullif(t.database_name, '') is not null
+                    or exists (select 1 from columns c where c.table_name = t.name)
+                    or exists (select 1 from task_tables tt where tt.table_name = t.name)
+                  )
+                order by t.name
+                """,
+                (data_source_id,),
+            )
         }
         names.update(
             row["table_name"]

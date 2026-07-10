@@ -484,6 +484,22 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual([table["name"] for table in inventory["tables"]], ["ods_cloud_cost_aliyun_day_di"])
         self.assertEqual(inventory["tables"][0]["parse_status"], "缺字段")
 
+    def test_data_source_inventory_ignores_empty_direct_table_shells_when_outputs_exist(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        store.upsert_data_source({"id": "ds_001", "name": "crm_fxiaoke_tx"})
+        store.upsert_table({"name": "m2c_ods_cloud_cost_aliyun_day_di", "data_source_id": "ds_001"})
+        store.upsert_table({"name": "ods_cloud_cost_aliyun_day_di", "guid": "guid_001", "database": "byai_bigdata"})
+        store.upsert_task({"id": "sync_aliyun", "name": "m2c_ods_cloud_cost_aliyun_day_di", "outputs": ["ods_cloud_cost_aliyun_day_di"]})
+        store.replace_data_source_tasks(
+            "ds_001",
+            [{"task_id": "sync_aliyun", "task_name": "m2c_ods_cloud_cost_aliyun_day_di"}],
+        )
+
+        inventory = store.get_data_source_inventory(data_source_name="crm_fxiaoke_tx")
+
+        self.assertEqual([table["name"] for table in inventory["tables"]], ["ods_cloud_cost_aliyun_day_di"])
+
     def test_cleanup_removes_old_task_name_derived_tables(self):
         store = AssetStore(sqlite3.connect(":memory:"))
         store.init_schema()
