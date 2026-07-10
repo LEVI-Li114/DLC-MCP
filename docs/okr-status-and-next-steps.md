@@ -186,6 +186,7 @@
 - `get_asset_usage_profile(table_name, live)`
 - `get_asset_lifecycle_profile(table_name, live)`
 - `get_asset_change_impact(table_name, change_type, live)`
+- `get_asset_governance_issue_inventory(layer, core_level, issue_type, limit)`
 - `get_asset_governance_daily_report(instance_date, layer, core_level)`
 
 覆盖 OKR：
@@ -194,7 +195,13 @@
 - O2/KR4：风险解释。
 - O2/KR5：问题对象与责任归属。
 
-当前判断：**治理工具已经超出第 1~2 周基础要求，具备进入“巡检日报/风险解释”的基础。**
+新增能力：
+
+- `get_asset_governance_issue_inventory` 会从 SQLite 事实库确定性产出治理问题清单，覆盖 unknown 层、缺质量规则、缺任务映射、缺运行实例、缺数据源、缺 Owner、分区能力不可用、画像不完整等 issue 类型。
+- 每个 issue 都包含 `evidence`、`severity`、`suspected_root_cause`、`recommended_next_check`，并把未知责任人统一归到 `unknown owner`，避免由 LLM 猜测事实或 Owner。
+- `get_asset_governance_daily_report` 已接入 issue inventory，并新增按 issue type、severity、owner 的汇总、Top governance issues、责任方 buckets，可直接作为每日治理分工入口。
+
+当前判断：**治理工具已经超出第 1~2 周基础要求，具备进入“巡检日报/风险解释/责任分工”的基础。**
 
 #### BI 指标口径
 
@@ -215,8 +222,12 @@
 - `get_sync_health()`：同步健康、资产数量、最新同步信号、当前数据缺口。
 - `get_asset_coverage()`：按层级统计字段、质量规则、血缘、任务、数据源覆盖率。
 - `list_asset_coverage_gaps(gap_type, layer, limit)`：列出缺字段、缺血缘、缺质量规则、缺任务、缺运行实例、缺数据源等表。
+- `get_asset_governance_issue_inventory(layer, core_level, issue_type, limit)`：按治理 issue 类型输出确定性问题清单、证据、严重级别、疑似根因和下一步检查建议。
+- `get_asset_governance_daily_report(instance_date, layer, core_level)`：在巡检日报中汇总治理 issue 数量、严重级别、Owner 和责任方 buckets。
 - `python3 -m dlc_mcp.check_foundation`：服务端/本地可读 Markdown 检查报告。
 - `python3 -m dlc_mcp.diagnose_asset_gaps`：针对服务端巡检缺口做只读诊断。
+- `python3 -m dlc_mcp.validate_core_assets --db ... --limit 20 --output ...`：生成核心候选资产端到端验收 Markdown，逐表串联画像完整度、核心判断、质量状态、生产状态、风险解释、当前缺口和建议动作。
+- `.claude/skills/data-asset-governance/SKILL.md`：提供面向 Agent 的数据资产治理分析流程，要求先取 deterministic issue evidence，再输出治理方案，禁止编造 issue facts、Owner 或把 absent data 当健康。
 
 最新诊断重点已覆盖：
 
@@ -225,7 +236,7 @@
 - 分区接口：WeData `2025-08-06` 下 `ListTablePartitions` 返回 `InvalidAction`，应判断为 **action 名/版本不支持**，不是参数错误。
 - 部分真实表缺任务/运行实例：已不再归因于误造表，而是进入任务表映射、运行窗口、分页、task_id 对齐等真实缺口排查。
 
-当前判断：**项目已经具备“数据拉取后怎么判断是否可信”的主控台能力。**
+当前判断：**项目已经具备“数据拉取后怎么判断是否可信”的主控台能力；新增 issue inventory 和 core validation report 后，缺口不仅能被列出，还能按严重级别、根因、Owner 和责任方被拆解成治理动作。**
 
 ---
 
@@ -246,11 +257,11 @@
 
 | KR | 要求 | 当前状态 | 差距 |
 | --- | --- | --- | --- |
-| KR1 质量规则查询 | 各层级表质量规则数、明细、状态 | `get_quality_status`、`list_quality_gaps` 已有 | 质量规则总量 62，覆盖率低；需要字段级覆盖度 |
-| KR2 任务运行实例查询 | 查询今天/昨天任务运行情况 | `get_task_runs`、表生产状态已实现 | 部分真实表缺运行实例，需要扩大/校准同步窗口 |
-| KR3 聚合质量与产出状态 | 按表/任务/数据源聚合风险 | 生产风险、巡检日报已有 | 需要数据源维度风险聚合和 SLA 规则 |
-| KR4 风险解释 | 缺规则、失败、延迟、下游影响 | 已有风险画像和生产风险详情 | 需要更强的核心表影响解释和可执行处理建议 |
-| KR5 团队拆解清单 | 平台/数仓/BI/业务 Owner 分工 | Owner/profile 工具有基础 | 需要落地责任矩阵和处理流程 |
+| KR1 质量规则查询 | 各层级表质量规则数、明细、状态 | `get_quality_status`、`list_quality_gaps`、`get_asset_governance_issue_inventory(issue_type="missing_quality_rules")` 已有 | 质量规则总量 62，覆盖率低；需要字段级覆盖度 |
+| KR2 任务运行实例查询 | 查询今天/昨天任务运行情况 | `get_task_runs`、表生产状态、`missing_task_mapping` / `missing_task_runs` issue 清单已实现 | 部分真实表缺运行实例，需要扩大/校准同步窗口 |
+| KR3 聚合质量与产出状态 | 按表/任务/数据源聚合风险 | 生产风险、巡检日报、issue summary / severity / owner 汇总已有 | 需要数据源维度风险聚合和 SLA 规则 |
+| KR4 风险解释 | 缺规则、失败、延迟、下游影响 | 已有风险画像、生产风险详情、issue suspected root cause 与 recommended next check | 需要更强的核心表影响解释和可执行处理建议 |
+| KR5 团队拆解清单 | 平台/数仓/BI/业务 Owner 分工 | Owner/profile 工具、issue responsibility buckets、`data-asset-governance` skill 已有基础 | 需要落地责任矩阵和处理流程 |
 
 ## 4. 当前最重要的数据问题
 
@@ -363,13 +374,31 @@ python3 -m dlc_mcp.diagnose_asset_gaps \
 bash deploy/check-asset-foundation.sh /etc/dlc-mcp/env
 ```
 
-3. 输出四张治理清单：
+3. 用 issue inventory 固定输出确定性治理清单：
+
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_asset_governance_issue_inventory","arguments":{"limit":100}}}' \
+  | DLC_MCP_DB=/data/dlc-mcp/assets.db python3 -m dlc_mcp.server
+```
+
+重点按 `issue_type` 拆分：
+
+- `unknown_layer`：层级未知。
+- `missing_quality_rules`：缺质量规则。
+- `missing_task_mapping`：缺任务映射。
+- `missing_task_runs`：有任务但缺运行实例。
+- `missing_data_source`：缺数据源关联。
+- `missing_owner`：缺责任人。
+- `partition_unsupported`：分区事实受 action/version 限制。
+- `profile_incomplete`：画像不完整。
+
+4. 输出四张治理清单：
    - unknown 层表清单。
    - 无质量规则核心/高影响表清单。
    - 缺任务映射表清单。
    - 有任务但缺运行实例表清单。
 
-4. 对每类缺口标注根因：
+5. 对每类缺口标注根因：
    - 同步范围问题。
    - API/action/版本问题。
    - 解析映射问题。
@@ -382,6 +411,8 @@ bash deploy/check-asset-foundation.sh /etc/dlc-mcp/env
 - 质量规则 62 的来源判断清楚：源头少、同步少、还是解析丢。
 - 分区明确不再作为参数问题阻塞。
 - 真实表缺任务/运行实例能分清缺映射还是缺实例。
+- 每类缺口都能在 issue inventory 中看到 evidence、severity、suspected root cause、recommended next check 和 owner / `unknown owner`。
+- 巡检日报能输出 issue summary、Top governance issues 和 responsibility buckets，作为每日治理分工入口。
 
 ---
 
@@ -393,17 +424,19 @@ bash deploy/check-asset-foundation.sh /etc/dlc-mcp/env
 
 1. 对核心候选表优先补齐：字段、任务、血缘、质量规则、运行实例、数据源。
 2. 用 `get_table_profile` 做 20 个真实核心表样例验收。
-3. 将表画像分为：
+3. 用 `python3 -m dlc_mcp.validate_core_assets --db /data/dlc-mcp/assets.db --limit 20 --output ...` 生成核心候选资产端到端验收报告。
+4. 将表画像分为：
    - 基础信息：名称、层级、库、Owner、描述。
    - 结构信息：字段、分区可用性。
    - 生产链路：任务、输入输出、运行实例。
-   - 治理信息：质量规则、Owner、生命周期。
+   - 治理信息：质量规则、Owner、生命周期、issue inventory 当前缺口。
    - 价值信息：核心等级、价值分层、下游影响。
 
 验收标准：
 
 - 20 个核心表样例中，大部分能返回完整画像。
 - 每个画像能明确列出缺口，而不是静默为空。
+- 核心候选资产验收报告逐表包含画像完整度、核心判断、质量状态、生产状态、风险解释、当前缺口和建议动作。
 
 ---
 
@@ -452,12 +485,19 @@ bash deploy/check-asset-foundation.sh /etc/dlc-mcp/env
    - 任务延迟。
    - 核心表下游影响。
 4. 用 `get_asset_governance_daily_report` 做每日巡检入口。
+   - 日报包含 `issue_summary_by_type`、`issue_summary_by_severity`、`issue_summary_by_owner`、`top_governance_issues` 和 `responsibility_buckets`。
+   - 质量、任务、Owner、数据源等缺口优先从 deterministic issue inventory 取证，不由 LLM 猜测。
+5. 使用 `data-asset-governance` skill 将 issue evidence 转为治理方案：
+   - P0/P1/P2 分级。
+   - 按数据平台、数仓 Owner、BI Owner、业务 Owner、unknown owner 拆分责任。
+   - 每个建议动作必须引用 issue evidence。
 
 验收标准：
 
 - 能回答“今天哪些核心表有风险”。
 - 能说明“为什么有风险”。
 - 能给出“应该找谁处理”。
+- 输出治理方案时，每条建议都能追溯到 issue evidence；不能把缺数据当健康，也不能编造 Owner。
 
 ---
 
@@ -527,9 +567,14 @@ bash deploy/check-asset-foundation.sh /etc/dlc-mcp/env
    - 对真实表按缺映射、缺实例、窗口不足分类治理。
 
 5. **挑 20 张核心候选表做端到端验收**
-   - 每张表跑：画像、核心判断、质量状态、生产状态、风险解释。
+   - 每张表跑：画像、核心判断、质量状态、生产状态、风险解释、当前治理缺口。
+   - 使用 `python3 -m dlc_mcp.validate_core_assets --db /data/dlc-mcp/assets.db --limit 20 --output ...` 固化验收报告。
 
-6. **进入核心资产模型校准和质量监控 Agent V1**
+6. **用 issue inventory 驱动每日治理方案**
+   - 每日从 `get_asset_governance_issue_inventory` 和 `get_asset_governance_daily_report` 取证。
+   - 用 `data-asset-governance` skill 输出 `# 数据资产治理方案`，按 P0/P1/P2 和责任方拆解。
+
+7. **进入核心资产模型校准和质量监控 Agent V1**
    - 在数据可信后，再增强解释和 Agent 体验。
 
 ## 7. 总体结论
@@ -540,13 +585,18 @@ bash deploy/check-asset-foundation.sh /etc/dlc-mcp/env
 - WeData 真实数据采集链路已跑通。
 - SQLite 资产事实库模型已覆盖 OKR P0 对象。
 - 表画像、质量、任务、运行实例、数据源、核心判断、风险解释等 MCP 工具已经形成体系。
+- 新增 deterministic governance issue inventory，可把 unknown 层、缺规则、缺任务映射、缺运行实例、缺数据源、缺 Owner、分区不可用、画像不完整等问题按证据、严重级别、根因和下一步检查输出。
+- 巡检日报已从风险列表升级为可分工的治理日报，包含 issue summary、Top issues、Owner 汇总和责任方 buckets。
+- 新增核心候选资产端到端验收报告 CLI，可用于 20 张核心候选表的画像/质量/生产/风险/缺口抽检。
+- 新增 `data-asset-governance` skill，可将确定性 issue evidence 转成治理方案，并约束 Agent 不编造事实或责任人。
 - 服务端已经拉到真实数据，项目进入“真实数据治理与验收”阶段。
 
 下一步不建议继续优先新增大量工具，而应优先完成：
 
 1. **真实数据缺口治理**；
-2. **核心表样例端到端验收**；
-3. **核心资产模型校准**；
-4. **质量监控 Agent 的风险解释闭环**。
+2. **基于 issue inventory 的每日治理分工**；
+3. **核心表样例端到端验收**；
+4. **核心资产模型校准**；
+5. **质量监控 Agent 的风险解释闭环**。
 
 这样才能从“工具可用”推进到 OKR 要求的“资产知识库可信、质量监控可解释、团队可以落地使用”。
