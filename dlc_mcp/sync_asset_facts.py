@@ -79,7 +79,7 @@ def _parse_args():
     parser.add_argument("--max-retries", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_MAX_RETRIES", "5")))
     parser.add_argument("--retry-base-sleep", type=float, default=float(os.environ.get("WEDATA_FULL_FACTS_RETRY_BASE_SLEEP", "2")))
     parser.add_argument("--progress-every", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_PROGRESS_EVERY", "50")))
-    parser.add_argument("--instance-lookback-days", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_INSTANCE_LOOKBACK_DAYS", "30")))
+    parser.add_argument("--instance-lookback-days", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_INSTANCE_LOOKBACK_DAYS", "7")))
     parser.add_argument("--instance-max-pages", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_INSTANCE_MAX_PAGES", "500")))
     parser.add_argument("--instance-keyword", default=os.environ.get("WEDATA_FULL_FACTS_INSTANCE_KEYWORD", ""))
     parser.add_argument("--sync-tasks", action="store_true", default=os.environ.get("WEDATA_FULL_FACTS_SYNC_TASKS", "1") == "1")

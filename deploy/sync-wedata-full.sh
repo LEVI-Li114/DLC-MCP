@@ -18,12 +18,13 @@ set +a
 : "${DLC_MCP_DB:=/data/dlc-mcp/assets.db}"
 
 START_TS="$(date +%s)"
-echo "== DLC-MCP full table field sync =="
+echo "== DLC-MCP full WeData sync =="
 echo "db: $DLC_MCP_DB"
 echo "started_at: $(date '+%Y-%m-%d %H:%M:%S')"
 
 PYTHON_BIN="${DLC_MCP_PYTHON:-python3}"
-"$PYTHON_BIN" -m dlc_mcp.sync_table_fields "$@"
+"$PYTHON_BIN" -m dlc_mcp.sync_asset_facts "$@"
+"$PYTHON_BIN" -m dlc_mcp.sync_table_fields
 
 END_TS="$(date +%s)"
 echo "finished_at: $(date '+%Y-%m-%d %H:%M:%S')"

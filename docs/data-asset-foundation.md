@@ -108,7 +108,7 @@ DLC_MCP_GATEWAY_TOKEN=your-token \
 说明：
 
 - 同步入口在 `dlc_mcp/sync_wedata.py`。
-- 部署脚本为 `deploy/sync-wedata-once.sh`。
+- 部署脚本为 `deploy/sync-wedata-incremental.sh`。
 - 同步过程会把原始 WeData JSON dump 保存到同步目录，便于追溯。
 - 同步后的结构化数据写入 SQLite 资产库。
 
@@ -173,14 +173,14 @@ WEDATA_METADATA_TABLE_LIMIT=50 \
 WEDATA_SYNC_DATA_SOURCES=1 \
 WEDATA_SYNC_INSTANCES=1 \
 WEDATA_INSTANCE_MAX_PAGES=20 \
-bash deploy/sync-wedata-once.sh
+bash deploy/sync-wedata-incremental.sh
 ```
 
 如果任务实例量太大，先加关键词限制：
 
 ```bash
 WEDATA_INSTANCE_KEYWORDS=ads_bill_company_1d_di,dws_360_fin_job_seat_1d_di \
-bash deploy/sync-wedata-once.sh
+bash deploy/sync-wedata-incremental.sh
 ```
 
 ### 4.4 验收标准
@@ -248,7 +248,7 @@ DLC_MCP_GATEWAY_TOKEN=replace-with-random-token
 ### 5.4 验收标准
 
 - `deploy/env.example` 能表达所有关键配置。
-- `deploy/sync-wedata-once.sh` 能加载标准配置运行。
+- `deploy/sync-wedata-incremental.sh` 能加载标准配置运行。
 - 文档中明确小样本、扩大样本、定时同步三类配置方式。
 
 ## 6. 执行项 3：建立同步健康检查
@@ -544,7 +544,7 @@ WEDATA_INSTANCE_MAX_PAGES=20
 
 ```bash
 cd /opt/dlc-mcp/DLC-MCP
-bash deploy/sync-wedata-once.sh /etc/dlc-mcp/env
+bash deploy/sync-wedata-incremental.sh /etc/dlc-mcp/env
 ```
 
 如果只想检查当前资产库，不重新同步：

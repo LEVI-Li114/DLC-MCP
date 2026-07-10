@@ -75,7 +75,7 @@ Success means the response contains `Response.Data.Items`.
 
 ```bash
 cd /opt/dlc-mcp/DLC-MCP
-bash deploy/sync-wedata-once.sh
+bash deploy/sync-wedata-incremental.sh
 ```
 
 The script:
@@ -101,13 +101,13 @@ Enable this when you want real fields, downstream lineage, and quality rules:
 
 ```bash
 cd /opt/dlc-mcp/DLC-MCP
-WEDATA_SYNC_METADATA=1 WEDATA_METADATA_TABLE_LIMIT=50 bash deploy/sync-wedata-once.sh
+WEDATA_SYNC_METADATA=1 WEDATA_METADATA_TABLE_LIMIT=50 bash deploy/sync-wedata-incremental.sh
 ```
 
 For a small targeted run:
 
 ```bash
-WEDATA_SYNC_METADATA=1 WEDATA_METADATA_TABLES=ads_bill_company_1d_di,dws_360_fin_job_seat_1d_di bash deploy/sync-wedata-once.sh
+WEDATA_SYNC_METADATA=1 WEDATA_METADATA_TABLES=ads_bill_company_1d_di,dws_360_fin_job_seat_1d_di bash deploy/sync-wedata-incremental.sh
 ```
 
 This uses:
@@ -123,7 +123,7 @@ For a stable one-off full table field backfill, use the dedicated field-only scr
 
 ```bash
 cd /opt/dlc-mcp/DLC-MCP
-bash deploy/sync-all-table-fields.sh /etc/dlc-mcp/env
+bash deploy/sync-wedata-full.sh /etc/dlc-mcp/env
 ```
 
 Tune conservatively in `/etc/dlc-mcp/env` if Tencent Cloud rate limits are hit:
@@ -139,7 +139,7 @@ For a stable one-off full asset fact backfill after fields are ready, use:
 
 ```bash
 cd /opt/dlc-mcp/DLC-MCP
-bash deploy/sync-all-asset-facts.sh /etc/dlc-mcp/env
+bash deploy/sync-wedata-full.sh /etc/dlc-mcp/env
 ```
 
 This syncs full task mappings, lineage, quality rules, and a wider task-instance window. It writes elapsed time and failures to:
@@ -169,7 +169,7 @@ Then rerun:
 
 ```bash
 cd /opt/dlc-mcp/DLC-MCP
-bash deploy/sync-wedata-once.sh
+bash deploy/sync-wedata-incremental.sh
 ```
 
 This populates task start time, end time, duration, and status for `get_task_runs(task_id)`.
@@ -259,7 +259,7 @@ Run whenever you want to refresh data:
 ```bash
 cd /opt/dlc-mcp/DLC-MCP
 git pull
-bash deploy/sync-wedata-once.sh
+bash deploy/sync-wedata-incremental.sh
 ```
 
 Install the central scheduler:
@@ -269,13 +269,13 @@ cd /opt/dlc-mcp/DLC-MCP
 bash deploy/install-sync-cron.sh
 ```
 
-The installer writes one idempotent crontab entry. It runs daily at 05:00, and `deploy/sync-wedata-managed.sh` decides whether this is a daily incremental sync or month-end full calibration:
+The installer writes one idempotent crontab entry. It runs daily at 05:00 and calls `deploy/sync-wedata-incremental.sh`:
 
 ```cron
-0 5 * * * cd /opt/dlc-mcp/DLC-MCP && bash deploy/sync-wedata-managed.sh /etc/dlc-mcp/env >> /data/dlc-mcp/logs/sync.log 2>&1 # dlc-mcp-wedata-sync
+0 5 * * * cd /opt/dlc-mcp/DLC-MCP && bash deploy/sync-wedata-incremental.sh /etc/dlc-mcp/env >> /data/dlc-mcp/logs/sync.log 2>&1 # dlc-mcp-wedata-sync
 ```
 
-Daily mode syncs the bottom-layer facts used by MCP tools: task catalog and task-table mappings, table catalog, full metadata for tables whose catalog create/update date is yesterday, yesterday's task instances, data sources and related tasks, and yesterday's partition facts. Month-end mode performs a broader metadata/data-source/partition calibration using the `DLC_MCP_MONTHLY_*` limits in `/etc/dlc-mcp/env`.
+Daily sync updates the bottom-layer facts used by MCP tools: task catalog and task-table mappings, table catalog, full metadata for tables whose catalog create/update date is yesterday, yesterday's task instances, data sources and related tasks, and yesterday's partition facts.
 
 Verify the schedule and logs:
 
@@ -291,4 +291,4 @@ sudo mkdir -p /data/dlc-mcp/logs
 sudo chown -R "$USER":"$USER" /data/dlc-mcp/logs
 ```
 
-After this, if WeData adds a new task, wait until the next 05:00 run or run `bash deploy/sync-wedata-managed.sh` manually, then ask MCP through `search_tasks(query)`.
+After this, if WeData adds a new task, wait until the next 05:00 run or run `bash deploy/sync-wedata-incremental.sh` manually, then ask MCP through `search_tasks(query)`.
