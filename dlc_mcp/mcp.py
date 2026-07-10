@@ -155,6 +155,18 @@ TOOLS = {
             },
         },
     },
+    "get_asset_governance_issue_inventory": {
+        "description": "Return deterministic governance issue inventory for real asset gaps, grouped by issue type, layer, core level, and evidence.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "layer": {"type": "string"},
+                "core_level": {"type": "string"},
+                "issue_type": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+        },
+    },
     "get_asset_governance_daily_report": {
         "description": "Return a daily governance patrol report for production risks, coverage gaps, quality gaps, owner gaps, lifecycle watch items, and expert review queue.",
         "schema": {
@@ -324,6 +336,13 @@ def _call_tool(store, request, live=None):
         data = store.get_asset_coverage()
     elif name == "list_asset_coverage_gaps":
         data = store.list_asset_coverage_gaps(args.get("gap_type", ""), args.get("layer", ""), args.get("limit", 50))
+    elif name == "get_asset_governance_issue_inventory":
+        data = store.get_asset_governance_issue_inventory(
+            args.get("layer", ""),
+            args.get("core_level", ""),
+            args.get("issue_type", ""),
+            int(args.get("limit", 100)),
+        )
     elif name == "get_asset_governance_daily_report":
         data = store.get_asset_governance_daily_report(args.get("instance_date", ""), args.get("layer", ""), args.get("core_level", ""))
     else:

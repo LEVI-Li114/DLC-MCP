@@ -546,6 +546,35 @@ class McpTest(unittest.TestCase):
         )
 
         self.assertIn("live_ds", response["result"]["content"][0]["text"])
+    def test_tools_list_includes_governance_issue_inventory(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        response = handle_request(store, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+
+        tool_names = [tool["name"] for tool in response["result"]["tools"]]
+        self.assertIn("get_asset_governance_issue_inventory", tool_names)
+
+    def test_can_call_governance_issue_inventory(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        store.upsert_table({"name": "ads_revenue", "layer": "ads"})
+
+        response = handle_request(
+            store,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_asset_governance_issue_inventory",
+                    "arguments": {"issue_type": "missing_quality_rules", "limit": 10},
+                },
+            },
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("missing_quality_rules", text)
+        self.assertIn("ads_revenue", text)
 
 
 class FakeLive:
