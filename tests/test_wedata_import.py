@@ -394,6 +394,28 @@ class WeDataImportTest(unittest.TestCase):
 
         self.assertEqual(store.search_tasks("sync_mysql_prod")["results"], [])
         self.assertEqual(store.list_data_source_tasks("ds_001")["tasks"][0]["task_name"], "sync_mysql_prod")
+        self.assertEqual(store.search_assets("sync_mysql_prod")["results"], [])
+
+    def test_data_source_related_layer_task_maps_output_table_without_global_task(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        import_wedata_snapshot(
+            store,
+            {
+                "data_sources": [{"id": "ds_001", "name": "crm_fxiaoke_tx"}],
+                "data_source_tasks": [
+                    {
+                        "data_source_id": "ds_001",
+                        "tasks": [{"task_id": "sync_001", "task_name": "m2c_ods_crm_payment_plan_df"}],
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(store.search_tasks("m2c_ods_crm_payment_plan_df")["results"], [])
+        self.assertEqual(store.search_assets("m2c_ods_crm_payment_plan_df")["results"][0]["data_source_id"], "ds_001")
+        self.assertEqual(store.get_data_source_inventory(data_source_name="crm_fxiaoke_tx")["tasks"][0]["parse_status"], "已解析")
+        self.assertEqual(store.get_data_source_inventory(data_source_name="crm_fxiaoke_tx")["tables"][0]["parse_status"], "缺字段")
 
     def test_cleanup_removes_old_task_name_derived_tables(self):
         store = AssetStore(sqlite3.connect(":memory:"))

@@ -70,6 +70,7 @@ Update this list whenever a new MCP tool is added.
 | `list_data_sources(query, live)` | List data sources, configuration summaries, and related task counts. |
 | `get_data_source(data_source_id, live)` | Return one data source, including type, owner, related task count, description, and config summary. |
 | `list_data_source_tasks(data_source_id, live)` | List tasks related to one data source. |
+| `get_data_source_inventory(data_source_id/data_source_name, live)` | Return one data source's tasks, parsed tables, SQL DDL, and unresolved or missing-field gaps. |
 | `get_table_risk_profile(table_name, live)` | Explain governance risk from layer, downstream dependencies, quality rules, and task runs. |
 | `get_asset_value_profile(table_name, live)` | Return asset value tier and core-table decision. |
 | `get_asset_owner_profile(table_name, live)` | Return asset ownership chain and responsibility gaps. |

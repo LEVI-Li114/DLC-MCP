@@ -286,6 +286,21 @@ class AssetStore:
                     item.get("owner", ""),
                 ),
             )
+            table_name = _data_source_task_output_table(item.get("task_name", ""))
+            if table_name:
+                self.conn.execute(
+                    "insert or ignore into task_tables (task_id, table_name, direction) values (?, ?, 'output')",
+                    (item["task_id"], table_name),
+                )
+                self.conn.execute(
+                    """
+                    insert into tables (name, data_source_id)
+                    values (?, ?)
+                    on conflict(name) do update set
+                        data_source_id = coalesce(nullif(excluded.data_source_id, ''), tables.data_source_id)
+                    """,
+                    (table_name, data_source_id),
+                )
         self.conn.commit()
 
     def upsert_table_partition(self, item):
@@ -347,6 +362,57 @@ class AssetStore:
             (data_source_id,),
         )
         return {"data_source_id": data_source_id, "tasks": [dict(row) for row in rows]}
+
+    def get_data_source_inventory(self, data_source_id="", data_source_name=""):
+        source = self._resolve_data_source(data_source_id, data_source_name)
+        if not source:
+            return {"error": "data_source_not_found", "data_source_id": data_source_id, "data_source_name": data_source_name}
+        source_data = self._data_source_dict(source)
+        tasks = []
+        for row in self._all(
+            """
+            select task_id, task_name, task_type, project_id, project_name, create_time, owner
+            from data_source_tasks
+            where data_source_id = ?
+            order by task_name, task_id
+            """,
+            (source_data["id"],),
+        ):
+            mappings = [dict(item) for item in self._all("select table_name, direction from task_tables where task_id = ? order by direction, table_name", (row["task_id"],))]
+            task = dict(row)
+            task["tables"] = mappings
+            task["parse_status"] = "已解析" if mappings else "未解析"
+            tasks.append(task)
+
+        table_names = self._data_source_table_names(source_data["id"])
+        tables = []
+        for table_name in table_names:
+            table = self._one(
+                "select name, source_guid, data_source_id, database_name, layer, domain, owner, description, manual_core_level from tables where name = ?",
+                (table_name,),
+            )
+            columns = [dict(row) for row in self._all("select name, type, description from columns where table_name = ? order by ordinal, name", (table_name,))]
+            mappings = [dict(row) for row in self._all("select task_id, direction from task_tables where table_name = ? order by direction, task_id", (table_name,))]
+            table_data = self._table_dict(table) if table else {"name": table_name, "database": "", "data_source_id": source_data["id"], "layer": "", "domain": "", "owner": "", "description": ""}
+            table_data["columns"] = columns
+            table_data["task_mappings"] = mappings
+            table_data["parse_status"] = "已解析" if columns else "缺字段"
+            table_data["ddl"] = _table_ddl(table_name, columns) if columns else ""
+            tables.append(table_data)
+
+        unresolved = [task for task in tasks if task["parse_status"] == "未解析"]
+        missing_fields = [table for table in tables if table["parse_status"] == "缺字段"]
+        return {
+            "data_source": source_data,
+            "tasks": tasks,
+            "tables": tables,
+            "gaps": {
+                "unresolved_task_count": len(unresolved),
+                "missing_field_table_count": len(missing_fields),
+                "unresolved_tasks": [{"task_id": task["task_id"], "task_name": task["task_name"]} for task in unresolved],
+                "missing_field_tables": [table["name"] for table in missing_fields],
+            },
+        }
 
     def list_metadata(self):
         databases = [row["database_name"] for row in self._all("select distinct database_name from tables where database_name != '' order by database_name")]
@@ -1475,6 +1541,35 @@ class AssetStore:
         )
         return row["n"] if row else 0
 
+    def _resolve_data_source(self, data_source_id, data_source_name):
+        if data_source_id:
+            row = self._one("select id, name, type, owner, description, config_json from data_sources where id = ?", (data_source_id,))
+            if row:
+                return row
+        if data_source_name:
+            return self._one("select id, name, type, owner, description, config_json from data_sources where name = ?", (data_source_name,))
+        return None
+
+    def _data_source_table_names(self, data_source_id):
+        names = {
+            row["name"]
+            for row in self._all("select name from tables where data_source_id = ? order by name", (data_source_id,))
+        }
+        names.update(
+            row["table_name"]
+            for row in self._all(
+                """
+                select distinct tt.table_name
+                from data_source_tasks dst
+                join task_tables tt on tt.task_id = dst.task_id
+                where dst.data_source_id = ?
+                order by tt.table_name
+                """,
+                (data_source_id,),
+            )
+        )
+        return sorted(names)
+
     def _max_data_source_task_create_time(self, data_source_id):
         row = self._one("select max(nullif(create_time, '')) as value from data_source_tasks where data_source_id = ?", (data_source_id,))
         return row["value"] if row and row["value"] else ""
@@ -2503,6 +2598,37 @@ def _owner_name(owner_id):
             key, value = item.split(":", 1)
             aliases[key.strip()] = value.strip()
     return aliases.get(str(owner_id), str(owner_id))
+
+
+def _data_source_task_output_table(task_name):
+    name = str(task_name or "").strip()
+    if not name:
+        return ""
+    parts = [part for part in name.lower().split("_") if part]
+    if not any(part in {"ods", "dwd", "dim", "dws", "ads"} for part in parts):
+        return ""
+    if name.endswith(("_check", "_test", "_tmp")):
+        return ""
+    return name
+
+
+def _table_ddl(table_name, columns):
+    lines = [f"CREATE TABLE `{_escape_identifier(table_name)}` ("]
+    definitions = []
+    for column in columns:
+        column_type = (column.get("type") or "string").strip() or "string"
+        line = f"  `{_escape_identifier(column.get('name'))}` {column_type}"
+        description = (column.get("description") or "").replace("'", "''").strip()
+        if description:
+            line += f" COMMENT '{description}'"
+        definitions.append(line)
+    lines.append(",\n".join(definitions))
+    lines.append(");")
+    return "\n".join(lines)
+
+
+def _escape_identifier(value):
+    return str(value or "").replace("`", "``")
 
 
 def _normalize_gap_type(gap_type):

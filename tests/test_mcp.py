@@ -62,8 +62,12 @@ class McpTest(unittest.TestCase):
         )
         self.store.replace_data_source_tasks(
             "ds_001",
-            [{"task_id": "sync_001", "task_name": "sync_mysql_prod", "task_type": "DataDevelopment", "project_name": "prod"}],
+            [
+                {"task_id": "sync_001", "task_name": "sync_mysql_prod", "task_type": "DataDevelopment", "project_name": "prod"},
+                {"task_id": "sync_002", "task_name": "m2c_ods_crm_payment_plan_df", "task_type": "DataDevelopment", "project_name": "prod"},
+            ],
         )
+        self.store.upsert_column("m2c_ods_crm_payment_plan_df", "id", "bigint", "Primary key", 1)
         self.store.upsert_expert_label({"asset_name": "dim_customer", "core_level": "P1", "value_tier": "重要", "domain": "客户", "use_case": "客户分析"})
 
     def test_lists_tools(self):
@@ -79,6 +83,7 @@ class McpTest(unittest.TestCase):
         self.assertIn("search_tasks", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_data_sources", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_data_source_tasks", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("get_data_source_inventory", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_table_risk_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_asset_value_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_asset_owner_profile", [tool["name"] for tool in response["result"]["tools"]])
@@ -363,6 +368,24 @@ class McpTest(unittest.TestCase):
         text = response["result"]["content"][0]["text"]
         self.assertIn("sync_mysql_prod", text)
         self.assertIn("数据源关联任务", text)
+
+    def test_calls_data_source_inventory_tool(self):
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 12,
+                "method": "tools/call",
+                "params": {"name": "get_data_source_inventory", "arguments": {"data_source_name": "mysql_prod"}},
+            },
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("数据源资产清单：mysql_prod", text)
+        self.assertIn("sync_mysql_prod", text)
+        self.assertIn("未解析", text)
+        self.assertIn("m2c_ods_crm_payment_plan_df", text)
+        self.assertIn("CREATE TABLE `m2c_ods_crm_payment_plan_df`", text)
 
     def test_data_sources_are_rendered_as_markdown_table(self):
         response = handle_request(

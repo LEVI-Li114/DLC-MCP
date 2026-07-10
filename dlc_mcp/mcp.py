@@ -92,6 +92,17 @@ TOOLS = {
         "description": "List WeData tasks related to one data source.",
         "schema": {"type": "object", "properties": {"data_source_id": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["data_source_id"]},
     },
+    "get_data_source_inventory": {
+        "description": "Return one data source's related tasks, parsed tables, SQL DDL, and unresolved/missing-field gaps.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "data_source_id": {"type": "string"},
+                "data_source_name": {"type": "string"},
+                "live": {"type": "boolean"},
+            },
+        },
+    },
     "get_table_risk_profile": {
         "description": "Return table risk level based on lineage, quality rules, and latest output task runs.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
@@ -287,6 +298,11 @@ def _call_tool(store, request, live=None):
         if live and (args.get("live") or not data.get("tasks")):
             live.sync_data_sources(args["data_source_id"])
             data = store.list_data_source_tasks(args["data_source_id"])
+    elif name == "get_data_source_inventory":
+        data = store.get_data_source_inventory(args.get("data_source_id", ""), args.get("data_source_name", ""))
+        if live and (args.get("live") or data.get("error") or data.get("gaps", {}).get("unresolved_task_count")):
+            live.sync_data_sources(args.get("data_source_id") or args.get("data_source_name", ""))
+            data = store.get_data_source_inventory(args.get("data_source_id", ""), args.get("data_source_name", ""))
     elif name == "get_table_risk_profile":
         data = store.get_table_risk_profile(args["table_name"])
         if live and (args.get("live") or data.get("error")):
@@ -380,6 +396,8 @@ def _format_markdown(tool_name, data):
             ["TaskId", "任务名", "类型", "项目", "创建时间", "负责人"],
             [[r.get("task_id"), r.get("task_name"), r.get("task_type"), r.get("project_name"), r.get("create_time"), r.get("owner")] for r in rows],
         )
+    if tool_name == "get_data_source_inventory":
+        return _format_data_source_inventory(data)
     if tool_name == "get_table_risk_profile":
         return "\n\n".join(
             [
@@ -607,6 +625,81 @@ def _format_expert_label(label):
             f"更新时间：`{_cell(label.get('updated_at'))}`",
         ],
     )
+
+
+def _format_data_source_inventory(data):
+    source = data.get("data_source") or {}
+    tasks = data.get("tasks") or []
+    tables = data.get("tables") or []
+    gaps = data.get("gaps") or {}
+    ddl_sections = []
+    for table in tables:
+        if table.get("ddl"):
+            ddl_sections.append(f"### {table.get('name')}\n\n```sql\n{table.get('ddl')}\n```")
+    if not ddl_sections:
+        ddl_sections.append("_当前没有可生成 DDL 的表；需要先补齐字段同步。_")
+    return "\n\n".join(
+        [
+            _section(
+                f"数据源资产清单：{source.get('name')}",
+                [
+                    f"ID：`{_cell(source.get('id'))}`",
+                    f"类型：`{_cell(source.get('type'))}`",
+                    f"负责人：`{_cell(source.get('owner'))}` / `{_cell(source.get('owner_name'))}`",
+                    f"任务数：**{len(tasks)}**",
+                    f"表数：**{len(tables)}**",
+                    f"未解析任务数：**{gaps.get('unresolved_task_count', 0)}**",
+                    f"缺字段表数：**{gaps.get('missing_field_table_count', 0)}**",
+                ],
+            ),
+            _table(
+                ["TaskId", "任务名", "状态", "类型", "项目", "负责人", "关联表"],
+                [
+                    [
+                        task.get("task_id"),
+                        task.get("task_name"),
+                        task.get("parse_status"),
+                        task.get("task_type"),
+                        task.get("project_name"),
+                        task.get("owner"),
+                        ", ".join(_task_table_names(task)),
+                    ]
+                    for task in tasks
+                ],
+            ),
+            _table(
+                ["表名", "状态", "字段数", "库", "层级", "负责人", "任务映射"],
+                [
+                    [
+                        table.get("name"),
+                        table.get("parse_status"),
+                        len(table.get("columns") or []),
+                        table.get("database"),
+                        table.get("layer"),
+                        table.get("owner"),
+                        ", ".join(f"{item.get('task_id')}:{item.get('direction')}" for item in table.get("task_mappings") or []),
+                    ]
+                    for table in tables
+                ],
+            ),
+            _section(
+                "缺口",
+                [
+                    "未解析任务：" + ", ".join(item.get("task_name", "") for item in gaps.get("unresolved_tasks", [])[:20])
+                    if gaps.get("unresolved_tasks")
+                    else "未解析任务：无",
+                    "缺字段表：" + ", ".join(gaps.get("missing_field_tables", [])[:50])
+                    if gaps.get("missing_field_tables")
+                    else "缺字段表：无",
+                ],
+            ),
+            "**SQL DDL**\n\n" + "\n\n".join(ddl_sections),
+        ]
+    )
+
+
+def _task_table_names(task):
+    return [item.get("table_name", "") for item in task.get("tables") or [] if item.get("table_name")]
 
 
 def _format_asset_value_profile(data):
