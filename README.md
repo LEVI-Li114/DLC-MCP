@@ -84,6 +84,7 @@ Update this list whenever a new MCP tool is added.
 | `get_sync_health()` | Return sync health, asset counts, latest observed sync signals, and current data gaps. |
 | `get_asset_coverage()` | Return asset coverage by layer for fields, lineage, quality rules, tasks, data sources, and runs. |
 | `list_asset_coverage_gaps(gap_type, layer, limit)` | List tables with missing asset profile coverage, filtered by gap type or layer. |
+| `get_asset_governance_issue_inventory(layer, core_level, issue_type, limit)` | Return deterministic governance issues with evidence, suspected root cause, severity, and recommended next check. |
 | `get_asset_governance_daily_report(instance_date, layer, core_level)` | Return a daily governance patrol report. |
 | `is_core_table(table_name)` | Explain whether a table is core and why. |
 

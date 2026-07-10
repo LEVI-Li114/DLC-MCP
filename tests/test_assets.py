@@ -448,5 +448,104 @@ class AssetStoreTest(unittest.TestCase):
         self.assertIn("优先联系产出任务负责人", "；".join(detail["suggestions"]))
 
 
+class AssetGovernanceIssueInventoryTest(unittest.TestCase):
+    def _store(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        return store
+
+    def test_lists_unknown_layer_issue_with_evidence(self):
+        store = self._store()
+        store.upsert_table({"name": "mystery_daily", "layer": "unknown", "owner": "data-owner"})
+
+        data = store.get_asset_governance_issue_inventory(issue_type="unknown_layer")
+
+        self.assertEqual(data["issue_type"], "unknown_layer")
+        self.assertEqual(data["supported_issue_types"][0], "unknown_layer")
+        self.assertEqual(len(data["results"]), 1)
+        issue = data["results"][0]
+        self.assertEqual(issue["issue_type"], "unknown_layer")
+        self.assertEqual(issue["asset_type"], "table")
+        self.assertEqual(issue["asset_name"], "mystery_daily")
+        self.assertEqual(issue["layer"], "unknown")
+        self.assertEqual(issue["owner"], "data-owner")
+        self.assertEqual(issue["suspected_root_cause"], "manual_mapping_needed")
+        self.assertIn("layer", issue["evidence"])
+
+    def test_lists_missing_quality_rule_issue_with_downstream_evidence(self):
+        store = self._store()
+        store.upsert_table({"name": "ads_revenue", "layer": "ads", "owner": "finance"})
+        store.upsert_column("ads_revenue", "amount", "decimal", "", 1)
+        store.upsert_lineage("ads_revenue", "report_revenue", "dashboard")
+
+        data = store.get_asset_governance_issue_inventory(issue_type="missing_quality_rules")
+
+        issue = data["results"][0]
+        self.assertEqual(issue["issue_type"], "missing_quality_rules")
+        self.assertEqual(issue["severity"], "P1")
+        self.assertEqual(issue["evidence"]["quality_rule_count"], 0)
+        self.assertEqual(issue["evidence"]["downstream_count"], 1)
+        self.assertEqual(issue["suspected_root_cause"], "source_governance_gap")
+
+    def test_separates_missing_task_mapping_and_missing_task_runs(self):
+        store = self._store()
+        store.upsert_table({"name": "ads_no_task", "layer": "ads"})
+        store.upsert_table({"name": "ads_no_run", "layer": "ads"})
+        store.upsert_task({"id": "task_1", "name": "build_ads_no_run", "outputs": ["ads_no_run"]})
+
+        no_task = store.get_asset_governance_issue_inventory(issue_type="missing_task_mapping")
+        no_run = store.get_asset_governance_issue_inventory(issue_type="missing_task_runs")
+
+        self.assertEqual([item["asset_name"] for item in no_task["results"]], ["ads_no_task"])
+        self.assertEqual([item["asset_name"] for item in no_run["results"]], ["ads_no_run"])
+        self.assertEqual(no_run["results"][0]["suspected_root_cause"], "instance_window_gap")
+
+    def test_filters_by_layer_and_limit(self):
+        store = self._store()
+        store.upsert_table({"name": "ads_a", "layer": "ads"})
+        store.upsert_table({"name": "dwd_b", "layer": "dwd"})
+
+        data = store.get_asset_governance_issue_inventory(layer="ads", issue_type="missing_quality_rules", limit=1)
+
+        self.assertEqual(len(data["results"]), 1)
+        self.assertEqual(data["results"][0]["asset_name"], "ads_a")
+
+    def test_invalid_issue_type_returns_supported_types_and_no_results(self):
+        store = self._store()
+        store.upsert_table({"name": "ads_a", "layer": "ads"})
+
+        data = store.get_asset_governance_issue_inventory(issue_type="not_real")
+
+        self.assertEqual(data["issue_type"], "not_real")
+        self.assertEqual(data["results"], [])
+        self.assertIn("missing_quality_rules", data["supported_issue_types"])
+
+    def test_issue_type_filter_applies_before_limit(self):
+        store = self._store()
+        store.upsert_table({"name": "a_no_task", "layer": "ads"})
+        store.upsert_table({"name": "z_no_run", "layer": "ads"})
+        store.upsert_task({"id": "task_1", "name": "build_z_no_run", "outputs": ["z_no_run"]})
+
+        data = store.get_asset_governance_issue_inventory(issue_type="missing_task_runs", limit=1)
+
+        self.assertEqual([item["asset_name"] for item in data["results"]], ["z_no_run"])
+
+    def test_daily_report_includes_governance_issue_summaries(self):
+        store = self._store()
+        store.upsert_table({"name": "ads_revenue", "layer": "ads", "owner": "finance"})
+        store.upsert_table({"name": "unknown_table", "layer": "unknown", "owner": ""})
+
+        report = store.get_asset_governance_daily_report()
+
+        self.assertIn("issue_summary_by_type", report)
+        self.assertGreaterEqual(report["issue_summary_by_type"]["missing_quality_rules"], 1)
+        self.assertGreaterEqual(report["issue_summary_by_type"]["unknown_layer"], 1)
+        self.assertIn("issue_summary_by_severity", report)
+        self.assertIn("issue_summary_by_owner", report)
+        self.assertIn("unknown owner", report["issue_summary_by_owner"])
+        self.assertIn("top_governance_issues", report)
+        self.assertIn("responsibility_buckets", report)
+
+
 if __name__ == "__main__":
     unittest.main()
