@@ -354,13 +354,13 @@ def _lineage_from_api(item):
 
 def _quality_rule_from_api(item):
     return {
-        "table_name": _normalize_table_name(_get(item, "TableName", "DatasourceTableName", "Table", "tableName")),
-        "rule_name": _get(item, "RuleName", "Name", "RuleTemplateName", "ruleName", default=str(_get(item, "RuleId", default=""))),
-        "rule_type": str(_get(item, "RuleType", "RuleTemplateContent", "CompareRule", "Type", "ruleType")),
-        "target": _get(item, "Target", "ColumnName", "FieldName", "FieldConfig", "SourceObjectValue", "target"),
+        "table_name": _normalize_table_name(_get(item, "TableName", "DatasourceTableName", "RuleTableName", "ObjectName", "SourceObjectDataName", "Table", "tableName", "QueriedTableName")),
+        "rule_name": _get(item, "RuleName", "Name", "RuleTemplateName", "TemplateName", "ruleName", default=str(_get(item, "RuleId", "RuleIdStr", "Id", default=""))),
+        "rule_type": str(_get(item, "RuleType", "RuleTemplateContent", "CompareRule", "RuleTemplateType", "Type", "ruleType")),
+        "target": _get(item, "Target", "ColumnName", "FieldName", "FieldConfig", "SourceObjectValue", "SourceObjectValueName", "target"),
         "enabled": _get(item, "MonitorStatus", "Enabled", "IsEnabled", "enabled", default=True) not in (False, 0, "0", "false"),
         "last_status": _get(item, "LastStatus", "Status", "DeployStatus", "QualityDim", "lastStatus", default="configured"),
-        "last_checked_at": _get(item, "LastCheckedAt", "CheckTime", "UpdateTime", "lastCheckedAt"),
+        "last_checked_at": _get(item, "LastCheckedAt", "CheckTime", "UpdateTime", "LastExecTime", "lastCheckedAt"),
     }
 
 

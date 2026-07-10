@@ -46,7 +46,7 @@ def main():
         dump.update(_merge_metadata_dump(dump, metadata_dump))
 
     if os.environ.get("WEDATA_SYNC_PARTITIONS") == "1":
-        partitions_response = _sync_partitions(client, project_id, table_names, page_size)
+        partitions_response = _sync_partitions(client, project_id, table_names, page_size, catalog_tables=catalog_tables)
         partitions_path = os.path.join(work_dir, "wedata_table_partitions.json")
         with open(partitions_path, "w", encoding="utf-8") as f:
             json.dump(partitions_response, f, ensure_ascii=False, indent=2)
@@ -157,13 +157,13 @@ def _sync_data_source_tasks(client, data_sources_response, progress_every=10):
     return related
 
 
-def _sync_partitions(client, project_id, table_names, page_size, progress_every=10):
+def _sync_partitions(client, project_id, table_names, page_size, progress_every=10, catalog_tables=None):
     action = os.environ.get("WEDATA_PARTITION_ACTION", "ListTablePartitions")
     partition_date = os.environ.get("WEDATA_PARTITION_DATE", "")
     items = []
     total = len(table_names)
     for index, table_name in enumerate(table_names, start=1):
-        payload = {"ProjectId": project_id, "TableName": table_name}
+        payload = _partition_payload(project_id, table_name, (catalog_tables or {}).get(table_name, {}))
         if partition_date:
             payload["PartitionDate"] = partition_date
         response = _list_all(client, action, payload, page_size)
@@ -173,6 +173,22 @@ def _sync_partitions(client, project_id, table_names, page_size, progress_every=
         if progress_every and (index == total or index % progress_every == 0):
             print(f"synced partitions for {index}/{total} tables", flush=True)
     return {"Response": {"Data": {"Items": items}}}
+
+
+def _partition_payload(project_id, table_name, catalog_item=None):
+    item = catalog_item or {}
+    payload = {"ProjectId": project_id, "TableName": table_name}
+    mode = os.environ.get("WEDATA_PARTITION_PAYLOAD_MODE", "table")
+    if mode == "guid" and (item.get("Guid") or item.get("TableGuid")):
+        payload = {"ProjectId": project_id, "TableGuid": item.get("Guid") or item.get("TableGuid")}
+    elif mode == "database" and (item.get("DatabaseName") or item.get("Database") or item.get("DbName")):
+        payload["DatabaseName"] = item.get("DatabaseName") or item.get("Database") or item.get("DbName")
+    elif mode == "datasource_database":
+        if item.get("DatasourceId") or item.get("DataSourceId"):
+            payload["DataSourceId"] = item.get("DatasourceId") or item.get("DataSourceId")
+        if item.get("DatabaseName") or item.get("Database") or item.get("DbName"):
+            payload["DatabaseName"] = item.get("DatabaseName") or item.get("Database") or item.get("DbName")
+    return payload
 
 
 def partition_payload_candidates(project_id, table):

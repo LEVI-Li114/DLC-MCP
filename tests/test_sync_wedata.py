@@ -6,7 +6,7 @@ from io import StringIO
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from dlc_mcp.sync_wedata import _catalog_table_names, _filter_new_asset_tables, _instance_window, _list_all, _metadata_table_count, _sync_data_source_tasks, _sync_metadata, _sync_partitions, partition_payload_candidates
+from dlc_mcp.sync_wedata import _catalog_table_names, _filter_new_asset_tables, _instance_window, _list_all, _metadata_table_count, _partition_payload, _sync_data_source_tasks, _sync_metadata, _sync_partitions, partition_payload_candidates
 
 
 class FakeClient:
@@ -158,6 +158,16 @@ class SyncWeDataTest(unittest.TestCase):
                 {"ProjectId": "project-1", "DataSourceId": "55975", "DatabaseName": "ads_mart", "TableName": "ads_revenue"},
             ],
         )
+
+    def test_partition_payload_mode_selects_runtime_payload_shape(self):
+        item = {"Guid": "guid-1", "DatabaseName": "ads_mart", "DatasourceId": 55975}
+
+        with patch.dict(os.environ, {"WEDATA_PARTITION_PAYLOAD_MODE": "guid"}):
+            self.assertEqual(_partition_payload("project-1", "ads_revenue", item), {"ProjectId": "project-1", "TableGuid": "guid-1"})
+        with patch.dict(os.environ, {"WEDATA_PARTITION_PAYLOAD_MODE": "database"}):
+            self.assertEqual(_partition_payload("project-1", "ads_revenue", item), {"ProjectId": "project-1", "TableName": "ads_revenue", "DatabaseName": "ads_mart"})
+        with patch.dict(os.environ, {"WEDATA_PARTITION_PAYLOAD_MODE": "datasource_database"}):
+            self.assertEqual(_partition_payload("project-1", "ads_revenue", item), {"ProjectId": "project-1", "TableName": "ads_revenue", "DataSourceId": 55975, "DatabaseName": "ads_mart"})
 
 
 if __name__ == "__main__":
