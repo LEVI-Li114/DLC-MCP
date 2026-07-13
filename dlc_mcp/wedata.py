@@ -360,7 +360,13 @@ def _task_sql_text(item):
     for document in _task_config_documents(item):
         for field in SQL_FIELDS:
             value = document.get(field)
-            if isinstance(value, str) and value.strip() and not (field == "CodeContent" and _decode_json_content(value) is not None):
+            if not isinstance(value, str) or not value.strip():
+                continue
+            if field == "CodeContent":
+                if _decode_json_content(value) is not None:
+                    continue
+                chunks.append(_decode_base64(value) or value)
+            else:
                 chunks.append(value)
     for container in (item.get("TaskExt") or {}, item.get("Properties") or {}, item.get("Params") or {}):
         if isinstance(container, str):

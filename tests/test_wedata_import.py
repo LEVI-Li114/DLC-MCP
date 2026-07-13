@@ -807,6 +807,31 @@ class WeDataImportTest(unittest.TestCase):
         self.assertEqual(snapshot["tasks"][0]["inputs"], ["cloud_cost_aliyun_day"])
         self.assertEqual(snapshot["tasks"][0]["outputs"], ["ods_cloud_cost_aliyun_day_di"])
 
+    def test_maps_sql_tables_from_get_task_base64_code_content(self):
+        sql = "insert overwrite table ads_fin_income_di select * from dws_fin_income_di"
+        code = base64.b64encode(sql.encode()).decode()
+        snapshot = snapshot_from_api_dump(
+            {
+                "tasks": {
+                    "Response": {
+                        "Data": {
+                            "Items": [
+                                {
+                                    "TaskId": "task_sql_base64",
+                                    "TaskName": "ads_fin_income_di",
+                                    "TaskConfiguration": {"CodeContent": code},
+                                    "CodeContent": code,
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(snapshot["tasks"][0]["inputs"], ["dws_fin_income_di"])
+        self.assertEqual(snapshot["tasks"][0]["outputs"], ["ads_fin_income_di"])
+
     def test_maps_task_instance_time_fields(self):
         snapshot = snapshot_from_api_dump(
             {
