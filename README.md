@@ -69,6 +69,7 @@ Update this list whenever a new MCP tool is added.
 | `get_table_lineage(table_name, live)` | Return upstream and downstream assets. |
 | `get_table_tasks(table_name)` | Return ETL tasks that read from or produce a table. |
 | `get_task_runs(task_id/task_name, instance_date, live)` | Return task instance start time, end time, duration, and status. |
+| `get_task_code(task_id/task_name, live)` | Return cached or live-refreshed WeData task SQL/code content. |
 | `list_data_sources(query, live)` | List data sources, configuration summaries, and related task counts. |
 | `get_data_source(data_source_id, live)` | Return one data source, including type, owner, related task count, description, and config summary. |
 | `list_data_source_tasks(data_source_id, live)` | List tasks related to one data source. |
