@@ -77,6 +77,16 @@ TENCENT_CLOUD_API_CATALOG = [
         "description": "获取表详情。",
         "usage": "补齐单表元数据详情，并与表画像能力共享表资产缓存。",
     },
+    {
+        "service": "wedata",
+        "action": "GetTaskCode",
+        "provider": "Tencent Cloud",
+        "product": "WeData",
+        "doc_category": "数据开发相关接口",
+        "source_url": "https://cloud.tencent.com/document/api/1267/123630",
+        "description": "获取任务代码。",
+        "usage": "按任务 ID 拉取 SQL/code 内容，支撑任务逻辑审查和血缘缺口排查。",
+    },
 ]
 
 
@@ -160,6 +170,18 @@ class AssetStore:
                 duration_seconds integer not null default 0,
                 status text not null default '',
                 primary key (task_id, instance_id)
+            );
+            create table if not exists task_codes (
+                project_id text not null,
+                task_id text not null,
+                task_name text not null default '',
+                code_info text not null default '',
+                code_text text not null default '',
+                code_file_size integer not null default 0,
+                encoding text not null default '',
+                raw_json text not null default '{}',
+                updated_at text not null default '',
+                primary key (project_id, task_id)
             );
             create table if not exists data_sources (
                 id text primary key,
@@ -685,6 +707,72 @@ class AssetStore:
                 commit=False,
             )
         self.conn.commit()
+
+    def resolve_task(self, task_id="", task_name=""):
+        if task_id:
+            row = self._one("select id, name, task_type, cycle, schedule_time, schedule_desc, owner, status from tasks where id = ?", (task_id,))
+            if row:
+                return dict(row)
+            return {"id": task_id, "name": task_name or "", "task_type": "", "cycle": "", "schedule_time": "", "schedule_desc": "", "owner": "", "status": ""}
+        if not task_name:
+            return None
+        row = self._one(
+            "select id, name, task_type, cycle, schedule_time, schedule_desc, owner, status from tasks where name = ? order by id limit 1",
+            (task_name,),
+        )
+        return dict(row) if row else None
+
+    def upsert_task_code(self, project_id, task_id, task_name="", code_info="", code_text="", code_file_size=0, encoding="", raw=None):
+        self.conn.execute(
+            """
+            insert into task_codes
+                (project_id, task_id, task_name, code_info, code_text, code_file_size, encoding, raw_json, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            on conflict(project_id, task_id) do update set
+                task_name = excluded.task_name,
+                code_info = excluded.code_info,
+                code_text = excluded.code_text,
+                code_file_size = excluded.code_file_size,
+                encoding = excluded.encoding,
+                raw_json = excluded.raw_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                project_id,
+                task_id,
+                task_name,
+                code_info,
+                code_text,
+                int(code_file_size or 0),
+                encoding,
+                json.dumps(raw or {}, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        self.conn.commit()
+
+    def get_task_code(self, project_id="", task_id="", task_name=""):
+        if not task_id and not task_name:
+            return {"error": "missing_task_identity"}
+        task = self.resolve_task(task_id, task_name)
+        if not task:
+            return {"error": "task_not_found", "task_id": task_id, "task_name": task_name}
+        resolved_task_id = task["id"]
+        row = self._one(
+            """
+            select project_id, task_id, task_name, code_info, code_text, code_file_size, encoding, raw_json, updated_at
+            from task_codes
+            where (? = '' or project_id = ?) and task_id = ?
+            order by updated_at desc
+            limit 1
+            """,
+            (project_id, project_id, resolved_task_id),
+        )
+        if not row:
+            return {"error": "task_code_not_found", "project_id": project_id, "task_id": resolved_task_id, "task_name": task.get("name") or task_name}
+        data = dict(row)
+        data["task_name"] = data.get("task_name") or task.get("name", "")
+        data["raw"] = _json_dict(data.pop("raw_json", "{}"))
+        return data
 
     def upsert_data_source(self, item):
         self.conn.execute(
@@ -2250,6 +2338,19 @@ class AssetStore:
         if not table.get("data_source_id"):
             gaps.append("缺数据源关联")
         return gaps
+
+
+def decode_task_code_info(code_info):
+    text = code_info or ""
+    if not text:
+        return "", "raw"
+    try:
+        import base64
+
+        decoded = base64.b64decode(text, validate=True)
+        return decoded.decode("utf-8"), "base64"
+    except Exception:
+        return text, "raw"
 
 
 def _json_dict(value):

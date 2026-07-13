@@ -2,7 +2,7 @@ import sqlite3
 from datetime import date
 import unittest
 
-from dlc_mcp.assets import AssetStore
+from dlc_mcp.assets import AssetStore, decode_task_code_info
 
 
 def make_store():
@@ -65,6 +65,58 @@ def make_risky_store():
         store.upsert_lineage("dwd_sms_bill", f"dws_downstream_{index}", f"task_{index}")
     store.upsert_task({"id": "task_risk", "name": "dwd_sms_bill", "outputs": ["dwd_sms_bill"]})
     return store
+
+
+def test_decode_task_code_info_base64_and_raw_fallback():
+    code_text, encoding = decode_task_code_info("c2VsZWN0IDE7")
+    assert code_text == "select 1;"
+    assert encoding == "base64"
+
+    raw_text, raw_encoding = decode_task_code_info("select * from dim_customer")
+    assert raw_text == "select * from dim_customer"
+    assert raw_encoding == "raw"
+
+
+def test_task_code_cache_resolves_by_id_and_name():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    store.upsert_task({"id": "task_001", "name": "build_dim_customer"})
+    store.upsert_task_code(
+        "project",
+        "task_001",
+        "build_dim_customer",
+        "c2VsZWN0IDE7",
+        "select 1;",
+        9,
+        "base64",
+        {"CodeInfo": "c2VsZWN0IDE7", "CodeFileSize": 9},
+    )
+
+    by_id = store.get_task_code(project_id="project", task_id="task_001")
+    by_name = store.get_task_code(project_id="project", task_name="build_dim_customer")
+
+    assert by_id["task_id"] == "task_001"
+    assert by_id["task_name"] == "build_dim_customer"
+    assert by_id["code_text"] == "select 1;"
+    assert by_id["encoding"] == "base64"
+    assert by_name["task_id"] == "task_001"
+    assert by_name["code_text"] == "select 1;"
+
+
+def test_task_code_cache_reports_missing_identity_and_missing_code():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    store.upsert_task({"id": "task_001", "name": "build_dim_customer"})
+
+    missing_identity = store.get_task_code(project_id="project")
+    missing_code = store.get_task_code(project_id="project", task_id="task_001")
+    missing_task = store.get_task_code(project_id="project", task_name="unknown_task")
+
+    assert missing_identity["error"] == "missing_task_identity"
+    assert missing_code["error"] == "task_code_not_found"
+    assert missing_task["error"] == "task_not_found"
 
 
 class AssetStoreTest(unittest.TestCase):
