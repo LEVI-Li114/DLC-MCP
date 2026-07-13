@@ -199,7 +199,7 @@
 - `table_guid?: string`
 - `live?: boolean`
 
-约束：`table_name` 和 `table_guid` 至少传一个。`GetTable` 使用表 GUID 或表名查询，不传 `ProjectId`。
+约束：`table_name` 和 `table_guid` 至少传一个。`GetTable` 只使用表 GUID 查询，不传 `ProjectId` 或 `TableName`。
 
 行为：
 

@@ -419,8 +419,8 @@ def _call_tool(store, request, live=None):
             data = store.get_table_detail(table_name, table_guid)
             cached_guid = table_guid or (data.get("table") or {}).get("guid", "")
             if live and args.get("live"):
-                if cached_guid or table_name:
-                    live.sync_table_detail(table_name=table_name, table_guid=cached_guid)
+                if cached_guid:
+                    live.sync_table_detail(table_guid=cached_guid)
                     data = store.get_table_detail(table_name, cached_guid)
                 else:
                     data = _error_data("table_guid_required", table_name=table_name)

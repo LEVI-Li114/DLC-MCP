@@ -99,11 +99,9 @@ class LiveWeData:
         self._import({"task_relations": {f"{resolved_project_id}:{task_id}:{direction}": data}})
 
     def sync_table_detail(self, table_name="", table_guid="", project_id=""):
-        payload = {}
-        if table_guid:
-            payload["TableGuid"] = table_guid
-        if table_name:
-            payload["TableName"] = table_name
+        if not table_guid:
+            raise RuntimeError("table_guid_required")
+        payload = {"TableGuid": table_guid}
         data = self.client.call("GetTable", payload)
         self._import({"tables": data})
 
