@@ -197,10 +197,9 @@
 
 - `table_name?: string`
 - `table_guid?: string`
-- `project_id?: string`
 - `live?: boolean`
 
-约束：`table_name` 和 `table_guid` 至少传一个。`project_id` 缺省使用 `WEDATA_PROJECT_ID`。
+约束：`table_name` 和 `table_guid` 至少传一个。`GetTable` 使用表 GUID 或表名查询，不传 `ProjectId`。
 
 行为：
 

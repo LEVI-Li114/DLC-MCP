@@ -413,17 +413,14 @@ def _call_tool(store, request, live=None):
     elif name == "get_table":
         table_name = args.get("table_name", "")
         table_guid = args.get("table_guid", "")
-        project_id = _project_id_arg(args)
         if not table_name and not table_guid:
             data = _error_data("missing_table_identity")
-        elif not project_id:
-            data = _error_data("missing_project_id")
         else:
             data = store.get_table_detail(table_name, table_guid)
             cached_guid = table_guid or (data.get("table") or {}).get("guid", "")
             if live and args.get("live"):
                 if cached_guid or table_name:
-                    live.sync_table_detail(table_name=table_name, table_guid=cached_guid, project_id=project_id)
+                    live.sync_table_detail(table_name=table_name, table_guid=cached_guid)
                     data = store.get_table_detail(table_name, cached_guid)
                 else:
                     data = _error_data("table_guid_required", table_name=table_name)

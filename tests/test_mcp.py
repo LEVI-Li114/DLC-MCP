@@ -222,6 +222,8 @@ class McpTest(unittest.TestCase):
         self.assertIn("ListDownstreamTasks", actions)
         self.assertIn("ListUpstreamTasks", actions)
         self.assertIn("GetTable", actions)
+        get_table_payload = [payload for action, payload in client.calls if action == "GetTable"][0]
+        self.assertEqual(get_table_payload, {"TableGuid": "guid_dim_customer"})
         self.assertEqual(self.store.get_project("project")["name"], "prod")
         self.assertEqual(self.store.list_project_members("project")["members"][0]["member_id"], "u1")
         self.assertEqual(self.store.list_task_relations("project", "task_001", "downstream")["relations"][0]["related_task_id"], "task_down")

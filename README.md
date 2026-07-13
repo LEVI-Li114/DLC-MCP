@@ -75,7 +75,7 @@ Update this list whenever a new MCP tool is added.
 | `list_project_members(project_id, live)` | List members and roles for a WeData project. |
 | `list_downstream_tasks(task_id, project_id, live)` | List downstream WeData task dependencies for a task. |
 | `list_upstream_tasks(task_id, project_id, live)` | List upstream WeData task dependencies for a task. |
-| `get_table(table_name/table_guid, project_id, live)` | Return Tencent Cloud WeData table metadata detail. |
+| `get_table(table_name/table_guid, live)` | Return Tencent Cloud WeData table metadata detail. |
 | `get_data_source_inventory(data_source_id/data_source_name, live)` | Return one data source's tasks, parsed tables, SQL DDL, and unresolved or missing-field gaps. |
 | `get_table_risk_profile(table_name, live)` | Explain governance risk from layer, downstream dependencies, quality rules, and task runs. |
 | `get_asset_value_profile(table_name, live)` | Return asset value tier and core-table decision. |
