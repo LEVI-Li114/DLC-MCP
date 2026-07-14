@@ -427,6 +427,32 @@ class AssetStoreTest(unittest.TestCase):
         self.assertIn("缺质量规则", gaps["results"][0]["gaps"])
         self.assertEqual(gaps["supported_gap_types"][0], "fields")
 
+    def test_asset_coverage_reports_warehouse_and_unknown_pool_separately(self):
+        store = make_store()
+        store.upsert_table({"name": "ads_revenue", "layer": "ads", "data_source_id": "DLC"})
+        store.upsert_table({"name": "mid_revenue", "layer": "mid", "data_source_id": "DLC"})
+        store.upsert_table({"name": "mystery_table", "layer": "unknown", "data_source_id": "DLC"})
+        store.upsert_column("ads_revenue", "id", "string", "", 1)
+        store.upsert_column("mid_revenue", "id", "string", "", 1)
+        store.upsert_lineage("mid_revenue", "ads_revenue", "build_ads_revenue")
+        store.upsert_task({"id": "task_ads", "name": "build_ads_revenue", "outputs": ["ads_revenue"], "inputs": ["mid_revenue"]})
+        store.upsert_task_run({"task_id": "task_ads", "instance_id": "run_1", "instance_date": "2026-07-13", "status": "COMPLETED"})
+
+        coverage = store.get_asset_coverage()
+
+        self.assertEqual(coverage["warehouse_layers"], ["ods", "dim", "dwd", "dws", "mid", "ads"])
+        self.assertEqual(coverage["warehouse_coverage"]["table_count"], 4)
+        self.assertEqual(coverage["warehouse_coverage"]["tables_with_columns"], 4)
+        self.assertEqual(coverage["warehouse_coverage"]["tables_with_lineage"], 4)
+        self.assertEqual(coverage["warehouse_coverage"]["tables_with_tasks"], 3)
+        self.assertEqual(coverage["warehouse_coverage"]["tables_with_runs"], 1)
+        self.assertEqual(coverage["warehouse_coverage"]["ratios"]["fields"], 1.0)
+        self.assertEqual(coverage["warehouse_coverage"]["ratios"]["lineage"], 1.0)
+        self.assertEqual(coverage["warehouse_coverage"]["ratios"]["tasks"], 0.75)
+        self.assertEqual(coverage["warehouse_coverage"]["ratios"]["runs"], 0.25)
+        self.assertEqual(coverage["unknown_pool"]["table_count"], 1)
+        self.assertEqual(coverage["unknown_pool"]["tables_with_data_source"], 1)
+
     def test_asset_coverage_gaps_rejects_unknown_type(self):
         with self.assertRaisesRegex(ValueError, "unsupported gap_type"):
             make_store().list_asset_coverage_gaps(gap_type="missing_columns")

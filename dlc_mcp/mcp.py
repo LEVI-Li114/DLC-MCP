@@ -739,12 +739,38 @@ def _format_markdown(tool_name, data):
         )
     if tool_name == "get_asset_coverage":
         totals = data.get("totals", {})
+        warehouse = data.get("warehouse_coverage", {})
+        unknown = data.get("unknown_pool", {})
+        ratios = warehouse.get("ratios", {})
         return "\n\n".join(
             [
                 _section("资产覆盖率", ["按已同步表资产统计。"]),
                 _table("资产类型 数量".split(), [[_count_label(k), v] for k, v in totals.items()]),
+                _section(
+                    "有效数仓覆盖",
+                    [
+                        f"数仓层：{', '.join(data.get('warehouse_layers') or [])}",
+                        f"表数：{warehouse.get('table_count', 0)}",
+                        f"字段：{ratios.get('fields', 0):.1%}",
+                        f"血缘：{ratios.get('lineage', 0):.1%}",
+                        f"任务映射：{ratios.get('tasks', 0):.1%}",
+                        f"运行实例关联：{ratios.get('runs', 0):.1%}",
+                        f"数据源：{ratios.get('data_source', 0):.1%}",
+                    ],
+                ),
+                _section(
+                    "unknown 资产池",
+                    [
+                        f"表数：{unknown.get('table_count', 0)}",
+                        f"有字段：{unknown.get('tables_with_columns', 0)}",
+                        f"有血缘：{unknown.get('tables_with_lineage', 0)}",
+                        f"有关联任务：{unknown.get('tables_with_tasks', 0)}",
+                        f"有运行实例：{unknown.get('tables_with_runs', 0)}",
+                        "unknown 不计入主覆盖率，但仍作为治理缺口追踪。",
+                    ],
+                ),
                 _table(
-                    ["层级", "表数", "有字段", "有质量规则", "有下游", "有上游", "有关联任务", "有数据源"],
+                    ["层级", "表数", "有字段", "有质量规则", "有下游", "有上游", "有关联任务", "有运行实例", "有数据源"],
                     [
                         [
                             r.get("layer"),
@@ -754,6 +780,7 @@ def _format_markdown(tool_name, data):
                             _ratio(r.get("tables_with_downstream"), r.get("table_count")),
                             _ratio(r.get("tables_with_upstream"), r.get("table_count")),
                             _ratio(r.get("tables_with_tasks"), r.get("table_count")),
+                            _ratio(r.get("tables_with_runs"), r.get("table_count")),
                             _ratio(r.get("tables_with_data_source"), r.get("table_count")),
                         ]
                         for r in data.get("layers", [])

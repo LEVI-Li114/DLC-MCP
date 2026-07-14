@@ -957,6 +957,22 @@ class McpTest(unittest.TestCase):
         self.assertIn("missing_quality_rules", text)
         self.assertIn("ads_revenue", text)
 
+    def test_get_asset_coverage_formats_warehouse_and_unknown_sections(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        store.upsert_table({"name": "ads_revenue", "layer": "ads", "data_source_id": "DLC"})
+        store.upsert_table({"name": "mystery_table", "layer": "unknown"})
+
+        response = handle_request(
+            store,
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_asset_coverage", "arguments": {}}},
+        )
+        text = response["result"]["content"][0]["text"]
+
+        self.assertIn("有效数仓覆盖", text)
+        self.assertIn("unknown 资产池", text)
+        self.assertIn("unknown 不计入主覆盖率", text)
+
 
 class FakeLive:
     def __init__(self, store):

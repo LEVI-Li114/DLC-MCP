@@ -15,6 +15,9 @@ GOVERNANCE_ISSUE_TYPES = [
     "profile_incomplete",
 ]
 
+WAREHOUSE_LAYERS = ("ods", "dim", "dwd", "dws", "mid", "ads")
+WAREHOUSE_LAYER_SET = set(WAREHOUSE_LAYERS)
+
 
 TENCENT_CLOUD_API_CATALOG = [
     {
@@ -1079,6 +1082,7 @@ class AssetStore:
                 sum(case when d.downstream_count > 0 then 1 else 0 end) as tables_with_downstream,
                 sum(case when u.upstream_count > 0 then 1 else 0 end) as tables_with_upstream,
                 sum(case when tt.task_count > 0 then 1 else 0 end) as tables_with_tasks,
+                sum(case when r.run_count > 0 then 1 else 0 end) as tables_with_runs,
                 sum(case when data_source_id != '' then 1 else 0 end) as tables_with_data_source
             from tables t
             left join (select table_name, count(*) as column_count from columns group by table_name) c on c.table_name = t.name
@@ -1086,16 +1090,30 @@ class AssetStore:
             left join (select upstream, count(*) as downstream_count from lineage group by upstream) d on d.upstream = t.name
             left join (select downstream, count(*) as upstream_count from lineage group by downstream) u on u.downstream = t.name
             left join (select table_name, count(distinct task_id) as task_count from task_tables group by table_name) tt on tt.table_name = t.name
+            left join (
+                select tt.table_name, count(distinct tr.instance_id) as run_count
+                from task_tables tt
+                join task_runs tr on tr.task_id = tt.task_id
+                where tt.direction = 'output'
+                group by tt.table_name
+            ) r on r.table_name = t.name
             group by coalesce(nullif(layer, ''), 'unknown')
-            order by layer
+            order by case coalesce(nullif(layer, ''), 'unknown') when 'ods' then 1 when 'dim' then 2 when 'dwd' then 3 when 'dws' then 4 when 'mid' then 5 when 'ads' then 6 else 9 end, layer
             """
         )
+        rows = [dict(row) for row in layer_rows]
+        warehouse_rows = [row for row in rows if row.get("layer") in WAREHOUSE_LAYER_SET]
+        unknown_rows = [row for row in rows if row.get("layer") not in WAREHOUSE_LAYER_SET]
         return {
             "totals": totals,
-            "layers": [dict(row) for row in layer_rows],
+            "layers": rows,
+            "warehouse_layers": list(WAREHOUSE_LAYERS),
+            "warehouse_coverage": _coverage_summary(warehouse_rows),
+            "unknown_pool": _coverage_summary(unknown_rows),
             "coverage_notes": [
-                "字段、质量、血缘、任务、数据源覆盖率都按已同步表资产计算。",
-                "覆盖为 0 不等于业务不存在，优先检查同步开关、API 权限和同步范围。",
+                "主覆盖率按有效数仓层 ods/dim/dwd/dws/mid/ads 统计。",
+                "unknown 不计入主覆盖率，但仍作为治理缺口单独展示。",
+                "运行实例关联只统计 output 产出任务的 task_runs。",
             ],
         }
 
@@ -3336,6 +3354,43 @@ def _normalize_gap_type(gap_type):
         "source": "data_source",
     }
     return aliases.get((gap_type or "").strip().lower(), "")
+
+
+def _coverage_ratio(numerator, denominator):
+    return round(int(numerator or 0) / int(denominator or 0), 4) if int(denominator or 0) else 0
+
+
+def _coverage_summary(rows):
+    summary = {
+        "table_count": 0,
+        "tables_with_columns": 0,
+        "tables_with_quality_rules": 0,
+        "tables_with_lineage": 0,
+        "tables_with_tasks": 0,
+        "tables_with_runs": 0,
+        "tables_with_data_source": 0,
+    }
+    for row in rows:
+        table_count = int(row.get("table_count") or 0)
+        upstream = int(row.get("tables_with_upstream") or 0)
+        downstream = int(row.get("tables_with_downstream") or 0)
+        summary["table_count"] += table_count
+        summary["tables_with_columns"] += int(row.get("tables_with_columns") or 0)
+        summary["tables_with_quality_rules"] += int(row.get("tables_with_quality_rules") or 0)
+        summary["tables_with_lineage"] += min(table_count, upstream + downstream)
+        summary["tables_with_tasks"] += int(row.get("tables_with_tasks") or 0)
+        summary["tables_with_runs"] += int(row.get("tables_with_runs") or 0)
+        summary["tables_with_data_source"] += int(row.get("tables_with_data_source") or 0)
+    table_count = summary["table_count"]
+    summary["ratios"] = {
+        "fields": _coverage_ratio(summary["tables_with_columns"], table_count),
+        "quality": _coverage_ratio(summary["tables_with_quality_rules"], table_count),
+        "lineage": _coverage_ratio(summary["tables_with_lineage"], table_count),
+        "tasks": _coverage_ratio(summary["tables_with_tasks"], table_count),
+        "runs": _coverage_ratio(summary["tables_with_runs"], table_count),
+        "data_source": _coverage_ratio(summary["tables_with_data_source"], table_count),
+    }
+    return summary
 
 
 def _coverage_gaps(row):
