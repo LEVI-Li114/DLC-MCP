@@ -18,6 +18,20 @@ set +a
 : "${DLC_MCP_DB:=/data/dlc-mcp/assets.db}"
 
 START_TS="$(date +%s)"
+finish_sync() {
+  status=$?
+  END_TS="$(date +%s)"
+  echo "finished_at: $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "elapsed_seconds: $((END_TS - START_TS))"
+  if [ "$status" -eq 0 ]; then
+    echo "sync_status: ok"
+  else
+    echo "sync_status: failed ($status)"
+  fi
+  exit "$status"
+}
+trap finish_sync EXIT
+
 echo "== DLC-MCP full WeData sync =="
 echo "db: $DLC_MCP_DB"
 echo "started_at: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -25,7 +39,3 @@ echo "started_at: $(date '+%Y-%m-%d %H:%M:%S')"
 PYTHON_BIN="${DLC_MCP_PYTHON:-python3}"
 "$PYTHON_BIN" -m dlc_mcp.sync_asset_facts "$@"
 "$PYTHON_BIN" -m dlc_mcp.sync_table_fields
-
-END_TS="$(date +%s)"
-echo "finished_at: $(date '+%Y-%m-%d %H:%M:%S')"
-echo "elapsed_seconds: $((END_TS - START_TS))"

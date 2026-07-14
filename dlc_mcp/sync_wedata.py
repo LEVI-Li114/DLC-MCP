@@ -380,7 +380,8 @@ def _sync_partitions(client, project_id, table_names, page_size, progress_every=
             }
         for item in _partition_items(response):
             item["QueriedTableName"] = table_name
-            items.append(item)
+            if _partition_matches_date(item, partition_date):
+                items.append(item)
         if progress_every and (index == total or index % progress_every == 0):
             print(f"synced partitions for {index}/{total} tables", flush=True)
     return {"Response": {"Data": {"Items": items}, "PartitionFailures": failures}}
@@ -467,6 +468,17 @@ def _partition_items(response):
     return []
 
 
+def _partition_matches_date(item, partition_date):
+    if not partition_date:
+        return True
+    expected = {partition_date, partition_date.replace("-", "")}
+    for field in ("PartitionName", "Partition", "PartitionSpec", "Name"):
+        value = str(item.get(field) or "")
+        if any(f"dt={candidate}" in value or value == candidate for candidate in expected):
+            return True
+    return False
+
+
 def partition_payload_candidates(project_id, table):
     name = table.get("Name") or table.get("TableName") or table.get("name") or table.get("tableName") or ""
     guid = table.get("Guid") or table.get("TableGuid") or table.get("TableId") or ""
@@ -525,7 +537,15 @@ def _filter_new_asset_tables(table_names, catalog_tables, start, end):
 
 def _item_dates(item):
     dates = []
-    for field in ("CreateTime", "CreateDate", "CreatedAt", "CreateAt", "GmtCreate", "UpdateTime", "ModifyTime", "ModifiedAt", "LastModifyTime"):
+    date_groups = {part.strip().lower() for part in os.environ.get("WEDATA_NEW_ASSET_DATE_FIELDS", "create").split(",") if part.strip()}
+    fields = []
+    if "create" in date_groups:
+        fields.extend(("CreateTime", "CreateDate", "CreatedAt", "CreateAt", "GmtCreate"))
+    if "update" in date_groups:
+        fields.extend(("UpdateTime", "ModifyTime", "ModifiedAt", "LastModifyTime"))
+    if "structure_update" in date_groups:
+        fields.extend(("StructUpdateTime",))
+    for field in fields:
         if item.get(field):
             value = _parse_date(str(item[field]))
             if value:

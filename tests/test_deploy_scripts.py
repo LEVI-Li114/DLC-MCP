@@ -6,10 +6,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeployScriptsTest(unittest.TestCase):
-    def test_sync_cron_installer_runs_managed_sync_at_five(self):
+    def test_sync_cron_installer_runs_managed_sync_at_eight(self):
         script = (ROOT / "deploy" / "install-sync-cron.sh").read_text()
 
-        self.assertIn("0 5 * * *", script)
+        self.assertIn("0 8 * * *", script)
         self.assertIn("dlc-mcp-wedata-sync", script)
         self.assertIn("deploy/sync-wedata-incremental.sh", script)
         self.assertIn("DLC_MCP_REPO_DIR", script)
@@ -48,8 +48,16 @@ class DeployScriptsTest(unittest.TestCase):
         self.assertIn("WEDATA_NEW_ASSET_START", script)
         self.assertIn("WEDATA_NEW_ASSET_END", script)
         self.assertIn("WEDATA_SYNC_PARTITIONS", script)
+        self.assertIn("DLC_MCP_DAILY_SYNC_PARTITIONS:-1", script)
         self.assertIn("WEDATA_PARTITION_DATE", script)
-        self.assertIn("WEDATA_INSTANCE_START", script)
+        self.assertIn("WEDATA_NEW_ASSET_DATE_FIELDS", script)
+        self.assertIn("metadata_date_fields", script)
+        self.assertIn("metadata_table_limit", script)
+        self.assertIn("sync_partitions", script)
+        self.assertIn("partition_date", script)
+        self.assertIn("elapsed_seconds", script)
+        self.assertIn("finished_at", script)
+        self.assertIn("sync_status", script)
         self.assertIn("dlc_mcp.sync_wedata", script)
 
     def test_full_sync_script_runs_facts_and_fields_once(self):
@@ -58,6 +66,8 @@ class DeployScriptsTest(unittest.TestCase):
         self.assertIn("dlc_mcp.sync_asset_facts", script)
         self.assertIn("dlc_mcp.sync_table_fields", script)
         self.assertIn("elapsed_seconds", script)
+        self.assertIn("finished_at", script)
+        self.assertIn("sync_status", script)
         self.assertNotIn("sync_wedata", script)
 
     def test_sync_script_runs_health_coverage_and_gap_checks(self):

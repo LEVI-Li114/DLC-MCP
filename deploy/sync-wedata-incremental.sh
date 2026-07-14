@@ -14,6 +14,21 @@ set +a
 : "${WEDATA_PROJECT_ID:?missing WEDATA_PROJECT_ID}"
 : "${DLC_MCP_DB:=/data/dlc-mcp/assets.db}"
 
+START_TS="$(date +%s)"
+finish_sync() {
+  status=$?
+  END_TS="$(date +%s)"
+  echo "finished_at: $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "elapsed_seconds: $((END_TS - START_TS))"
+  if [ "$status" -eq 0 ]; then
+    echo "sync_status: ok"
+  else
+    echo "sync_status: failed ($status)"
+  fi
+  exit "$status"
+}
+trap finish_sync EXIT
+
 TODAY="${DLC_MCP_SYNC_TODAY:-$(date +%Y-%m-%d)}"
 YESTERDAY="$(date -d "$TODAY -1 day" +%Y-%m-%d)"
 
@@ -22,6 +37,7 @@ export WEDATA_SYNC_METADATA="${DLC_MCP_DAILY_SYNC_METADATA:-1}"
 export WEDATA_NEW_ASSET_START="${YESTERDAY}"
 export WEDATA_NEW_ASSET_END="${YESTERDAY}"
 export WEDATA_NEW_ASSET_STRICT="${DLC_MCP_DAILY_NEW_ASSET_STRICT:-1}"
+export WEDATA_NEW_ASSET_DATE_FIELDS="${DLC_MCP_DAILY_NEW_ASSET_DATE_FIELDS:-create}"
 export WEDATA_METADATA_TABLE_LIMIT="${DLC_MCP_DAILY_METADATA_TABLE_LIMIT:-100000}"
 export WEDATA_SYNC_DATA_SOURCES="${DLC_MCP_DAILY_SYNC_DATA_SOURCES:-1}"
 export WEDATA_SYNC_INSTANCES="${DLC_MCP_DAILY_SYNC_INSTANCES:-1}"
@@ -32,6 +48,12 @@ export WEDATA_INSTANCE_END="${YESTERDAY} 23:59:59"
 export WEDATA_INSTANCE_KEYWORDS="${DLC_MCP_DAILY_INSTANCE_KEYWORDS:-}"
 
 echo "== DLC-MCP daily incremental sync for $YESTERDAY =="
+echo "db: $DLC_MCP_DB"
+echo "started_at: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "sync_partitions: $WEDATA_SYNC_PARTITIONS"
+echo "partition_date: $WEDATA_PARTITION_DATE"
+echo "metadata_date_fields: $WEDATA_NEW_ASSET_DATE_FIELDS"
+echo "metadata_table_limit: $WEDATA_METADATA_TABLE_LIMIT"
 
 PYTHON_BIN="${DLC_MCP_PYTHON:-python3}"
 "$PYTHON_BIN" -m dlc_mcp.sync_wedata

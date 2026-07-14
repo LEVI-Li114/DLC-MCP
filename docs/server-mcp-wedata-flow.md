@@ -296,10 +296,10 @@ cd /opt/dlc-mcp/DLC-MCP
 bash deploy/install-sync-cron.sh
 ```
 
-The installer writes one idempotent crontab entry. It runs daily at 05:00 and calls `deploy/sync-wedata-incremental.sh`:
+The installer writes one idempotent crontab entry. It runs daily at 08:00 and calls `deploy/sync-wedata-incremental.sh`:
 
 ```cron
-0 5 * * * cd /opt/dlc-mcp/DLC-MCP && bash deploy/sync-wedata-incremental.sh /etc/dlc-mcp/env >> /data/dlc-mcp/logs/sync.log 2>&1 # dlc-mcp-wedata-sync
+0 8 * * * cd /opt/dlc-mcp/DLC-MCP && bash deploy/sync-wedata-incremental.sh /etc/dlc-mcp/env >> /data/dlc-mcp/logs/sync.log 2>&1 # dlc-mcp-wedata-sync
 ```
 
 Daily sync updates the bottom-layer facts used by MCP tools: task catalog and task-table mappings, table catalog, full metadata for tables whose catalog create/update date is yesterday, yesterday's task instances, data sources and related tasks, and yesterday's partition facts.
@@ -318,4 +318,4 @@ sudo mkdir -p /data/dlc-mcp/logs
 sudo chown -R "$USER":"$USER" /data/dlc-mcp/logs
 ```
 
-After this, if WeData adds a new task, wait until the next 05:00 run or run `bash deploy/sync-wedata-incremental.sh` manually, then ask MCP through `search_tasks(query)`.
+After this, if WeData adds a new task, wait until the next 08:00 run or run `bash deploy/sync-wedata-incremental.sh` manually, then ask MCP through `search_tasks(query)`.
