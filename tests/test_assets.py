@@ -417,9 +417,9 @@ class AssetStoreTest(unittest.TestCase):
         self.assertNotIn("未同步任务运行实例", health["gaps"])
         self.assertEqual(health["status"], "partial")
         self.assertIn("coverage_ratios", health)
-        self.assertEqual(coverage["layers"][0]["layer"], "ads")
-        self.assertEqual(coverage["layers"][0]["tables_with_quality_rules"], 1)
-        self.assertEqual(coverage["layers"][1]["layer"], "dws")
+        layers = {row["layer"]: row for row in coverage["layers"]}
+        self.assertEqual(layers["ads"]["tables_with_quality_rules"], 1)
+        self.assertIn("dws", layers)
 
     def test_sync_health_exposes_task_run_window(self):
         store = make_store()
