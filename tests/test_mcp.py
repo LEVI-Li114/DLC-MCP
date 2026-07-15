@@ -103,6 +103,11 @@ class FakeWeDataClient:
         return {"Response": {"Data": {"Items": [], "TotalPageNumber": 1}}}
 
 
+class FailingLive:
+    def sync_task_code(self, **kwargs):
+        raise RuntimeError("live unavailable")
+
+
 class McpTest(unittest.TestCase):
     def setUp(self):
         conn = sqlite3.connect(":memory:")
@@ -221,6 +226,79 @@ class McpTest(unittest.TestCase):
         self.assertIn("build_dim_customer", text)
         self.assertIn("```sql", text)
         self.assertIn("select 1;", text)
+
+    def test_get_task_code_cache_hit_includes_query_metadata(self):
+        self.store.upsert_task_code(
+            "project",
+            "task_001",
+            "build_dim_customer",
+            "c2VsZWN0IDE7",
+            "select 1;",
+            9,
+            "base64",
+            {"CodeInfo": "c2VsZWN0IDE7", "CodeFileSize": 9},
+        )
+
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 141, "method": "tools/call", "params": {"name": "get_task_code", "arguments": {"task_id": "task_001"}}},
+        )
+        text = response["result"]["content"][0]["text"]
+
+        self.assertIn("查询元信息", text)
+        self.assertIn("数据来源：cache", text)
+        self.assertIn("实时刷新：否", text)
+
+    def test_get_task_code_live_success_includes_refresh_metadata(self):
+        client = FakeWeDataClient()
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            live = LiveWeData(self.store, client=client)
+            response = handle_request(
+                self.store,
+                {"jsonrpc": "2.0", "id": 142, "method": "tools/call", "params": {"name": "get_task_code", "arguments": {"task_id": "task_001", "live": True}}},
+                live=live,
+            )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("数据来源：cache_after_live_refresh", text)
+        self.assertIn("实时刷新：是", text)
+        self.assertIn("触发原因：user_requested", text)
+        self.assertIn("select * from dim_customer;", text)
+
+    def test_get_task_code_live_failure_keeps_cached_data_and_reports_error(self):
+        self.store.upsert_task_code(
+            "project",
+            "task_001",
+            "build_dim_customer",
+            "c2VsZWN0IDE7",
+            "select 1;",
+            9,
+            "base64",
+            {"CodeInfo": "c2VsZWN0IDE7", "CodeFileSize": 9},
+        )
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            response = handle_request(
+                self.store,
+                {"jsonrpc": "2.0", "id": 143, "method": "tools/call", "params": {"name": "get_task_code", "arguments": {"task_id": "task_001", "live": True}}},
+                live=FailingLive(),
+            )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("数据来源：live_refresh_failed_cache", text)
+        self.assertIn("实时刷新：失败", text)
+        self.assertIn("失败原因：live unavailable", text)
+        self.assertIn("select 1;", text)
+
+    def test_daily_report_uses_snapshot_metadata_without_live_refresh(self):
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 144, "method": "tools/call", "params": {"name": "get_asset_governance_daily_report", "arguments": {}}},
+            live=FailingLive(),
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("数据来源：cache_snapshot", text)
+        self.assertIn("实时刷新：否", text)
 
     def test_get_task_code_validates_missing_identity(self):
         response = handle_request(
