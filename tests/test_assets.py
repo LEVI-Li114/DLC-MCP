@@ -778,6 +778,41 @@ class AssetGovernanceIssueInventoryTest(unittest.TestCase):
         self.assertEqual([item["asset_name"] for item in no_run["results"]], ["ads_no_run"])
         self.assertEqual(no_run["results"][0]["suspected_root_cause"], "instance_window_gap")
 
+    def test_unknown_layer_issue_identifies_inferable_mid_layer(self):
+        store = self._store()
+        store.upsert_table({"name": "mid_crm_customer_df", "layer": "unknown", "owner": "tencent"})
+
+        data = store.get_asset_governance_issue_inventory(issue_type="unknown_layer")
+
+        issue = data["results"][0]
+        self.assertEqual(issue["asset_name"], "mid_crm_customer_df")
+        self.assertEqual(issue["suspected_root_cause"], "layer_mapping_gap")
+        self.assertIn("refresh_inferred_layers", issue["recommended_next_check"])
+
+    def test_missing_task_mapping_prioritizes_inferable_layer_gap(self):
+        store = self._store()
+        store.upsert_table({"name": "mid_sms_instance_bill_detail_di", "layer": "unknown", "owner": "tencent"})
+        store.upsert_task({"id": "task_input", "name": "consume_mid_sms", "inputs": ["mid_sms_instance_bill_detail_di"]})
+
+        data = store.get_asset_governance_issue_inventory(issue_type="missing_task_mapping")
+
+        issue = data["results"][0]
+        self.assertEqual(issue["asset_name"], "mid_sms_instance_bill_detail_di")
+        self.assertEqual(issue["suspected_root_cause"], "layer_mapping_gap")
+        self.assertIn("unknown", issue["recommended_next_check"])
+
+    def test_missing_task_runs_reports_producer_missing_before_instance_window(self):
+        store = self._store()
+        store.upsert_table({"name": "ads_has_consumer_no_producer", "layer": "ads", "owner": "tencent"})
+        store.upsert_task({"id": "task_consumer", "name": "consume_ads", "inputs": ["ads_has_consumer_no_producer"]})
+
+        data = store.get_asset_governance_issue_inventory(issue_type="missing_task_runs")
+
+        issue = data["results"][0]
+        self.assertEqual(issue["asset_name"], "ads_has_consumer_no_producer")
+        self.assertEqual(issue["suspected_root_cause"], "producer_missing_gap")
+        self.assertIn("producer", issue["recommended_next_check"])
+
     def test_filters_by_layer_and_limit(self):
         store = self._store()
         store.upsert_table({"name": "ads_a", "layer": "ads"})

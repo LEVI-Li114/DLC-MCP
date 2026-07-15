@@ -2861,18 +2861,78 @@ def _infer_warehouse_layer(value):
     return ""
 
 
+def _is_unknown_layer(table):
+    return table.get("layer") in ("", "unknown")
+
+
+def _has_inferable_layer(table):
+    return bool(_infer_warehouse_layer(table.get("name", "")))
+
+
+def _unknown_layer_issue_detail(table):
+    if _has_inferable_layer(table):
+        return (
+            "layer_mapping_gap",
+            "Run AssetStore.refresh_inferred_layers or re-import metadata so inferable table names are not left as unknown.",
+        )
+    return (
+        "manual_mapping_needed",
+        "Inspect raw ListTable fields and table naming rules for layer inference.",
+    )
+
+
+def _missing_task_mapping_issue_detail(table):
+    if _is_unknown_layer(table) and _has_inferable_layer(table):
+        return (
+            "layer_mapping_gap",
+            "Repair the unknown layer first with refresh_inferred_layers, then re-check producer task mapping.",
+        )
+    if int(table.get("task_count") or 0) == 0:
+        return (
+            "parser_gap",
+            "Check raw task inputs/outputs, SQL table-name normalization, and whether the table appears under a database-qualified name.",
+        )
+    return (
+        "producer_mapping_gap",
+        "Check task outputs, SQL INSERT/CREATE statements, and table-name normalization for this table.",
+    )
+
+
+def _missing_task_runs_issue_detail(table):
+    if int(table.get("producer_task_count") or 0) == 0:
+        return (
+            "producer_missing_gap",
+            "Fix producer task mapping before judging task runs; no output task is currently linked to this table.",
+        )
+    if _is_unknown_layer(table):
+        return (
+            "unknown_layer_gap",
+            "Repair unknown layer classification, then check ListTaskInstances time window, max pages, and task_id alignment.",
+        )
+    return (
+        "instance_window_gap",
+        "Check ListTaskInstances time window, max pages, WEDATA_INSTANCE_KEYWORDS, and task_id alignment.",
+    )
+
+
 def _governance_issues_for_table(table):
     issues = []
-    if table.get("layer") in ("", "unknown"):
-        issues.append(_governance_issue(table, "unknown_layer", "manual_mapping_needed", "Inspect raw ListTable fields and table naming rules for layer inference."))
+    if _is_unknown_layer(table):
+        root_cause, next_check = _unknown_layer_issue_detail(table)
+        issues.append(_governance_issue(table, "unknown_layer", root_cause, next_check))
     if int(table.get("quality_rule_count") or 0) == 0:
         issues.append(_governance_issue(table, "missing_quality_rules", "source_governance_gap", "Compare raw quality rules with DB rules for this table."))
     if int(table.get("task_count") or 0) == 0:
-        issues.append(_governance_issue(table, "missing_task_mapping", "parser_gap", "Check raw task inputs/outputs and SQL table-name normalization."))
+        root_cause, next_check = _missing_task_mapping_issue_detail(table)
+        issues.append(_governance_issue(table, "missing_task_mapping", root_cause, next_check))
     elif int(table.get("producer_task_count") or 0) == 0:
-        issues.append(_governance_issue(table, "missing_task_mapping", "producer_mapping_gap", "Check task outputs and SQL table-name normalization for this table."))
+        root_cause, next_check = _missing_task_mapping_issue_detail(table)
+        issues.append(_governance_issue(table, "missing_task_mapping", root_cause, next_check))
+        run_root_cause, run_next_check = _missing_task_runs_issue_detail(table)
+        issues.append(_governance_issue(table, "missing_task_runs", run_root_cause, run_next_check))
     elif int(table.get("run_count") or 0) == 0:
-        issues.append(_governance_issue(table, "missing_task_runs", "instance_window_gap", "Check ListTaskInstances time window, max pages, and task_id alignment."))
+        root_cause, next_check = _missing_task_runs_issue_detail(table)
+        issues.append(_governance_issue(table, "missing_task_runs", root_cause, next_check))
     if not table.get("data_source_id"):
         issues.append(_governance_issue(table, "missing_data_source", "source_metadata_gap", "Check ListTable data source fields and data source sync coverage."))
     if not table.get("owner"):
