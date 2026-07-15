@@ -1336,6 +1336,8 @@ class AssetStore:
         issue_summary_by_severity = _governance_issue_counts(governance_issues, "severity")
         issue_summary_by_owner = _governance_issue_counts(governance_issues, "owner")
         responsibility_buckets = _governance_responsibility_buckets(governance_issues)
+        manual_review_sections = _manual_review_sections(governance_issues, owner_gaps)
+        manual_review_top_items = _manual_review_top_items(manual_review_sections, 10)
         summary = {
             "sync_status": sync_health.get("status", ""),
             "production_risk_count": len(production_risks),
@@ -1349,6 +1351,8 @@ class AssetStore:
             "owner_gap_count": len(owner_gaps),
             "lifecycle_watch_count": len(lifecycle_watch),
             "governance_issue_count": len(governance_issues),
+            "manual_review_count": sum(section.get("count", 0) for section in manual_review_sections),
+            "manual_review_top_count": len(manual_review_top_items),
         }
         return {
             "instance_date": instance_date,
@@ -1366,7 +1370,9 @@ class AssetStore:
             "issue_summary_by_owner": issue_summary_by_owner,
             "top_governance_issues": governance_issues[:20],
             "responsibility_buckets": responsibility_buckets,
-            "top_actions": _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue),
+            "manual_review_sections": manual_review_sections,
+            "manual_review_top_items": manual_review_top_items,
+            "top_actions": _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue, manual_review_top_items),
             "notes": [
                 "巡检日报基于当前本地资产库已同步事实生成，不会触发批量实时同步。",
                 "如果某类清单为空，可能表示暂无风险，也可能表示对应同步开关或数据源尚未覆盖。",
@@ -3040,8 +3046,183 @@ def _governance_lifecycle_watch_item(table, lifecycle_profile):
     }
 
 
-def _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue):
+def _manual_review_sections(governance_issues, owner_gaps):
+    section_specs = [
+        (
+            "layer_manual_mapping",
+            "层级待人工判断",
+            "表名无法自动推断数仓层级，但存在下游、任务或运行实例，需要人工确认层级或标记为临时/废弃。",
+            "warehouse_owner",
+            [
+                issue
+                for issue in governance_issues
+                if issue.get("issue_type") == "unknown_layer" and issue.get("suspected_root_cause") == "manual_mapping_needed"
+            ],
+        ),
+        (
+            "producer_mapping_review",
+            "产出任务映射待确认",
+            "表存在任务关联但没有识别到 output producer，需检查任务 output、SQL INSERT/CREATE 解析和表名标准化。",
+            "data_platform",
+            [
+                issue
+                for issue in governance_issues
+                if issue.get("issue_type") in {"missing_task_mapping", "missing_task_runs"}
+                and issue.get("suspected_root_cause") in {"producer_mapping_gap", "producer_missing_gap"}
+            ],
+        ),
+        (
+            "instance_window_review",
+            "运行实例窗口待确认",
+            "表已识别 producer 任务但没有匹配运行实例，需确认实例窗口、关键词、分页或任务是否确实未执行。",
+            "data_platform",
+            [
+                issue
+                for issue in governance_issues
+                if issue.get("issue_type") == "missing_task_runs" and issue.get("suspected_root_cause") == "instance_window_gap"
+            ],
+        ),
+    ]
+    sections = []
+    for key, title, description, owner_bucket, issues in section_specs:
+        items = sorted((_manual_review_item_from_issue(issue, key, owner_bucket) for issue in issues), key=_manual_review_sort_key)[:20]
+        sections.append(
+            {
+                "key": key,
+                "title": title,
+                "description": description,
+                "owner_bucket": owner_bucket,
+                "count": len(items),
+                "items": items,
+            }
+        )
+    owner_items = [_manual_review_item_from_owner_gap(item) for item in owner_gaps[:20]]
+    sections.append(
+        {
+            "key": "owner_review",
+            "title": "Owner 责任待确认",
+            "description": "表 Owner、任务 Owner、数据源 Owner 缺失或不一致，需要人工确认责任链。",
+            "owner_bucket": "warehouse_owner",
+            "count": len(owner_items),
+            "items": owner_items,
+        }
+    )
+    return sections
+
+
+def _manual_review_top_items(sections, limit=10):
+    items = []
+    for section in sections:
+        items.extend(section.get("items") or [])
+    return sorted(items, key=_manual_review_sort_key)[:limit]
+
+
+def _manual_review_item_from_issue(issue, section_key, owner_bucket):
+    evidence = issue.get("evidence") or {}
+    return {
+        "section_key": section_key,
+        "issue_type": issue.get("issue_type", ""),
+        "issue_label": _manual_review_issue_type_label(section_key, issue.get("suspected_root_cause", "")),
+        "name": issue.get("asset_name", ""),
+        "layer": issue.get("layer", ""),
+        "owner": issue.get("owner", ""),
+        "severity": issue.get("severity", ""),
+        "downstream_count": int(evidence.get("downstream_count") or 0),
+        "task_count": int(evidence.get("task_count") or 0),
+        "producer_task_count": int(evidence.get("producer_task_count") or 0),
+        "run_count": int(evidence.get("run_count") or 0),
+        "suspected_root_cause": issue.get("suspected_root_cause", ""),
+        "recommended_next_check": issue.get("recommended_next_check", ""),
+        "owner_bucket": owner_bucket,
+        "owner_bucket_label": _manual_review_owner_bucket_label(owner_bucket),
+        "daily_action": _manual_review_daily_action(section_key, issue.get("suspected_root_cause", "")),
+    }
+
+
+def _manual_review_item_from_owner_gap(item):
+    return {
+        "section_key": "owner_review",
+        "issue_type": "missing_owner",
+        "issue_label": "Owner 责任待确认",
+        "name": item.get("name", ""),
+        "layer": item.get("layer", ""),
+        "owner": item.get("owner", ""),
+        "severity": "P1",
+        "downstream_count": int(item.get("downstream_count") or 0),
+        "task_count": int(item.get("task_count") or 0),
+        "producer_task_count": int(item.get("producer_task_count") or 0),
+        "run_count": 0,
+        "owner_candidates": item.get("owner_candidates") or [],
+        "gaps": item.get("gaps") or [],
+        "suspected_root_cause": "owner_governance_gap",
+        "recommended_next_check": "确认表、产出任务和数据源 Owner 是否需要统一或明确分工。",
+        "owner_bucket": "warehouse_owner",
+        "owner_bucket_label": "数仓Owner/业务Owner",
+        "daily_action": "确认责任人和责任边界。",
+    }
+
+
+def _manual_review_sort_key(item):
+    severity_rank = {"P0": 0, "P1": 1, "P2": 2}.get(item.get("severity"), 9)
+    issue_rank = {
+        "producer_mapping_review": 0,
+        "instance_window_review": 1,
+        "layer_manual_mapping": 2,
+        "owner_review": 3,
+    }.get(item.get("section_key"), 9)
+    layer_rank = {"ads": 0, "dws": 1, "dwd": 2, "dim": 3, "ods": 4, "mid": 5}.get(item.get("layer"), 9)
+    actionability = int(bool(item.get("task_count") or item.get("producer_task_count") or item.get("run_count")))
+    return (
+        severity_rank,
+        issue_rank,
+        -int(item.get("downstream_count") or 0),
+        -actionability,
+        layer_rank,
+        item.get("name", ""),
+    )
+
+
+def _manual_review_issue_type_label(section_key, root_cause):
+    if section_key == "layer_manual_mapping":
+        return "层级待判断"
+    if section_key == "producer_mapping_review":
+        return "产出任务映射缺失" if root_cause == "producer_missing_gap" else "产出任务映射待确认"
+    if section_key == "instance_window_review":
+        return "运行实例窗口待确认"
+    if section_key == "owner_review":
+        return "Owner 责任待确认"
+    return "人工判断问题"
+
+
+def _manual_review_owner_bucket_label(owner_bucket):
+    return {
+        "data_platform": "数据平台",
+        "warehouse_owner": "数仓Owner/业务Owner",
+        "business_owner": "业务Owner",
+        "unknown_owner": "待确认Owner",
+    }.get(owner_bucket, owner_bucket or "待确认Owner")
+
+
+def _manual_review_daily_action(section_key, root_cause):
+    if section_key == "layer_manual_mapping":
+        return "确认为 dim/ods/dwd/dws/mid/ads、临时表或废弃表。"
+    if section_key == "producer_mapping_review":
+        return "确认 output producer 或 SQL INSERT/CREATE 解析。"
+    if section_key == "instance_window_review":
+        return "确认实例窗口、关键词、分页或任务是否确实未执行。"
+    if section_key == "owner_review":
+        return "确认责任人和责任边界。"
+    return "人工复核并记录处理结论。"
+
+
+def _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue, manual_review_top_items=None):
     actions = []
+    manual_review_top_items = manual_review_top_items or []
+    if manual_review_top_items:
+        first = manual_review_top_items[0]
+        second = manual_review_top_items[1] if len(manual_review_top_items) > 1 else None
+        names = "、".join(item.get("name", "") for item in [first, second] if item and item.get("name"))
+        actions.append(f"人工确认 {summary.get('manual_review_count', len(manual_review_top_items))} 个资产覆盖问题，优先处理{first.get('issue_label')}：{names}。")
     failed = [item for item in production_risks if item.get("status") == "failed"]
     not_run = [item for item in production_risks if item.get("status") == "not_run"]
     if failed:

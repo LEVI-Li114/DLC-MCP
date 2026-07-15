@@ -843,6 +843,29 @@ class AssetGovernanceIssueInventoryTest(unittest.TestCase):
 
         self.assertEqual([item["asset_name"] for item in data["results"]], ["z_no_run"])
 
+    def test_daily_report_groups_manual_review_sections_by_issue_type(self):
+        store = self._store()
+        store.upsert_table({"name": "company", "layer": "unknown", "owner": "tencent"})
+        for index in range(3):
+            store.upsert_lineage("company", f"downstream_{index}", "lineage")
+        store.upsert_table({"name": "ods_encrypt_md5_mobile_df", "layer": "ods", "owner": "tencent"})
+        store.upsert_task({"id": "task_consumer", "name": "consume_mobile", "inputs": ["ods_encrypt_md5_mobile_df"]})
+        store.upsert_table({"name": "ads_unfinish_cdp_31_1d", "layer": "ads", "owner": "tencent"})
+        store.upsert_task({"id": "task_output", "name": "build_ads_unfinish", "outputs": ["ads_unfinish_cdp_31_1d"]})
+        store.upsert_table({"name": "ads_owner_gap", "layer": "ads", "owner": ""})
+
+        report = store.get_asset_governance_daily_report()
+
+        self.assertIn("manual_review_sections", report)
+        self.assertIn("manual_review_top_items", report)
+        sections = {section["key"]: section for section in report["manual_review_sections"]}
+        self.assertEqual(sections["layer_manual_mapping"]["items"][0]["name"], "company")
+        self.assertEqual(sections["producer_mapping_review"]["items"][0]["name"], "ods_encrypt_md5_mobile_df")
+        self.assertEqual(sections["instance_window_review"]["items"][0]["name"], "ads_unfinish_cdp_31_1d")
+        self.assertTrue(sections["owner_review"]["items"])
+        self.assertTrue(report["manual_review_top_items"])
+        self.assertIn("daily_action", report["manual_review_top_items"][0])
+
     def test_daily_report_includes_governance_issue_summaries(self):
         store = self._store()
         store.upsert_table({"name": "ads_revenue", "layer": "ads", "owner": "finance"})
