@@ -3307,7 +3307,8 @@ def _governance_issue_label(issue_type):
     }.get(issue_type, issue_type)
 
 
-def _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue, manual_review_top_items=None):    actions = []
+def _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue, manual_review_top_items=None):
+    actions = []
     manual_review_top_items = manual_review_top_items or []
     if manual_review_top_items:
         first = manual_review_top_items[0]
