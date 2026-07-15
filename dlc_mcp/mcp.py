@@ -1080,6 +1080,58 @@ def _format_asset_change_impact(data):
     )
 
 
+def _format_manual_review_top_items(data):
+    rows = []
+    for item in (data.get("manual_review_top_items") or [])[:10]:
+        evidence = f"下游{item.get('downstream_count', 0)}，任务{item.get('task_count', 0)}，产出任务{item.get('producer_task_count', 0)}，运行实例{item.get('run_count', 0)}"
+        rows.append(
+            [
+                item.get("severity", ""),
+                item.get("issue_label", ""),
+                item.get("name", ""),
+                evidence,
+                item.get("owner_bucket_label", ""),
+                item.get("daily_action", ""),
+            ]
+        )
+    return _section("今日优先人工判断问题", []) + "\n\n" + _table(["优先级", "问题类型", "表名", "影响证据", "责任方", "今日动作"], rows)
+
+
+def _format_manual_review_sections(data):
+    parts = [_section("需要人工判断的资产覆盖问题", [])]
+    for section in data.get("manual_review_sections") or []:
+        rows = []
+        if section.get("key") == "owner_review":
+            for item in (section.get("items") or [])[:10]:
+                rows.append(
+                    [
+                        item.get("name", ""),
+                        item.get("layer", ""),
+                        item.get("owner", ""),
+                        "、".join(item.get("owner_candidates") or []),
+                        "、".join(item.get("gaps") or []),
+                    ]
+                )
+            table = _table(["表名", "层级", "Owner", "候选责任人", "缺口"], rows)
+        else:
+            for item in (section.get("items") or [])[:10]:
+                rows.append(
+                    [
+                        item.get("name", ""),
+                        item.get("layer", ""),
+                        item.get("owner", ""),
+                        item.get("downstream_count", 0),
+                        item.get("task_count", 0),
+                        item.get("producer_task_count", 0),
+                        item.get("run_count", 0),
+                        item.get("recommended_next_check", ""),
+                    ]
+                )
+            table = _table(["表名", "层级", "Owner", "下游", "任务", "产出任务", "运行实例", "建议"], rows)
+        parts.append(f"**{_cell(section.get('title'))}**\n\n{table}")
+    return "\n\n".join(parts)
+
+
 def _format_asset_governance_daily_report(data):
     summary = data.get("summary") or {}
     return "\n\n".join(
@@ -1098,6 +1150,8 @@ def _format_asset_governance_daily_report(data):
             _section("今日优先动作", data.get("top_actions") or []),
             _section("产出风险 Top 表", []) + "\n\n" + _table(["表名", "层级", "Owner", "核心等级", "状态", "原因"], [[row.get("name"), row.get("layer"), row.get("owner"), row.get("core_level"), row.get("status_label"), "；".join(row.get("reasons") or [])] for row in data.get("production_risks", [])]),
             _section("资产画像缺口", []) + "\n\n" + _table(["表名", "层级", "Owner", "缺口"], [[row.get("name"), row.get("layer"), row.get("owner"), "、".join(row.get("gaps") or [])] for row in data.get("coverage_gaps", [])]),
+            _format_manual_review_top_items(data),
+            _format_manual_review_sections(data),
             _section("质量规则缺口", []) + "\n\n" + _table(["表名", "层级", "Owner", "下游", "质量规则"], [[row.get("name"), row.get("layer"), row.get("owner"), row.get("downstream_count"), row.get("quality_rule_count")] for row in data.get("quality_gaps", [])]),
             _section("Owner 责任缺口", []) + "\n\n" + _table(["表名", "层级", "Owner", "候选责任人", "缺口"], [[row.get("name"), row.get("layer"), row.get("owner"), "、".join(row.get("owner_candidates") or []), "、".join(row.get("gaps") or [])] for row in data.get("owner_gaps", [])]),
             _section("生命周期关注", []) + "\n\n" + _table(["表名", "层级", "Owner", "状态", "最近产出", "缺口"], [[row.get("name"), row.get("layer"), row.get("owner"), row.get("lifecycle_status"), row.get("latest_run_time"), "、".join(row.get("gaps") or [])] for row in data.get("lifecycle_watch", [])]),

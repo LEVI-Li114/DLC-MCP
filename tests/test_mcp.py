@@ -628,6 +628,12 @@ class McpTest(unittest.TestCase):
         self.assertIn("今日优先动作", text)
         self.assertIn("产出风险 Top 表", text)
         self.assertIn("资产画像缺口", text)
+        self.assertIn("今日优先人工判断问题", text)
+        self.assertIn("需要人工判断的资产覆盖问题", text)
+        self.assertIn("层级待人工判断", text)
+        self.assertIn("产出任务映射待确认", text)
+        self.assertIn("运行实例窗口待确认", text)
+        self.assertIn("Owner 责任待确认", text)
         self.assertIn("说明", text)
 
     def test_calls_search_tasks_tool(self):
