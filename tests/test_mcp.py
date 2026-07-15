@@ -300,6 +300,17 @@ class McpTest(unittest.TestCase):
         self.assertIn("数据来源：cache_snapshot", text)
         self.assertIn("实时刷新：否", text)
 
+    def test_daily_report_markdown_renders_execution_sections(self):
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 145, "method": "tools/call", "params": {"name": "get_asset_governance_daily_report", "arguments": {}}},
+        )
+        text = response["result"]["content"][0]["text"]
+
+        self.assertIn("治理执行摘要", text)
+        self.assertIn("按责任方拆解", text)
+        self.assertIn("验收标准", text)
+
     def test_get_task_code_validates_missing_identity(self):
         response = handle_request(
             self.store,

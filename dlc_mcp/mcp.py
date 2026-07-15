@@ -1170,6 +1170,9 @@ def _format_asset_governance_daily_report(data):
                 ],
             ),
             _section("今日优先动作", data.get("top_actions") or []),
+            _format_daily_execution_summary(data),
+            _format_daily_responsibility_buckets(data),
+            _format_daily_acceptance_criteria(data),
             _section("产出风险 Top 表", []) + "\n\n" + _table(["表名", "层级", "Owner", "核心等级", "状态", "原因"], [[row.get("name"), row.get("layer"), row.get("owner"), row.get("core_level"), row.get("status_label"), "；".join(row.get("reasons") or [])] for row in data.get("production_risks", [])]),
             _section("资产画像缺口", []) + "\n\n" + _table(["表名", "层级", "Owner", "缺口"], [[row.get("name"), row.get("layer"), row.get("owner"), "、".join(row.get("gaps") or [])] for row in data.get("coverage_gaps", [])]),
             _section("质量规则缺口", []) + "\n\n" + _table(["表名", "层级", "Owner", "下游", "质量规则"], [[row.get("name"), row.get("layer"), row.get("owner"), row.get("downstream_count"), row.get("quality_rule_count")] for row in data.get("quality_gaps", [])]),
@@ -1179,6 +1182,31 @@ def _format_asset_governance_daily_report(data):
             _section("说明", data.get("notes") or []),
         ]
     )
+
+
+def _format_daily_execution_summary(data):
+    summary = data.get("execution_summary") or {}
+    rows = []
+    for severity in ("p0", "p1", "p2"):
+        for item in summary.get(severity, []):
+            rows.append([severity.upper(), item.get("name"), item.get("issue"), item.get("owner_bucket"), item.get("action")])
+    return _section("治理执行摘要", ["按 P0/P1/P2 汇总今日优先治理动作。"] ) + "\n\n" + _table(
+        ["级别", "资产", "问题", "责任桶", "动作"],
+        rows,
+    )
+
+
+def _format_daily_responsibility_buckets(data):
+    buckets = data.get("responsibility_buckets") or {}
+    rows = [[bucket, len(items), "、".join(item.get("name", "") for item in items[:5])] for bucket, items in buckets.items()]
+    return _section("按责任方拆解", ["只基于确定性证据分桶；Owner 不足时进入 unknown_owner。"] ) + "\n\n" + _table(
+        ["责任桶", "数量", "示例资产"],
+        rows,
+    )
+
+
+def _format_daily_acceptance_criteria(data):
+    return _section("验收标准", data.get("acceptance_criteria") or [])
 
 
 def _format_core_decision(data):

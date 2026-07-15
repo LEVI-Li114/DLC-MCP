@@ -140,6 +140,30 @@ class AssetStoreTest(unittest.TestCase):
         self.assertIn("finance domain", decision["reasons"])
         self.assertIn("1 quality rules", decision["reasons"])
 
+    def test_daily_report_includes_execution_summary_buckets_and_acceptance_criteria(self):
+        store = make_store()
+        store.upsert_table({"name": "ads_not_run", "layer": "ads", "owner": ""})
+        store.upsert_task({"id": "task_not_run", "name": "build_ads_not_run", "outputs": ["ads_not_run"]})
+        store.upsert_table({"name": "dwd_quality_gap", "layer": "dwd", "owner": "tencent"})
+        for index in range(3):
+            store.upsert_lineage("dwd_quality_gap", f"downstream_{index}", "lineage")
+
+        report = store.get_asset_governance_daily_report(instance_date="2026-07-14")
+
+        self.assertIn("execution_summary", report)
+        self.assertIn("p0", report["execution_summary"])
+        self.assertIn("p1", report["execution_summary"])
+        self.assertIn("p2", report["execution_summary"])
+        self.assertIn("responsibility_buckets", report)
+        self.assertIn("data_platform", report["responsibility_buckets"])
+        self.assertIn("warehouse_owner", report["responsibility_buckets"])
+        self.assertIn("unknown_owner", report["responsibility_buckets"])
+        self.assertIn("acceptance_criteria", report)
+        self.assertTrue(any("任务映射覆盖率" in item for item in report["acceptance_criteria"]))
+        flattened = report["execution_summary"]["p0"] + report["execution_summary"]["p1"] + report["execution_summary"]["p2"]
+        self.assertTrue(flattened)
+        self.assertTrue(all("action" in item for item in flattened))
+
     def test_unknown_table_returns_not_found(self):
         self.assertEqual(make_store().get_table_profile("missing")["error"], "table_not_found")
 

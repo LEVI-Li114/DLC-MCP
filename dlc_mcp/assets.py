@@ -1336,6 +1336,9 @@ class AssetStore:
         issue_summary_by_severity = _governance_issue_counts(governance_issues, "severity")
         issue_summary_by_owner = _governance_issue_counts(governance_issues, "owner")
         responsibility_buckets = _governance_responsibility_buckets(governance_issues)
+        execution_summary = _daily_execution_summary(governance_issues[:20], production_risks, quality_gaps)
+        execution_buckets = _daily_responsibility_buckets(execution_summary)
+        acceptance_criteria = _daily_acceptance_criteria()
         summary = {
             "sync_status": sync_health.get("status", ""),
             "production_risk_count": len(production_risks),
@@ -1365,7 +1368,10 @@ class AssetStore:
             "issue_summary_by_severity": issue_summary_by_severity,
             "issue_summary_by_owner": issue_summary_by_owner,
             "top_governance_issues": governance_issues[:20],
-            "responsibility_buckets": responsibility_buckets,
+            "responsibility_buckets": execution_buckets,
+            "governance_responsibility_buckets": responsibility_buckets,
+            "execution_summary": execution_summary,
+            "acceptance_criteria": acceptance_criteria,
             "top_actions": _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue),
             "notes": [
                 "巡检日报基于当前本地资产库已同步事实生成，不会触发批量实时同步。",
@@ -3038,6 +3044,92 @@ def _governance_lifecycle_watch_item(table, lifecycle_profile):
         "latest_run_time": lifecycle_profile.get("latest_run_time", ""),
         "gaps": lifecycle_profile.get("gaps", []),
     }
+
+
+def _daily_execution_summary(governance_issues, production_risks, quality_gaps):
+    summary = {"p0": [], "p1": [], "p2": []}
+    for issue in governance_issues[:10]:
+        severity = str(issue.get("severity") or "P1").lower()
+        if severity not in summary:
+            severity = "p1"
+        evidence = issue.get("evidence") or {}
+        summary[severity].append(
+            {
+                "name": issue.get("asset_name", ""),
+                "issue": _governance_issue_label(issue.get("issue_type", "")),
+                "owner_bucket": _governance_responsibility_bucket(issue),
+                "action": issue.get("recommended_next_check", ""),
+                "evidence": {
+                    "downstream_count": evidence.get("downstream_count", 0),
+                    "task_count": evidence.get("task_count", 0),
+                    "producer_task_count": evidence.get("producer_task_count", 0),
+                    "run_count": evidence.get("run_count", 0),
+                },
+            }
+        )
+    for risk in production_risks[:5]:
+        bucket = "p0" if risk.get("status") in {"failed", "not_run"} else "p1"
+        summary[bucket].append(
+            {
+                "name": risk.get("name", ""),
+                "issue": "产出风险",
+                "owner_bucket": "data_platform" if risk.get("producer_task_count", 0) else "unknown_owner",
+                "action": "确认昨日产出任务实例、调度状态和任务负责人。",
+                "evidence": {
+                    "status": risk.get("status_label") or risk.get("status", ""),
+                    "producer_task_count": risk.get("producer_task_count", 0),
+                },
+            }
+        )
+    if not summary["p0"] and quality_gaps:
+        first_quality = quality_gaps[0]
+        summary["p1"].append(
+            {
+                "name": first_quality.get("name", ""),
+                "issue": "质量规则缺口",
+                "owner_bucket": "warehouse_owner",
+                "action": "确认源质量规则是否应补齐；不要把规则稀疏直接判定为同步失败。",
+                "evidence": {
+                    "downstream_count": first_quality.get("downstream_count", 0),
+                    "quality_rule_count": first_quality.get("quality_rule_count", 0),
+                },
+            }
+        )
+    return summary
+
+
+def _daily_responsibility_buckets(execution_summary):
+    buckets = {"data_platform": [], "warehouse_owner": [], "bi_owner": [], "business_owner": [], "unknown_owner": []}
+    for items in execution_summary.values():
+        for item in items:
+            bucket = item.get("owner_bucket") or "unknown_owner"
+            if bucket not in buckets:
+                bucket = "unknown_owner"
+            buckets[bucket].append(item)
+    return buckets
+
+
+def _daily_acceptance_criteria():
+    return [
+        "任务映射覆盖率较上次巡检提升，missing_task_mapping P0/P1 数量下降。",
+        "运行实例关联覆盖率较上次巡检提升，missing_task_runs P0/P1 数量下降。",
+        "昨日分区和昨日运行实例可通过 MCP 查询到，并显示查询元信息。",
+        "P0 产出风险均有任务负责人、实例状态或明确的待补拉原因。",
+        "质量规则缺口继续展示，但不被误判为同步失败。",
+    ]
+
+
+def _governance_issue_label(issue_type):
+    return {
+        "unknown_layer": "层级待人工判断",
+        "missing_quality_rules": "质量规则缺口",
+        "missing_task_mapping": "产出任务映射待确认",
+        "missing_task_runs": "运行实例窗口待确认",
+        "missing_data_source": "数据源覆盖缺口",
+        "missing_owner": "Owner 责任待确认",
+        "partition_unsupported": "分区接口不支持",
+        "profile_incomplete": "资产画像不完整",
+    }.get(issue_type, issue_type)
 
 
 def _governance_top_actions(summary, production_risks, quality_gaps, owner_gaps, lifecycle_watch, expert_queue):
