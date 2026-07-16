@@ -279,6 +279,50 @@ Restart Codex, then ask:
 - Metadata database/table listing: supported after optional metadata sync
 - Usage heat: not supported yet; needs query logs or BI/report access logs
 
+### DLC partition sync
+
+Partition-table status is a table metadata property. The MCP partition profile uses table metadata/schema to decide whether a table is partitioned, and uses `table_partitions` only for concrete partition facts.
+
+Use DLC `DescribeTablePartitions` as the authoritative partition sync path:
+
+```bash
+cd /opt/dlc-mcp/DLC-MCP
+set -a
+. /etc/dlc-mcp/env
+set +a
+WEDATA_SYNC_PARTITIONS=1 \
+WEDATA_PARTITION_SERVICE=dlc \
+DLC_API_VERSION=2021-01-25 \
+DLC_CATALOG=DataLakeCatalog \
+WEDATA_PARTITION_SYNC_MODE=full \
+python3 -m dlc_mcp.sync_wedata
+```
+
+For scheduled incremental sync, omit `WEDATA_PARTITION_DATE` to update yesterday by default:
+
+```bash
+cd /opt/dlc-mcp/DLC-MCP
+set -a
+. /etc/dlc-mcp/env
+set +a
+WEDATA_SYNC_PARTITIONS=1 \
+WEDATA_PARTITION_SERVICE=dlc \
+DLC_API_VERSION=2021-01-25 \
+DLC_CATALOG=DataLakeCatalog \
+WEDATA_PARTITION_SYNC_MODE=incremental \
+python3 -m dlc_mcp.sync_wedata
+```
+
+To backfill one explicit date:
+
+```bash
+WEDATA_SYNC_PARTITIONS=1 \
+WEDATA_PARTITION_SERVICE=dlc \
+WEDATA_PARTITION_SYNC_MODE=incremental \
+WEDATA_PARTITION_DATE=2026-07-15 \
+python3 -m dlc_mcp.sync_wedata
+```
+
 ## 11. Routine Refresh
 
 Run whenever you want to refresh data:

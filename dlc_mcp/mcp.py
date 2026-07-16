@@ -1442,6 +1442,10 @@ def _format_table_partition_profile(data):
                 [
                     f"查询分区日期：`{_cell(data.get('partition_date'))}`",
                     f"是否分区表：**{data.get('is_partitioned')}**",
+                    f"分区字段：`{', '.join(data.get('partition_keys') or [])}`",
+                    f"分区证据：{_cell('、'.join(data.get('partition_evidence') or []))}",
+                    f"分区事实：`{_cell(data.get('partition_fact_status', ''))}`",
+                    f"分区事实可用：**{data.get('partition_fact_available', False)}**",
                     f"分区数量：**{data.get('partition_count', 0)}**",
                     f"最新分区：`{_cell(latest.get('partition_name'))}`",
                     f"最早分区：`{_cell(earliest.get('partition_name'))}`",

@@ -2,9 +2,10 @@ import json
 import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from .assets import AssetStore
+from .partitioning import partition_matches_date, partition_metadata_for_table, partition_sync_target_date
 from .tencentcloud import TencentCloudClient
 from .wedata import _dedupe_table_names, _items, _normalize_table_name, _task_table_names, import_wedata_snapshot, snapshot_from_api_dump
 
@@ -19,6 +20,8 @@ def main():
     os.makedirs(work_dir, exist_ok=True)
 
     client = TencentCloudClient.wedata_from_env()
+    store = AssetStore(sqlite3.connect(db_path))
+    store.init_schema()
     tasks_response = _list_all(client, "ListTasks", {"ProjectId": project_id}, page_size)
     tasks_path = os.path.join(work_dir, "wedata_tasks.json")
     with open(tasks_path, "w", encoding="utf-8") as f:
@@ -65,7 +68,8 @@ def main():
         dump.update(_merge_metadata_dump(dump, metadata_dump))
 
     if os.environ.get("WEDATA_SYNC_PARTITIONS") == "1":
-        partitions_response = _sync_partitions(client, project_id, table_names, page_size, catalog_tables=catalog_tables)
+        partition_table_names = _filter_partition_table_names(table_names, catalog_tables, store)
+        partitions_response = _sync_partitions(client, project_id, partition_table_names, page_size, catalog_tables=catalog_tables)
         partitions_path = os.path.join(work_dir, "wedata_table_partitions.json")
         with open(partitions_path, "w", encoding="utf-8") as f:
             json.dump(partitions_response, f, ensure_ascii=False, indent=2)
@@ -105,8 +109,6 @@ def main():
             json.dump(instances_response, f, ensure_ascii=False, indent=2)
         dump["task_instances"] = instances_response
 
-    store = AssetStore(sqlite3.connect(db_path))
-    store.init_schema()
     repair_tasks = _repair_task_targets_from_env(store)
     if repair_tasks:
         print(f"repairing {len(repair_tasks)} WeData task targets", flush=True)
@@ -516,9 +518,53 @@ def _sync_repair_task_runs(client, project_id, repair_tasks, page_size):
     return responses, failures
 
 
+def _partition_sync_mode():
+    mode = os.environ.get("WEDATA_PARTITION_SYNC_MODE", "incremental").strip().lower()
+    return mode if mode in {"full", "incremental"} else "incremental"
+
+
+def _partition_date_for_sync():
+    return os.environ.get("WEDATA_PARTITION_DATE", "") or partition_sync_target_date(date.today())
+
+
+def _filter_partition_table_names(table_names, catalog_tables=None, store=None):
+    catalog_tables = catalog_tables or {}
+    result = []
+    for table_name in sorted(set(table_names)):
+        table = _partition_table_metadata(table_name, catalog_tables, store)
+        columns = _partition_table_columns(table_name, store)
+        rows = _partition_table_fact_rows(table_name, store)
+        metadata = partition_metadata_for_table(table, columns, rows)
+        if metadata["is_partitioned"]:
+            result.append(table_name)
+    return result
+
+
+def _partition_table_metadata(table_name, catalog_tables, store):
+    if store:
+        row = store._one("select * from tables where name = ?", (table_name,))
+        if row:
+            return store._table_dict(row)
+    item = catalog_tables.get(table_name) or {}
+    return {"name": table_name, "raw": item, "database": item.get("DatabaseName") or item.get("Database") or item.get("DbName", "")}
+
+
+def _partition_table_columns(table_name, store):
+    if not store:
+        return []
+    return [dict(row) for row in store._all("select name, type, description from columns where table_name = ? order by ordinal, name", (table_name,))]
+
+
+def _partition_table_fact_rows(table_name, store):
+    if not store:
+        return []
+    return [dict(row) for row in store._all("select * from table_partitions where table_name = ? order by partition_date desc, partition_name desc", (table_name,))]
+
+
 def _sync_partitions(client, project_id, table_names, page_size, progress_every=10, catalog_tables=None):
     action = os.environ.get("WEDATA_PARTITION_ACTION", "ListTablePartitions")
-    partition_date = os.environ.get("WEDATA_PARTITION_DATE", "")
+    mode = _partition_sync_mode()
+    partition_date = "" if mode == "full" else _partition_date_for_sync()
     partition_client = _partition_client(client)
     items = []
     failures = []
@@ -545,7 +591,7 @@ def _sync_partitions(client, project_id, table_names, page_size, progress_every=
             }
         for item in _partition_items(response):
             item["QueriedTableName"] = table_name
-            if _partition_matches_date(item, partition_date):
+            if partition_matches_date(item, partition_date):
                 items.append(item)
         if progress_every and (index == total or index % progress_every == 0):
             print(f"synced partitions for {index}/{total} tables", flush=True)

@@ -3,6 +3,8 @@ import json
 import os
 from datetime import datetime, timedelta
 
+from .partitioning import partition_metadata_for_table
+
 
 GOVERNANCE_ISSUE_TYPES = [
     "unknown_layer",
@@ -1657,20 +1659,39 @@ class AssetStore:
         }
 
     def get_table_partition_profile(self, table_name, partition_date=""):
-        if not self._one("select 1 from tables where name = ?", (table_name,)):
+        table = self._one("select * from tables where name = ?", (table_name,))
+        if not table:
             return {"error": "table_not_found", "table_name": table_name}
+        table_data = self._table_dict(table)
+        columns = [dict(row) for row in self._all("select name, type, description from columns where table_name = ? order by ordinal, name", (table_name,))]
         all_rows = [dict(row) for row in self._all("select * from table_partitions where table_name = ? order by partition_date desc, partition_name desc", (table_name,))]
+        partition_metadata = partition_metadata_for_table(table_data, columns, all_rows)
         recent = all_rows[:30]
         target = None
         if partition_date:
             target = next((row for row in all_rows if row.get("partition_date") == partition_date or partition_date in row.get("partition_name", "")), None)
         elif all_rows:
             target = all_rows[0]
-        status = _partition_health_status(target, recent, partition_date)
+        fact_available = bool(all_rows)
+        fact_status = _partition_fact_status(partition_metadata["is_partitioned"], fact_available)
+        status = _partition_health_status(target, recent, partition_date) if fact_available else "unknown"
+        reasons = _partition_health_reasons(status, target, recent, partition_date)
+        if partition_metadata["is_partitioned"] and not fact_available:
+            reasons = ["表元数据/字段显示为分区表，但未同步到分区统计事实。"]
+        elif not partition_metadata["is_partitioned"]:
+            reasons = ["未发现分区字段、分区元数据或分区统计事实。"]
+        suggestions = _partition_health_suggestions(status)
+        if partition_metadata["is_partitioned"] and not fact_available:
+            suggestions = ["运行 DLC 分区同步后再判断分区健康。"]
         return {
             "table_name": table_name,
             "partition_date": partition_date,
-            "is_partitioned": bool(all_rows),
+            "is_partitioned": partition_metadata["is_partitioned"],
+            "partition_keys": partition_metadata["partition_keys"],
+            "partition_evidence": partition_metadata["partition_evidence"],
+            "partition_confidence": partition_metadata["partition_confidence"],
+            "partition_fact_available": fact_available,
+            "partition_fact_status": fact_status,
             "partition_count": len(all_rows),
             "latest_partition": all_rows[0] if all_rows else None,
             "earliest_partition": all_rows[-1] if all_rows else None,
@@ -1680,8 +1701,8 @@ class AssetStore:
             "total_storage_bytes": sum(row.get("storage_bytes") or 0 for row in all_rows),
             "health_status": status,
             "health_label": _partition_health_label(status),
-            "reasons": _partition_health_reasons(status, target, recent, partition_date),
-            "suggestions": _partition_health_suggestions(status),
+            "reasons": reasons,
+            "suggestions": suggestions,
         }
 
     def get_table_readiness(self, table_name):
@@ -2493,6 +2514,14 @@ def _production_task_status(task, instance_date, runs):
             "duration_seconds": latest_run.get("duration_seconds", 0) if latest_run else 0,
         },
     }
+
+
+def _partition_fact_status(is_partitioned, fact_available):
+    if fact_available:
+        return "available"
+    if is_partitioned:
+        return "missing"
+    return "not_partitioned"
 
 
 def _partition_health_status(target, recent, requested_date):

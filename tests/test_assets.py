@@ -598,6 +598,59 @@ class AssetStoreTest(unittest.TestCase):
         self.assertEqual(report["core_level"], "P1")
         self.assertTrue(all(item.get("name") == "ads_customer_revenue_daily" for item in report["owner_gaps"] + report["lifecycle_watch"]))
 
+    def test_partition_profile_uses_dt_column_even_without_partition_facts(self):
+        store = make_store()
+        store.upsert_table({"name": "ods_cloud_cost_baidu_day_di", "database": "byai_bigdata"})
+        store.upsert_column("ods_cloud_cost_baidu_day_di", "dt", "string", "", 1)
+        store.upsert_column("ods_cloud_cost_baidu_day_di", "id", "bigint", "", 2)
+
+        profile = store.get_table_partition_profile("ods_cloud_cost_baidu_day_di")
+
+        self.assertTrue(profile["is_partitioned"])
+        self.assertFalse(profile["partition_fact_available"])
+        self.assertEqual(profile["partition_fact_status"], "missing")
+        self.assertEqual(profile["partition_keys"], ["dt"])
+        self.assertIn("column:dt", profile["partition_evidence"])
+        self.assertEqual(profile["partition_count"], 0)
+        self.assertIn("未同步到分区统计事实", "；".join(profile["reasons"]))
+
+    def test_partition_profile_reports_not_partitioned_without_metadata_or_facts(self):
+        store = make_store()
+        store.upsert_table({"name": "dim_customer", "database": "byai_bigdata"})
+        store.upsert_column("dim_customer", "customer_id", "string", "", 1)
+
+        profile = store.get_table_partition_profile("dim_customer")
+
+        self.assertFalse(profile["is_partitioned"])
+        self.assertFalse(profile["partition_fact_available"])
+        self.assertEqual(profile["partition_fact_status"], "not_partitioned")
+        self.assertEqual(profile["partition_keys"], [])
+
+    def test_partition_profile_uses_raw_partition_keys(self):
+        store = make_store()
+        store.upsert_table({"name": "ads_revenue", "database": "byai_bigdata", "raw": {"PartitionKeys": [{"Name": "biz_date"}]}})
+        store.upsert_column("ads_revenue", "biz_date", "string", "", 1)
+
+        profile = store.get_table_partition_profile("ads_revenue")
+
+        self.assertTrue(profile["is_partitioned"])
+        self.assertEqual(profile["partition_keys"], ["biz_date"])
+        self.assertEqual(profile["partition_confidence"], "high")
+        self.assertEqual(profile["partition_fact_status"], "missing")
+
+    def test_partition_fact_missing_is_not_zero_data_evidence(self):
+        store = make_store()
+        store.upsert_table({"name": "ods_cloud_cost_baidu_day_di", "database": "byai_bigdata"})
+        store.upsert_column("ods_cloud_cost_baidu_day_di", "dt", "string", "", 1)
+
+        profile = store.get_table_partition_profile("ods_cloud_cost_baidu_day_di")
+
+        self.assertTrue(profile["is_partitioned"])
+        self.assertFalse(profile["partition_fact_available"])
+        self.assertEqual(profile["partition_fact_status"], "missing")
+        self.assertNotIn("总行数为0", "；".join(profile["reasons"]))
+        self.assertNotIn("最近", "；".join(profile["reasons"]))
+
     def test_table_partition_profile_reports_volume_and_health(self):
         store = make_store()
         for day, rows in [("2026-07-07", 1200), ("2026-07-06", 1100), ("2026-07-05", 1000)]:

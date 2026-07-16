@@ -618,6 +618,26 @@ class McpTest(unittest.TestCase):
         self.assertIn("最近分区", text)
         self.assertIn("正常", text)
 
+    def test_table_partition_profile_shows_partition_metadata_without_facts(self):
+        self.store.upsert_table({"name": "ods_cloud_cost_baidu_day_di", "database": "byai_bigdata"})
+        self.store.upsert_column("ods_cloud_cost_baidu_day_di", "dt", "string", "", 1)
+
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 99,
+                "method": "tools/call",
+                "params": {"name": "get_table_partition_profile", "arguments": {"table_name": "ods_cloud_cost_baidu_day_di"}},
+            },
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("是否分区表：**True**", text)
+        self.assertIn("分区字段：`dt`", text)
+        self.assertIn("分区事实：`missing`", text)
+        self.assertIn("表元数据/字段显示为分区表，但未同步到分区统计事实", text)
+
     def test_calls_table_readiness_tool(self):
         response = handle_request(
             self.store,

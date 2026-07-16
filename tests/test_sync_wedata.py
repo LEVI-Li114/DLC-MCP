@@ -13,12 +13,15 @@ from dlc_mcp.sync_wedata import (
     _enrich_changed_task_definitions,
     _filter_changed_tasks,
     _filter_new_asset_tables,
+    _filter_partition_table_names,
     _instance_window,
     _item_dates,
     _list_all,
     _merge_task_responses,
     _metadata_table_count,
+    _partition_date_for_sync,
     _partition_payload,
+    _partition_sync_mode,
     _repair_task_targets_from_env,
     _sync_changed_task_codes,
     _sync_changed_task_relations,
@@ -524,6 +527,55 @@ class SyncWeDataTest(unittest.TestCase):
         with patch.dict(os.environ, {"WEDATA_NEW_ASSET_STRICT": "1"}):
             with self.assertRaises(RuntimeError):
                 _filter_new_asset_tables(["table_a"], {"table_a": {"Name": "table_a"}}, "2026-07-08", "2026-07-08")
+
+    def test_partition_sync_mode_defaults_to_incremental(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(_partition_sync_mode(), "incremental")
+
+    def test_partition_date_for_sync_defaults_to_yesterday(self):
+        with patch.dict(os.environ, {}, clear=True), patch("dlc_mcp.sync_wedata.date") as fake_date:
+            fake_date.today.return_value = datetime(2026, 7, 16).date()
+            self.assertEqual(_partition_date_for_sync(), "2026-07-15")
+
+    def test_dlc_full_partition_sync_keeps_all_partitions(self):
+        with patch.dict(os.environ, {"WEDATA_PARTITION_SERVICE": "dlc", "DLC_CATALOG": "DataLakeCatalog", "WEDATA_PARTITION_SYNC_MODE": "full"}, clear=False), patch("dlc_mcp.sync_wedata._partition_client", return_value=FakeDlcPartitionClient()):
+            response = _sync_partitions(
+                FakePartitionClient(),
+                "project",
+                ["ads_revenue"],
+                1,
+                progress_every=0,
+                catalog_tables={"ads_revenue": {"DatabaseName": "ads_mart"}},
+            )
+
+        self.assertEqual([item["Partition"] for item in response["Response"]["Data"]["Items"]], ["dt=20260708", "dt=20260709"])
+
+    def test_dlc_incremental_partition_sync_defaults_to_yesterday(self):
+        with patch.dict(os.environ, {"WEDATA_PARTITION_SERVICE": "dlc", "DLC_CATALOG": "DataLakeCatalog", "WEDATA_PARTITION_SYNC_MODE": "incremental"}, clear=False), patch("dlc_mcp.sync_wedata._partition_client", return_value=FakeDlcPartitionClient()), patch("dlc_mcp.sync_wedata.date") as fake_date:
+            fake_date.today.return_value = datetime(2026, 7, 9).date()
+            response = _sync_partitions(
+                FakePartitionClient(),
+                "project",
+                ["ads_revenue"],
+                1,
+                progress_every=0,
+                catalog_tables={"ads_revenue": {"DatabaseName": "ads_mart"}},
+            )
+
+        self.assertEqual([item["Partition"] for item in response["Response"]["Data"]["Items"]], ["dt=20260708"])
+
+    def test_partition_sync_filters_to_partitioned_tables_from_store(self):
+        conn = sqlite3.connect(":memory:")
+        store = AssetStore(conn)
+        store.init_schema()
+        store.upsert_table({"name": "ods_partitioned", "database": "byai_bigdata"})
+        store.upsert_column("ods_partitioned", "dt", "string", "", 1)
+        store.upsert_table({"name": "dim_customer", "database": "byai_bigdata"})
+        store.upsert_column("dim_customer", "customer_id", "string", "", 1)
+
+        filtered = _filter_partition_table_names(["dim_customer", "ods_partitioned"], {}, store)
+
+        self.assertEqual(filtered, ["ods_partitioned"])
 
     def test_partition_sync_tags_table_name(self):
         with patch.dict(os.environ, {"WEDATA_PARTITION_DATE": "2026-07-08"}):
