@@ -296,6 +296,16 @@ def _empty_list(key):
     return lambda data: _has_error(data) or not data.get(key)
 
 
+def _partition_refresh_needed(data, partition_date):
+    if _has_error(data):
+        return True
+    if data.get("is_partitioned") and not data.get("partition_fact_available"):
+        return True
+    if partition_date and data.get("status") == "missing_partition":
+        return True
+    return False
+
+
 def _table_detail_incomplete(data):
     if _has_error(data):
         return True
@@ -382,18 +392,29 @@ def _call_tool(store, request, live=None):
             if refreshed:
                 data = store.get_table_profile(args["table_name"])
     elif name == "get_table_partition_profile":
-        data = store.get_table_partition_profile(args["table_name"], args.get("partition_date", ""))
-        if live:
+        partition_date = args.get("partition_date", "")
+        data = store.get_table_partition_profile(args["table_name"], partition_date)
+        if source == Source.LEGACY_CACHE:
+            meta["source"] = Source.LEGACY_CACHE
+        elif live:
             refreshed = _maybe_live_refresh(
                 meta,
-                args,
+                {**args, "live": True},
                 data,
-                lambda item: _has_error(item) or (item.get("is_partitioned") and not item.get("partition_fact_available")),
+                lambda item: _partition_refresh_needed(item, partition_date),
                 lambda: live.sync_table_partitions(args["table_name"]),
-                reason="" if args.get("live") else "missing_partition_facts" if data.get("is_partitioned") and not data.get("partition_fact_available") else "",
+                reason="user_requested" if args.get("live") else "live_first",
             )
             if refreshed:
-                data = store.get_table_partition_profile(args["table_name"], args.get("partition_date", ""))
+                meta["source"] = Source.LIVE
+                data = store.get_table_partition_profile(args["table_name"], partition_date)
+        else:
+            meta["source"] = Source.NOT_AVAILABLE
+            data = {
+                "error": "live_source_unavailable",
+                "table_name": args["table_name"],
+                "requested_source": source,
+            }
     elif name == "get_table_readiness":
         data = store.get_table_readiness(args["table_name"])
         if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("score", 0) < 80):

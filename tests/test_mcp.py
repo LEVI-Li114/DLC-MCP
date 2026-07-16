@@ -164,6 +164,103 @@ class FakePartitionLive:
         self.synced.append(table_name)
 
 
+class RefreshingPartitionLive:
+    def __init__(self, store):
+        self.store = store
+        self.synced = []
+
+    def sync_table_partitions(self, table_name):
+        self.synced.append(table_name)
+        self.store.upsert_table_partition(
+            {
+                "table_name": table_name,
+                "partition_name": "dt=20260715",
+                "partition_date": "20260715",
+                "row_count": 2,
+                "storage_bytes": 21127,
+                "file_count": 1,
+                "updated_at": "2026-07-16T07:02:22+08:00",
+            }
+        )
+
+
+def test_partition_profile_auto_refreshes_stale_cache_for_requested_partition():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    store.upsert_table({"name": "ods_cloud_cost_baidu_day_di", "database": "byai_bigdata"})
+    store.upsert_column("ods_cloud_cost_baidu_day_di", "dt", "string", "", 1)
+    store.upsert_table_partition(
+        {
+            "table_name": "ods_cloud_cost_baidu_day_di",
+            "partition_name": "dt=20260706",
+            "partition_date": "20260706",
+            "row_count": 2,
+            "storage_bytes": 21127,
+            "file_count": 1,
+            "updated_at": "2026-07-16T07:02:22+08:00",
+        }
+    )
+    live = RefreshingPartitionLive(store)
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_table_partition_profile",
+            "arguments": {"table_name": "ods_cloud_cost_baidu_day_di", "partition_date": "20260715"},
+        },
+    }
+
+    response = _call_tool(store, request, live)
+    text = response["result"]["content"][0]["text"]
+
+    assert live.synced == ["ods_cloud_cost_baidu_day_di"]
+    assert "数据来源：live" in text
+    assert "dt=20260715" in text
+
+
+def test_partition_profile_legacy_cache_does_not_refresh():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    store.upsert_table({"name": "ods_cloud_cost_baidu_day_di", "database": "byai_bigdata"})
+    store.upsert_column("ods_cloud_cost_baidu_day_di", "dt", "string", "", 1)
+    store.upsert_table_partition(
+        {
+            "table_name": "ods_cloud_cost_baidu_day_di",
+            "partition_name": "dt=20260706",
+            "partition_date": "20260706",
+            "row_count": 2,
+            "storage_bytes": 21127,
+            "file_count": 1,
+            "updated_at": "2026-07-16T07:02:22+08:00",
+        }
+    )
+    live = RefreshingPartitionLive(store)
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_table_partition_profile",
+            "arguments": {
+                "table_name": "ods_cloud_cost_baidu_day_di",
+                "partition_date": "20260715",
+                "source": "legacy_cache",
+            },
+        },
+    }
+
+    response = _call_tool(store, request, live)
+    text = response["result"]["content"][0]["text"]
+
+    assert live.synced == []
+    assert "数据来源：legacy_cache" in text
+    assert "dt=20260706" in text
+    assert "dt=20260715" not in text
+
+
 def test_partition_profile_live_true_triggers_partition_refresh():
     conn = sqlite3.connect(":memory:")
     store = AssetStore(conn)
