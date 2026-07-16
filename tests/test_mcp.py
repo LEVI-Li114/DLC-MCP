@@ -286,6 +286,34 @@ def test_partition_profile_live_true_triggers_partition_refresh():
     assert "触发原因：user_requested" in text
 
 
+class FailingTaskRunLive:
+    def sync_task_runs(self, task_name="", task_id="", instance_date=""):
+        raise RuntimeError("ListTaskInstances failed: InternalError temporary unavailable")
+
+
+def test_task_runs_live_failure_returns_unknown_not_empty_runs():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_task_runs",
+            "arguments": {"task_id": "task-1", "instance_date": "2026-07-15"},
+        },
+    }
+
+    response = _call_tool(store, request, FailingTaskRunLive())
+    text = response["result"]["content"][0]["text"]
+
+    assert "数据来源：partial_live" in text
+    assert "task_runs" in text
+    assert "check_failed" in text
+    assert "InternalError" in text
+
+
 class McpTest(unittest.TestCase):
     def setUp(self):
         conn = sqlite3.connect(":memory:")

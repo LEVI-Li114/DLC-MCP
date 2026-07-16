@@ -2,6 +2,7 @@ import json
 import os
 
 from .cleanup_derived_tables import cleanup_task_name_pseudo_tables
+from .live_assets import LiveAssetService
 from .source import Source, resolve_source
 
 
@@ -397,17 +398,11 @@ def _call_tool(store, request, live=None):
         if source == Source.LEGACY_CACHE:
             meta["source"] = Source.LEGACY_CACHE
         elif live:
-            refreshed = _maybe_live_refresh(
-                meta,
-                {**args, "live": True},
-                data,
-                lambda item: _partition_refresh_needed(item, partition_date),
-                lambda: live.sync_table_partitions(args["table_name"]),
-                reason="user_requested" if args.get("live") else "live_first",
-            )
-            if refreshed:
-                meta["source"] = Source.LIVE
-                data = store.get_table_partition_profile(args["table_name"], partition_date)
+            result = LiveAssetService(store, live).get_partition_profile(args["table_name"], partition_date)
+            meta["source"] = result.source
+            meta["live_attempted"] = True
+            meta["live_reason"] = "user_requested" if args.get("live") else "live_first"
+            data = result.as_dict()
         else:
             meta["source"] = Source.NOT_AVAILABLE
             data = {
@@ -459,18 +454,28 @@ def _call_tool(store, request, live=None):
             if refreshed:
                 data = store.get_table_tasks(args["table_name"])
     elif name == "get_task_runs":
-        if args.get("task_name"):
-            data = store.get_task_runs_by_name(args["task_name"], args.get("limit", 10), args.get("instance_date", ""))
-            if live:
-                refreshed = _maybe_live_refresh(meta, args, data, _empty_list("runs"), lambda: live.sync_task_runs(task_name=args["task_name"], instance_date=args.get("instance_date", "")))
-                if refreshed:
-                    data = store.get_task_runs_by_name(args["task_name"], args.get("limit", 10), args.get("instance_date", ""))
+        if not args.get("task_id") and not args.get("task_name"):
+            data = _error_data("missing_task_identity")
+        elif source == Source.LEGACY_CACHE:
+            meta["source"] = Source.LEGACY_CACHE
+            if args.get("task_name"):
+                data = store.get_task_runs_by_name(args["task_name"], args.get("limit", 10), args.get("instance_date", ""))
+            else:
+                data = store.get_task_runs(args["task_id"], args.get("limit", 10), args.get("instance_date", ""))
+        elif live:
+            result = LiveAssetService(store, live).get_task_runs(
+                task_id=args.get("task_id", ""),
+                task_name=args.get("task_name", ""),
+                instance_date=args.get("instance_date", ""),
+                limit=args.get("limit", 10),
+            )
+            meta["source"] = result.source
+            meta["live_attempted"] = True
+            meta["live_reason"] = "live_first"
+            data = result.as_dict()
         else:
-            data = store.get_task_runs(args["task_id"], args.get("limit", 10), args.get("instance_date", ""))
-            if live:
-                refreshed = _maybe_live_refresh(meta, args, data, _empty_list("runs"), lambda: live.sync_task_runs(task_id=args["task_id"], instance_date=args.get("instance_date", "")))
-                if refreshed:
-                    data = store.get_task_runs(args["task_id"], args.get("limit", 10), args.get("instance_date", ""))
+            meta["source"] = Source.NOT_AVAILABLE
+            data = _error_data("live_source_unavailable", requested_source=source)
     elif name == "get_task_code":
         if not args.get("task_id") and not args.get("task_name"):
             data = _error_data("missing_task_identity")
@@ -648,6 +653,16 @@ def _error_data(error, **fields):
 def _format_markdown(tool_name, data):
     if isinstance(data, dict) and data.get("error"):
         return f"**未找到**\n\n- 错误：`{_cell(data['error'])}`\n" + "\n".join(f"- {k}: `{_cell(v)}`" for k, v in data.items() if k != "error")
+    if isinstance(data, dict) and data.get("errors"):
+        error_rows = [
+            [err.get("module"), err.get("status"), err.get("api_action"), err.get("error_message"), err.get("retryable")]
+            for err in data.get("errors", [])
+        ]
+        base = {k: v for k, v in data.items() if k != "errors"}
+        return _section("部分查询失败", [f"状态：`{_cell(base.get('status', 'unknown'))}`"]) + "\n\n" + _table(
+            ["模块", "状态", "API", "错误", "可重试"],
+            error_rows,
+        )
     if tool_name == "list_projects":
         rows = data.get("results", [])
         return _section("项目列表", [f"查询：`{_cell(data.get('query', ''))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
