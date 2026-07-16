@@ -2,6 +2,19 @@ import json
 import os
 
 from .cleanup_derived_tables import cleanup_task_name_pseudo_tables
+from .source import Source, resolve_source
+
+
+def _with_source_schema(schema):
+    properties = dict(schema.get("properties") or {})
+    properties.setdefault(
+        "source",
+        {
+            "type": "string",
+            "enum": ["auto", "live", "registry", "patrol_snapshot", "legacy_cache"],
+        },
+    )
+    return {**schema, "properties": properties}
 
 
 TOOLS = {
@@ -245,6 +258,10 @@ TOOLS = {
 }
 
 
+for _tool_spec in TOOLS.values():
+    _tool_spec["schema"] = _with_source_schema(_tool_spec["schema"])
+
+
 def handle_request(store, request, live=None):
     method = request.get("method")
     if method == "initialize":
@@ -343,8 +360,10 @@ def _call_tool(store, request, live=None):
     params = request.get("params") or {}
     name = params.get("name")
     args = params.get("arguments") or {}
+    source = resolve_source(name, args)
     snapshot_tools = {"get_sync_health", "get_asset_coverage", "get_asset_governance_issue_inventory", "get_asset_governance_daily_report"}
     meta = _new_query_meta(snapshot=name in snapshot_tools)
+    meta["source"] = source
     if name not in TOOLS:
         return _error(request, -32602, "unknown_tool")
 
