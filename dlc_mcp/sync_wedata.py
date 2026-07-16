@@ -589,9 +589,10 @@ def _sync_partitions(client, project_id, table_names, page_size, progress_every=
                     "Data": {"Items": []},
                 }
             }
+        keep_all_partitions = os.environ.get("WEDATA_PARTITION_SERVICE", "wedata") == "dlc"
         for item in _partition_items(response):
             item["QueriedTableName"] = table_name
-            if partition_matches_date(item, partition_date):
+            if keep_all_partitions or partition_matches_date(item, partition_date):
                 items.append(item)
         if progress_every and (index == total or index % progress_every == 0):
             print(f"synced partitions for {index}/{total} tables", flush=True)

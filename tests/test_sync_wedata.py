@@ -550,7 +550,7 @@ class SyncWeDataTest(unittest.TestCase):
 
         self.assertEqual([item["Partition"] for item in response["Response"]["Data"]["Items"]], ["dt=20260708", "dt=20260709"])
 
-    def test_dlc_incremental_partition_sync_defaults_to_yesterday(self):
+    def test_dlc_incremental_partition_sync_keeps_all_returned_partitions(self):
         with patch.dict(os.environ, {"WEDATA_PARTITION_SERVICE": "dlc", "DLC_CATALOG": "DataLakeCatalog", "WEDATA_PARTITION_SYNC_MODE": "incremental"}, clear=False), patch("dlc_mcp.sync_wedata._partition_client", return_value=FakeDlcPartitionClient()), patch("dlc_mcp.sync_wedata.date") as fake_date:
             fake_date.today.return_value = datetime(2026, 7, 9).date()
             response = _sync_partitions(
@@ -562,7 +562,8 @@ class SyncWeDataTest(unittest.TestCase):
                 catalog_tables={"ads_revenue": {"DatabaseName": "ads_mart"}},
             )
 
-        self.assertEqual([item["Partition"] for item in response["Response"]["Data"]["Items"]], ["dt=20260708"])
+        self.assertEqual([item["Partition"] for item in response["Response"]["Data"]["Items"]], ["dt=20260708", "dt=20260709"])
+        self.assertTrue(all(item["QueriedTableName"] == "ads_revenue" for item in response["Response"]["Data"]["Items"]))
 
     def test_partition_sync_filters_to_partitioned_tables_from_store(self):
         conn = sqlite3.connect(":memory:")
@@ -636,8 +637,8 @@ class SyncWeDataTest(unittest.TestCase):
             )
 
         items = response["Response"]["Data"]["Items"]
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["Partition"], "dt=20260708")
+        self.assertEqual(len(items), 2)
+        self.assertEqual([item["Partition"] for item in items], ["dt=20260708", "dt=20260709"])
         self.assertEqual(items[0]["QueriedTableName"], "ads_revenue")
         self.assertEqual(items[0]["Records"], 10)
 
