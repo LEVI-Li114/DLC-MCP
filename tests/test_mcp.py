@@ -108,6 +108,54 @@ class FailingLive:
         raise RuntimeError("live unavailable")
 
 
+class FakeLivePartitionClient:
+    def call(self, action, payload):
+        if action == "DescribeTablePartitions":
+            return {
+                "Response": {
+                    "MixedPartitions": {
+                        "TotalSize": 1,
+                        "IcebergPartitions": [
+                            {
+                                "Partition": "dt=20260706",
+                                "Records": 2,
+                                "DataFileStorage": 123,
+                                "DataFileSize": 1,
+                                "UpdateTime": "2026-07-16T07:02:22+08:00",
+                            }
+                        ],
+                    }
+                }
+            }
+        return {"Response": {"Data": {"Items": []}}}
+
+
+def test_live_sync_table_partitions_imports_dlc_partition_facts():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    store.upsert_table({"name": "ods_cloud_cost_baidu_day_di", "database": "byai_bigdata"})
+    store.upsert_column("ods_cloud_cost_baidu_day_di", "dt", "string", "", 1)
+
+    with patch.dict(
+        os.environ,
+        {
+            "WEDATA_PROJECT_ID": "project",
+            "WEDATA_PARTITION_SERVICE": "dlc",
+            "WEDATA_PARTITION_ACTION": "DescribeTablePartitions",
+            "DLC_CATALOG": "DataLakeCatalog",
+        },
+        clear=False,
+    ), patch("dlc_mcp.live._partition_client", return_value=FakeLivePartitionClient()):
+        live = LiveWeData(store, client=FakeLivePartitionClient())
+        live.sync_table_partitions("ods_cloud_cost_baidu_day_di")
+
+    profile = store.get_table_partition_profile("ods_cloud_cost_baidu_day_di", "")
+    assert profile["partition_fact_available"] is True
+    assert profile["partition_count"] == 1
+    assert profile["latest_partition"]["partition_name"] == "dt=20260706"
+
+
 class McpTest(unittest.TestCase):
     def setUp(self):
         conn = sqlite3.connect(":memory:")

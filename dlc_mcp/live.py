@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 
 from .assets import AssetStore, decode_task_code_info
-from .sync_wedata import _merge_task_responses, _sync_related_task_definitions
+from .sync_wedata import _list_partitions, _merge_task_responses, _partition_client, _partition_items, _partition_payload, _partition_payload_ready, _sync_related_task_definitions
 from .tencentcloud import TencentCloudClient
 from .wedata import import_wedata_snapshot, snapshot_from_api_dump
 
@@ -40,6 +40,28 @@ class LiveWeData:
                 "quality_rules": quality,
             }
         )
+
+    def sync_table_partitions(self, table_name):
+        table = self.store._one("select * from tables where name = ?", (table_name,))
+        if not table:
+            self.sync_table(table_name)
+            table = self.store._one("select * from tables where name = ?", (table_name,))
+        if not table:
+            raise RuntimeError("table_not_found")
+        table_data = self.store._table_dict(table)
+        catalog_item = {**(table_data.get("raw") or {})}
+        if table_data.get("database") and not catalog_item.get("DatabaseName"):
+            catalog_item["DatabaseName"] = table_data.get("database")
+        payload = _partition_payload(self.project_id, table_name, catalog_item)
+        if not _partition_payload_ready(payload):
+            raise RuntimeError("missing required partition payload fields")
+        action = os.environ.get("WEDATA_PARTITION_ACTION", "ListTablePartitions")
+        response = _list_partitions(_partition_client(self.client), action, payload, self.page_size)
+        items = _partition_items(response)
+        for item in items:
+            item["QueriedTableName"] = table_name
+        normalized = {"Response": {"Data": {"Items": items}, "PartitionFailures": []}}
+        self._import({"table_partitions": normalized})
 
     def sync_task_runs(self, task_name="", task_id="", instance_date=""):
         start, end = _day_window(instance_date)
