@@ -1,4 +1,5 @@
 import sqlite3
+import time
 
 from dlc_mcp.asset_patrol import parse_args
 from dlc_mcp.assets import AssetStore
@@ -201,3 +202,31 @@ def test_patrol_service_marks_failed_above_failure_threshold():
     assert result["status"] == "failed"
     assert result["checked_count"] == 1
     assert result["error_count"] == 1
+
+
+class SlowPatrolLive:
+    def sync_table_partitions(self, table_name):
+        time.sleep(0.2)
+
+
+def test_patrol_service_records_timeout_as_check_failed():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    store.upsert_table({"name": "ads_slow", "layer": "ads", "owner": "data", "database": "dw"})
+
+    result = PatrolService(store, SlowPatrolLive()).run_daily_p0(
+        "2026-07-16",
+        limit=1,
+        concurrency=1,
+        table_timeout_seconds=0.01,
+        retry=0,
+        api_delay_seconds=0,
+        failure_threshold=1.0,
+    )
+    report = store.get_patrol_report_data(result["run_id"])
+
+    assert result["status"] == "partial"
+    assert result["timeout_count"] == 1
+    assert report["snapshots"][0]["status"] == "check_failed"
+    assert report["errors"][0]["error_code"] == "Timeout"
+    assert report["errors"][0]["module"] == "table_check"
