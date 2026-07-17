@@ -77,8 +77,15 @@ Query mode does not mutate remote WeData/DLC business objects. It may read remot
 Run a daily P0 patrol with:
 
 ```bash
-python3 -m dlc_mcp.asset_patrol --scope daily_p0 --instance-date YYYY-MM-DD --limit 50
+python3 -m dlc_mcp.asset_patrol \
+  --scope daily_p0 \
+  --instance-date YYYY-MM-DD \
+  --limit 50 \
+  --concurrency 3 \
+  --table-timeout-seconds 120
 ```
+
+Patrol defaults favor completeness over aggressive runtime: concurrency is 3, each table has a 120-second timeout, retry count is 2, retry backoff is 2 seconds, API delay is 0.2 seconds, and failure threshold is 0.3. Slow or failed table checks are recorded in `patrol_errors` and marked `check_failed`; they are not treated as confirmed missing data.
 
 The patrol writes:
 
