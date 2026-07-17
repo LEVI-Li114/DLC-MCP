@@ -197,9 +197,10 @@
 
 - `table_name?: string`
 - `table_guid?: string`
+- `project_id?: string`
 - `live?: boolean`
 
-约束：`table_name` 和 `table_guid` 至少传一个。`GetTable` 只使用表 GUID 查询，不传 `ProjectId` 或 `TableName`。
+约束：`table_name` 和 `table_guid` 至少传一个。`GetTable` live 刷新使用表 GUID 查询；`project_id` 保持与其他工具一致但不用于替代表 GUID。
 
 行为：
 
@@ -261,6 +262,7 @@ Live API 如果返回 `Response.Error`，沿用当前 `_list_all` 行为抛出 `
 截至 2026-07-13，6 个 MCP tools、SQLite 缓存模型、归一化和 API catalog 均已实现。服务器补数结果为：项目 1、项目成员 1、任务关系 8862、表记录 3992；3955 张有 GUID 的表调用 `GetTable` 全部成功，3866 个规范表名记录完成详情增强。
 
 该结果不等于资产全量完整。当前仍有 37 条表记录无 GUID、89 个详情目标未落到规范表名记录，以及 4 组旧任务 ID 的上下游请求被 WeData 返回“任务不存在”。字段、血缘、质量规则、任务映射、运行实例和数据源关联继续由覆盖度工具分别验收。
+
 
 ## 测试策略
 

@@ -168,6 +168,7 @@ class AssetStoreTest(unittest.TestCase):
         self.assertEqual(make_store().get_table_profile("missing")["error"], "table_not_found")
 
 
+
     def test_cloud_api_catalog_includes_project_task_relation_and_get_table_apis(self):
         apis = make_store().list_cloud_apis(service="wedata")["results"]
         by_action = {api["action"]: api for api in apis}
@@ -178,6 +179,35 @@ class AssetStoreTest(unittest.TestCase):
         self.assertEqual(by_action["ListDownstreamTasks"]["doc_category"], "数据开发相关接口")
         self.assertEqual(by_action["ListUpstreamTasks"]["doc_category"], "数据开发相关接口")
         self.assertEqual(by_action["GetTable"]["doc_category"], "元数据相关接口")
+
+    def test_cloud_api_catalog_is_seeded(self):
+        apis = make_store().list_cloud_apis()["results"]
+        by_action = {(api["service"], api["action"]): api for api in apis}
+
+        self.assertIn(("wedata", "ListTasks"), by_action)
+        self.assertIn(("wedata", "GetTableColumns"), by_action)
+        self.assertIn(("dlc", "DescribeTablePartitions"), by_action)
+        self.assertEqual(by_action[("wedata", "ListTasks")]["doc_category"], "数据开发相关接口")
+        self.assertEqual(by_action[("dlc", "DescribeTablePartitions")]["product"], "DLC")
+
+    def test_cloud_api_catalog_can_be_extended(self):
+        store = make_store()
+        store.upsert_cloud_api(
+            {
+                "service": "wedata",
+                "action": "NewAction",
+                "provider": "Tencent Cloud",
+                "product": "WeData",
+                "doc_category": "测试分类",
+                "source_url": "https://cloud.tencent.com/document/product/1267/123653",
+                "description": "新接口说明",
+                "usage": "测试新增接口登记",
+            }
+        )
+
+        apis = store.list_cloud_apis(service="wedata")["results"]
+
+        self.assertIn("NewAction", [api["action"] for api in apis])
 
     def test_project_cache_round_trip_and_query(self):
         store = make_store()

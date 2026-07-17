@@ -46,6 +46,8 @@ Use the installer once from a normal terminal. After Codex restarts, data querie
 
 Server setup, WeData credentials, sync jobs, cron, Gateway startup, and smoke tests are documented in [docs/server-mcp-wedata-flow.md](docs/server-mcp-wedata-flow.md).
 
+The project architecture and layer boundaries are documented in [docs/architecture.md](docs/architecture.md).
+
 Core-table and asset-value scoring are documented in [docs/core-table-model.md](docs/core-table-model.md).
 
 Ordinary user access and token handling are documented in [docs/user-access.md](docs/user-access.md).

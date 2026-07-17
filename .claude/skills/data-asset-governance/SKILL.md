@@ -7,6 +7,14 @@ description: Use when analyzing exposed WeData/DLC asset governance gaps, classi
 
 Use this skill when the user asks to analyze data asset governance gaps, produce a governance plan, classify exposed issues, or decide next actions for WeData/DLC asset quality and coverage problems.
 
+## Operating Boundary
+
+- Normal data queries must go through the `dlc-mcp` MCP server.
+- Do not use `ssh`, `curl`, direct SQLite reads, or ad hoc scripts to answer ordinary data questions.
+- Use `ssh` only for deployment, backfill/sync jobs, gateway restart, process checks, or server log inspection.
+- Treat SQLite as an asset cache/materialized graph, not as absolute truth when live evidence is requested.
+- DDL must come from actual synced or live-refreshed columns; do not infer DDL from table names.
+
 ## Required Inputs
 
 Obtain deterministic issue evidence before making recommendations. Prefer:
@@ -17,6 +25,38 @@ Obtain deterministic issue evidence before making recommendations. Prefer:
 
 If issue evidence is unavailable, ask the user to run one of these first. Do not invent issue facts or owners.
 
+## Query Playbooks
+
+### Data Source Inventory
+
+When the user asks for one data source's tasks, tables, or DDL:
+
+1. Use `get_data_source_inventory(data_source_name=..., live=true)` or `get_data_source_inventory(data_source_id=..., live=true)`.
+2. Report data source id, type, owner, task count, table count, unresolved task count, and missing-field table count.
+3. Label gaps explicitly as parsed, unresolved, or missing fields.
+4. Include SQL DDL only for tables with real columns.
+5. If the result has unresolved tasks or missing fields, explain whether the issue is API coverage, parser coverage, stale cache, or missing live refresh evidence.
+
+### Table Diagnosis
+
+When the user asks about one table:
+
+1. Use `get_table_profile(table_name=..., live=true)`.
+2. Use `list_table_columns(table_name=..., live=true)` when fields or DDL matter.
+3. Use `get_table_tasks(table_name=...)` for producer/consumer tasks.
+4. Use `get_table_lineage(table_name=..., live=true)` for upstream/downstream impact.
+5. Use `get_table_production_status(table_name=..., instance_date=..., live=true)` or `get_table_production_risk_detail(...)` when execution status matters.
+
+### Coverage and Governance Gaps
+
+When the user asks why data is incomplete or asks for an asset patrol:
+
+1. Use `get_sync_health()`.
+2. Use `get_asset_coverage()`.
+3. Use `list_asset_coverage_gaps(gap_type=..., layer=..., limit=...)`.
+4. Use `get_asset_governance_issue_inventory(...)` for deterministic issue grouping.
+5. Distinguish missing source API data, parser loss, stale cache, missing task/run coverage, and intentionally unsupported API actions.
+
 ## Guardrails
 
 - Do not invent issue facts or owners.
@@ -26,6 +66,7 @@ If issue evidence is unavailable, ask the user to run one of these first. Do not
 - Every recommendation must cite issue evidence.
 - If evidence is insufficient, recommend the next check rather than guessing.
 - Separate deterministic facts from LLM recommendations.
+- Say whether evidence came from cached asset facts, live MCP refresh, or a server-side sync/admin check.
 
 ## Workflow
 
