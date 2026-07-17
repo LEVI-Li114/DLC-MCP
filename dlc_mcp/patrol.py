@@ -11,6 +11,20 @@ class PatrolService:
         self.store = store
         self.live = live
 
+    def run(self, scope, instance_date, **options):
+        if scope in {"daily_p0", "daily_core"}:
+            return self.run_daily_p0(
+                instance_date,
+                limit=options.get("limit", 50),
+                concurrency=options.get("concurrency", 3),
+                table_timeout_seconds=options.get("table_timeout_seconds", 120),
+                retry=options.get("retry", 2),
+                retry_backoff_seconds=options.get("retry_backoff_seconds", 2),
+                api_delay_seconds=options.get("api_delay_seconds", 0.2),
+                failure_threshold=options.get("failure_threshold", 0.3),
+            )
+        raise SystemExit(f"unsupported scope: {scope}")
+
     def run_daily_p0(
         self,
         instance_date,

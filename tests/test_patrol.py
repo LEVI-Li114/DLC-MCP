@@ -32,6 +32,32 @@ def test_asset_patrol_parse_args():
     assert args.failure_threshold == 0.25
 
 
+def test_asset_patrol_parse_args_new_scopes_and_filters():
+    args = parse_args(
+        [
+            "--scope", "monthly_full",
+            "--instance-date", "2026-07-16",
+            "--limit", "100",
+            "--batch-size", "25",
+            "--offset", "50",
+            "--table", "ads_360_fin_income_cost_1d_di",
+            "--layer", "ads",
+            "--owner", "tencent",
+            "--core-level", "P1",
+        ]
+    )
+
+    assert args.scope == "monthly_full"
+    assert args.instance_date == "2026-07-16"
+    assert args.limit == 100
+    assert args.batch_size == 25
+    assert args.offset == 50
+    assert args.table == "ads_360_fin_income_cost_1d_di"
+    assert args.layer == "ads"
+    assert args.owner == "tencent"
+    assert args.core_level == "P1"
+
+
 def test_patrol_run_lifecycle_and_report_data():
     store = AssetStore(sqlite3.connect(":memory:"))
     store.init_schema()
