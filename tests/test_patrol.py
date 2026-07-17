@@ -6,11 +6,29 @@ from dlc_mcp.patrol import PatrolService
 
 
 def test_asset_patrol_parse_args():
-    args = parse_args(["--scope", "daily_p0", "--instance-date", "2026-07-16", "--limit", "5"])
+    args = parse_args(
+        [
+            "--scope", "daily_p0",
+            "--instance-date", "2026-07-16",
+            "--limit", "5",
+            "--concurrency", "4",
+            "--table-timeout-seconds", "90",
+            "--retry", "3",
+            "--retry-backoff-seconds", "1.5",
+            "--api-delay-seconds", "0.1",
+            "--failure-threshold", "0.25",
+        ]
+    )
 
     assert args.scope == "daily_p0"
     assert args.instance_date == "2026-07-16"
     assert args.limit == 5
+    assert args.concurrency == 4
+    assert args.table_timeout_seconds == 90
+    assert args.retry == 3
+    assert args.retry_backoff_seconds == 1.5
+    assert args.api_delay_seconds == 0.1
+    assert args.failure_threshold == 0.25
 
 
 def test_patrol_run_lifecycle_and_report_data():
