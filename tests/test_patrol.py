@@ -1,6 +1,7 @@
 import sqlite3
 
 from dlc_mcp.assets import AssetStore
+from dlc_mcp.patrol import PatrolService
 
 
 def test_patrol_run_lifecycle_and_report_data():
@@ -62,3 +63,33 @@ def test_patrol_run_lifecycle_and_report_data():
     assert report["findings"][0]["issue_type"] == "missing_quality_rules"
     assert report["metrics"][0]["metric_name"] == "checked_count"
     assert report["errors"][0]["module"] == "lineage"
+
+
+class PatrolLive:
+    def __init__(self, store):
+        self.store = store
+
+    def sync_table_partitions(self, table_name):
+        self.store.upsert_table_partition(
+            {
+                "table_name": table_name,
+                "partition_name": "dt=20260715",
+                "partition_date": "20260715",
+                "row_count": 2,
+            }
+        )
+
+
+def test_patrol_service_daily_p0_writes_run_snapshot_and_metric():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    store.upsert_table({"name": "ods_cloud_cost_baidu_day_di", "layer": "ods", "owner": "prod-bigdata", "database": "byai_bigdata"})
+    store.upsert_column("ods_cloud_cost_baidu_day_di", "dt", "string", "", 1)
+
+    result = PatrolService(store, PatrolLive(store)).run_daily_p0("2026-07-16", limit=1)
+    report = store.get_patrol_report_data(result["run_id"])
+
+    assert result["status"] == "completed"
+    assert report["run"]["scope"] == "daily_p0"
+    assert report["snapshots"][0]["asset_name"] == "ods_cloud_cost_baidu_day_di"
+    assert report["metrics"][0]["metric_name"] == "checked_count"
