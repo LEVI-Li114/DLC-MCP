@@ -372,6 +372,61 @@ def test_issue_inventory_auto_reads_patrol_findings():
     assert "ods_cloud_cost_baidu_day_di" in text
 
 
+
+def test_daily_report_markdown_renders_enriched_patrol_snapshot():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    store.create_patrol_run("run-rich", "2026-07-16", "daily_core", {})
+    store.upsert_patrol_asset_snapshot(
+        {
+            "run_id": "run-rich",
+            "asset_name": "ads_360_fin_income_cost_1d_di",
+            "asset_type": "table",
+            "layer": "ads",
+            "owner": "tencent",
+            "core_level": "P2",
+            "status": "p1",
+            "snapshot": {
+                "source_policy": {"metadata": "cache", "tasks": "live_only", "quality": "live_only", "runs": "live_only"},
+                "cached": {"columns": {"count": 36}, "lineage": {"upstream_count": 26, "downstream_count": 13}},
+                "live": {"tasks": {"status": "missing"}, "quality": {"status": "missing"}, "runs": {"status": "missing"}},
+                "coverage_status": "p1",
+            },
+        }
+    )
+    store.insert_patrol_finding(
+        {
+            "run_id": "run-rich",
+            "asset_name": "ads_360_fin_income_cost_1d_di",
+            "issue_type": "missing_producer_task",
+            "severity": "P1",
+            "evidence": {"source": "live", "status": "missing"},
+            "owner_bucket": "warehouse_owner",
+            "suggested_action": "Check ListTasks inputs/outputs or SQL parsing for this table.",
+        }
+    )
+    store.finish_patrol_run(
+        "run-rich",
+        "partial",
+        {"checked_count": 1, "error_count": 0, "live_partial_count": 1, "p1_count": 1},
+    )
+
+    text = _call_tool(
+        store,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "get_asset_governance_daily_report", "arguments": {"instance_date": "2026-07-16"}},
+        },
+    )["result"]["content"][0]["text"]
+
+    assert "数据来源与查询策略" in text
+    assert "ads_360_fin_income_cost_1d_di" in text
+    assert "missing_producer_task" in text
+    assert "live_only" in text
+
+
 def test_task_runs_live_failure_returns_unknown_not_empty_runs():
     conn = sqlite3.connect(":memory:")
     store = AssetStore(conn)
