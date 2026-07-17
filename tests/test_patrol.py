@@ -256,3 +256,143 @@ def test_patrol_service_records_timeout_as_check_failed():
     assert report["snapshots"][0]["status"] == "check_failed"
     assert report["errors"][0]["error_code"] == "Timeout"
     assert report["errors"][0]["module"] == "table_check"
+
+
+def test_patrol_scope_candidates_monthly_full_uses_all_tables_with_filters():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    store.upsert_table({"name": "ods_a", "layer": "ods", "owner": "data", "database": "dw"})
+    store.upsert_table({"name": "ads_b", "layer": "ads", "owner": "tencent", "database": "dw"})
+    store.upsert_table({"name": "ads_c", "layer": "ads", "owner": "other", "database": "dw"})
+
+    service = PatrolService(store, PatrolLive(store))
+    candidates = service._scope_candidates("monthly_full", limit=10, layer="ads", owner="tencent")
+
+    assert [item["name"] for item in candidates] == ["ads_b"]
+
+
+def test_patrol_scope_candidates_manual_accepts_single_table():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    store.upsert_table({"name": "ads_360_fin_income_cost_1d_di", "layer": "ads", "owner": "tencent", "database": "dw"})
+    store.upsert_table({"name": "ads_other", "layer": "ads", "owner": "tencent", "database": "dw"})
+
+    service = PatrolService(store, PatrolLive(store))
+    candidates = service._scope_candidates("manual", limit=10, table="ads_360_fin_income_cost_1d_di")
+
+    assert [item["name"] for item in candidates] == ["ads_360_fin_income_cost_1d_di"]
+
+
+class PatrolEvidenceLive:
+    def __init__(self, tasks=None, quality=None, production=None, fail_quality=False):
+        self.tasks = tasks if tasks is not None else {"tasks": []}
+        self.quality = quality if quality is not None else {"has_monitoring": False, "rule_count": 0, "latest_status": "missing"}
+        self.production = production if production is not None else {"summary_status": "not_run", "producer_task_count": 0, "runs": []}
+        self.fail_quality = fail_quality
+
+    def get_table_tasks_live(self, table_name):
+        return self.tasks
+
+    def get_quality_status_live(self, table_name):
+        if self.fail_quality:
+            raise RuntimeError("ListQualityRules failed: InternalError temporary unavailable")
+        return self.quality
+
+    def get_table_production_status_live(self, table_name, instance_date):
+        return self.production
+
+
+def test_patrol_collects_cached_and_live_only_evidence_without_registry_writes():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    store.upsert_table({
+        "name": "ads_360_fin_income_cost_1d_di",
+        "layer": "ads",
+        "domain": "finance",
+        "owner": "tencent",
+        "database": "byai_bigdata",
+        "data_source_id": "DLC",
+        "description": "消耗型产品确认收入和成本汇总表",
+    })
+    store.upsert_column("ads_360_fin_income_cost_1d_di", "dt", "string", "分区", 1)
+    store.upsert_lineage("dws_360_fin_job_line_1d_di", "ads_360_fin_income_cost_1d_di", "task_lineage")
+    store.upsert_lineage("ads_360_fin_income_cost_1d_di", "ads_360_fin_income_cost_1d_df", "task_lineage")
+
+    live = PatrolEvidenceLive()
+    service = PatrolService(store, live)
+    evidence = service._collect_table_evidence(
+        {"name": "ads_360_fin_income_cost_1d_di", "layer": "ads", "owner": "tencent", "database_name": "byai_bigdata"},
+        "2026-07-16",
+    )
+
+    assert evidence["source_policy"] == {
+        "metadata": "cache",
+        "columns": "cache",
+        "lineage": "cache",
+        "tasks": "live_only",
+        "quality": "live_only",
+        "runs": "live_only",
+    }
+    assert evidence["cached"]["metadata"]["status"] == "complete"
+    assert evidence["cached"]["columns"]["count"] == 1
+    assert evidence["cached"]["lineage"]["upstream_count"] == 1
+    assert evidence["cached"]["lineage"]["downstream_count"] == 1
+    assert evidence["live"]["tasks"]["status"] == "missing"
+    assert evidence["live"]["quality"]["status"] == "missing"
+    assert evidence["live"]["runs"]["status"] == "missing"
+    assert evidence["errors"] == []
+    assert store.get_table_tasks("ads_360_fin_income_cost_1d_di")["tasks"] == []
+
+
+def test_patrol_normalizes_missing_live_evidence_into_findings():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    table = {"name": "ads_360_fin_income_cost_1d_di", "layer": "ads", "owner": "tencent", "database_name": "dw"}
+    evidence = {
+        "source_policy": {"metadata": "cache", "columns": "cache", "lineage": "cache", "tasks": "live_only", "quality": "live_only", "runs": "live_only"},
+        "cached": {
+            "metadata": {"status": "complete", "core_level": "P2"},
+            "columns": {"status": "complete", "count": 36},
+            "lineage": {"status": "complete", "upstream_count": 26, "downstream_count": 13},
+        },
+        "live": {
+            "tasks": {"status": "missing", "producer_count": 0, "consumer_count": 0},
+            "quality": {"status": "missing", "rule_count": 0},
+            "runs": {"status": "missing", "run_count": 0, "summary_status": "not_run"},
+        },
+        "errors": [],
+    }
+
+    result = PatrolService(store, PatrolLive(store))._normalize_table_result(table, evidence)
+
+    assert result["status"] == "p1"
+    assert result["snapshot"]["source_policy"]["tasks"] == "live_only"
+    assert [finding["issue_type"] for finding in result["findings"]] == [
+        "missing_producer_task",
+        "missing_quality_rules",
+        "missing_task_runs",
+    ]
+    assert all(finding["severity"] == "P1" for finding in result["findings"])
+
+
+def test_patrol_summary_counts_live_and_severity_buckets():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    store.upsert_table({"name": "ads_missing", "layer": "ads", "owner": "tencent", "database": "dw"})
+    store.upsert_column("ads_missing", "dt", "string", "", 1)
+
+    result = PatrolService(store, PatrolEvidenceLive()).run(
+        "daily_core",
+        "2026-07-16",
+        limit=1,
+        concurrency=1,
+        retry=0,
+        api_delay_seconds=0,
+    )
+
+    assert result["live_success_count"] == 0
+    assert result["live_partial_count"] == 1
+    assert result["live_failed_count"] == 0
+    assert result["p0_count"] == 0
+    assert result["p1_count"] == 1
+    assert result["p2_count"] == 0
