@@ -620,12 +620,26 @@ def _call_tool(store, request, live=None):
     elif name == "list_asset_coverage_gaps":
         data = store.list_asset_coverage_gaps(args.get("gap_type", ""), args.get("layer", ""), args.get("limit", 50))
     elif name == "get_asset_governance_issue_inventory":
-        data = store.get_asset_governance_issue_inventory(
-            args.get("layer", ""),
-            args.get("core_level", ""),
-            args.get("issue_type", ""),
-            int(args.get("limit", 100)),
-        )
+        if source == Source.LEGACY_CACHE:
+            meta["source"] = Source.LEGACY_CACHE
+            data = store.get_asset_governance_issue_inventory(
+                args.get("layer", ""),
+                args.get("core_level", ""),
+                args.get("issue_type", ""),
+                int(args.get("limit", 100)),
+            )
+        else:
+            meta["source"] = Source.PATROL_SNAPSHOT
+            run = store.latest_patrol_run(args.get("instance_date", ""), args.get("scope", ""))
+            if not run:
+                data = {"source": Source.PATROL_SNAPSHOT, "error": "patrol_snapshot_not_found"}
+            else:
+                report = store.get_patrol_report_data(run["run_id"])
+                findings = report.get("findings", [])
+                issue_type = args.get("issue_type", "")
+                if issue_type:
+                    findings = [item for item in findings if item.get("issue_type") == issue_type]
+                data = {"source": Source.PATROL_SNAPSHOT, "run_id": run["run_id"], "findings": findings[: int(args.get("limit", 100))]}
     elif name == "get_asset_governance_daily_report":
         if source == Source.LEGACY_CACHE:
             meta["source"] = Source.LEGACY_CACHE
@@ -673,6 +687,14 @@ def _format_markdown(tool_name, data):
         return _section("部分查询失败", [f"状态：`{_cell(base.get('status', 'unknown'))}`"]) + "\n\n" + _table(
             ["模块", "状态", "API", "错误", "可重试"],
             error_rows,
+        )
+    if tool_name == "get_asset_governance_issue_inventory" and data.get("source") == "patrol_snapshot":
+        if data.get("error"):
+            return _section("治理问题清单", [f"错误：`{_cell(data.get('error'))}`", "没有可用巡检快照，请先运行每日巡检。"])
+        findings = data.get("findings") or []
+        return _section("治理问题清单", [f"Run ID：`{_cell(data.get('run_id'))}`", f"问题数：{len(findings)}"]) + "\n\n" + _table(
+            ["资产", "问题", "严重级别", "责任桶", "建议动作"],
+            [[f.get("asset_name"), f.get("issue_type"), f.get("severity"), f.get("owner_bucket"), f.get("suggested_action")] for f in findings],
         )
     if tool_name == "get_asset_governance_daily_report" and data.get("source") == "patrol_snapshot":
         if data.get("error"):

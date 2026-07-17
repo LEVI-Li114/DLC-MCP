@@ -337,6 +337,41 @@ def test_daily_report_auto_reads_latest_patrol_snapshot():
     assert "checked_count" in text
 
 
+def test_issue_inventory_auto_reads_patrol_findings():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    store.create_patrol_run("run-1", "2026-07-16", "daily_p0", {})
+    store.insert_patrol_finding(
+        {
+            "run_id": "run-1",
+            "asset_name": "ods_cloud_cost_baidu_day_di",
+            "issue_type": "missing_quality_rules",
+            "severity": "P1",
+            "evidence": {"quality_rule_count": 0},
+            "owner_bucket": "warehouse_owner",
+            "suggested_action": "Add or confirm quality monitoring rule coverage.",
+        }
+    )
+    store.finish_patrol_run("run-1", "completed", {"checked_count": 1, "error_count": 0})
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_asset_governance_issue_inventory",
+            "arguments": {"instance_date": "2026-07-16"},
+        },
+    }
+
+    response = _call_tool(store, request)
+    text = response["result"]["content"][0]["text"]
+
+    assert "数据来源：patrol_snapshot" in text
+    assert "missing_quality_rules" in text
+    assert "ods_cloud_cost_baidu_day_di" in text
+
+
 def test_task_runs_live_failure_returns_unknown_not_empty_runs():
     conn = sqlite3.connect(":memory:")
     store = AssetStore(conn)
