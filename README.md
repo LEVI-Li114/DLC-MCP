@@ -74,18 +74,44 @@ Query failures are reported as `check_failed` or `partial_live`; they are not tr
 
 Query mode does not mutate remote WeData/DLC business objects. It may read remote metadata/code/project facts and update the local SQLite registry or patrol snapshots. Tools are advertised with MCP `readOnlyHint` annotations so clients that support tool annotations can make safer auto-approval decisions, but confirmation prompts are still controlled by each MCP Host.
 
-## Running daily asset patrol
+## Asset patrol modes
 
-Run a daily P0 patrol with:
+The asset patrol command reuses the existing server registry for stable facts and live-refreshes dynamic evidence during the patrol run.
+
+Stable cache/registry evidence:
+
+- table metadata
+- columns
+- table lineage
+- data source
+- core table decision
+
+Live-only evidence, written only to patrol snapshots/findings/errors:
+
+- related tasks and producer task coverage
+- task details and task dependencies
+- quality status
+- production status and task runs
+
+Daily core patrol:
 
 ```bash
-python3 -m dlc_mcp.asset_patrol \
-  --scope daily_p0 \
-  --instance-date YYYY-MM-DD \
-  --limit 50 \
-  --concurrency 3 \
-  --table-timeout-seconds 120
+python3 -m dlc_mcp.asset_patrol --scope daily_core --instance-date 2026-07-16 --limit 100
 ```
+
+Monthly full patrol, batched:
+
+```bash
+python3 -m dlc_mcp.asset_patrol --scope monthly_full --instance-date 2026-07-16 --limit 500 --batch-size 500 --offset 0
+```
+
+Manual table patrol:
+
+```bash
+python3 -m dlc_mcp.asset_patrol --scope manual --table ads_360_fin_income_cost_1d_di --instance-date 2026-07-16
+```
+
+`daily_p0` remains supported as a compatibility scope.
 
 Patrol defaults favor completeness over aggressive runtime: concurrency is 3, each table has a 120-second timeout, retry count is 2, retry backoff is 2 seconds, API delay is 0.2 seconds, and failure threshold is 0.3. Slow or failed table checks are recorded in `patrol_errors` and marked `check_failed`; they are not treated as confirmed missing data.
 

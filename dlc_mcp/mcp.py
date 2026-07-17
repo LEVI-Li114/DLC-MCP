@@ -675,6 +675,51 @@ def _error_data(error, **fields):
     return {"error": error, **fields}
 
 
+
+def _json_loads(value):
+    if isinstance(value, dict):
+        return value
+    try:
+        return json.loads(value or "{}")
+    except Exception:
+        return {}
+
+
+def _format_patrol_snapshot_report(data):
+    run = data.get("run") or {}
+    snapshots = data.get("snapshots") or []
+    findings = data.get("findings") or []
+    errors = data.get("errors") or []
+    summary = _json_loads(run.get("summary_json", "{}"))
+    lines = ["## 每日巡检报告", ""]
+    lines.extend(["## 巡检摘要", ""])
+    lines.append(f"- Run ID：`{_cell(run.get('run_id', ''))}`")
+    lines.append(f"- 日期：`{_cell(run.get('instance_date', ''))}`")
+    lines.append(f"- Scope：`{_cell(run.get('scope', ''))}`")
+    lines.append(f"- 状态：**{_cell(run.get('status', ''))}**")
+    lines.append(f"- checked_count：{_cell(summary.get('checked_count', run.get('checked_count', 0)))}")
+    lines.append(f"- live 完整成功：{_cell(summary.get('live_success_count', 0))}")
+    lines.append(f"- live 部分缺失：{_cell(summary.get('live_partial_count', 0))}")
+    lines.append(f"- live 失败：{_cell(summary.get('live_failed_count', 0))}")
+    lines.append(f"- P0：{_cell(summary.get('p0_count', 0))}")
+    lines.append(f"- P1：{_cell(summary.get('p1_count', 0))}")
+    lines.extend(["", "## 数据来源与查询策略", "", "| 信息 | 查询方式 |", "| --- | --- |"])
+    first_snapshot = _json_loads(snapshots[0].get("snapshot_json", "{}")) if snapshots else {}
+    for key, value in (first_snapshot.get("source_policy") or {}).items():
+        lines.append(f"| {key} | {value} |")
+    lines.extend(["", "## 覆盖总览", "", "| 表名 | 层级 | Owner | 状态 |", "| --- | --- | --- | --- |"])
+    for row in snapshots[:50]:
+        lines.append(f"| `{_cell(row.get('asset_name', ''))}` | {_cell(row.get('layer', ''))} | {_cell(row.get('owner', ''))} | {_cell(row.get('status', ''))} |")
+    lines.extend(["", "## 问题清单", "", "| 表名 | 严重级别 | 问题 | 建议 |", "| --- | --- | --- | --- |"])
+    for row in findings[:100]:
+        lines.append(f"| `{_cell(row.get('asset_name', ''))}` | {_cell(row.get('severity', ''))} | {_cell(row.get('issue_type', ''))} | {_cell(row.get('suggested_action', ''))} |")
+    if errors:
+        lines.extend(["", "## live 查询失败清单", "", "| 表名 | 模块 | 错误 |", "| --- | --- | --- |"])
+        for row in errors[:100]:
+            lines.append(f"| `{_cell(row.get('asset_name', ''))}` | {_cell(row.get('module', ''))} | {_cell(row.get('error_message', ''))} |")
+    lines.extend(["", "## 巡检指标", "", "## 本次巡检未完成检查"])
+    return "\n".join(lines)
+
 def _format_markdown(tool_name, data):
     if isinstance(data, dict) and data.get("error"):
         return f"**未找到**\n\n- 错误：`{_cell(data['error'])}`\n" + "\n".join(f"- {k}: `{_cell(v)}`" for k, v in data.items() if k != "error")
@@ -699,28 +744,7 @@ def _format_markdown(tool_name, data):
     if tool_name == "get_asset_governance_daily_report" and data.get("source") == "patrol_snapshot":
         if data.get("error"):
             return _section("每日巡检报告", [f"错误：`{_cell(data.get('error'))}`", "没有可用巡检快照，请先运行每日巡检。"])
-        run = data.get("run") or {}
-        metrics = data.get("metrics") or []
-        findings = data.get("findings") or []
-        errors = data.get("errors") or []
-        return "\n\n".join(
-            [
-                _section(
-                    "每日巡检报告",
-                    [
-                        f"Run ID：`{_cell(run.get('run_id'))}`",
-                        f"日期：`{_cell(run.get('instance_date'))}`",
-                        f"范围：`{_cell(run.get('scope'))}`",
-                        f"状态：`{_cell(run.get('status'))}`",
-                        f"完成检查：{_cell(run.get('checked_count'))}",
-                        f"错误数：{_cell(run.get('error_count'))}",
-                    ],
-                ),
-                _section("巡检指标", []) + "\n\n" + _table(["指标", "值", "维度"], [[m.get("metric_name"), m.get("metric_value"), m.get("dimension_json")] for m in metrics]),
-                _section("发现的问题", []) + "\n\n" + _table(["资产", "问题", "严重级别", "责任桶"], [[f.get("asset_name"), f.get("issue_type"), f.get("severity"), f.get("owner_bucket")] for f in findings]),
-                _section("本次巡检未完成检查", []) + "\n\n" + _table(["资产", "模块", "API", "错误"], [[e.get("asset_name"), e.get("module"), e.get("api_action"), e.get("error_message")] for e in errors]),
-            ]
-        )
+        return _format_patrol_snapshot_report(data)
     if tool_name == "list_projects":
         rows = data.get("results", [])
         return _section("项目列表", [f"查询：`{_cell(data.get('query', ''))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
