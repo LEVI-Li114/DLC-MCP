@@ -1,7 +1,16 @@
 import sqlite3
 
+from dlc_mcp.asset_patrol import parse_args
 from dlc_mcp.assets import AssetStore
 from dlc_mcp.patrol import PatrolService
+
+
+def test_asset_patrol_parse_args():
+    args = parse_args(["--scope", "daily_p0", "--instance-date", "2026-07-16", "--limit", "5"])
+
+    assert args.scope == "daily_p0"
+    assert args.instance_date == "2026-07-16"
+    assert args.limit == 5
 
 
 def test_patrol_run_lifecycle_and_report_data():
