@@ -1081,6 +1081,89 @@ class AssetStore:
             )
         self.conn.commit()
 
+    def reconcile_task_tables_from_lineage(self, limit=100, apply=False, table=""):
+        rows = self._all(
+            """
+            select upstream, downstream, via
+            from lineage
+            where upstream <> ''
+              and downstream <> ''
+              and via glob '[0-9]*'
+              and (? = '' or upstream = ? or downstream = ?)
+            order by upstream, downstream, via
+            limit ?
+            """,
+            (table, table, table, limit),
+        )
+        samples = []
+        candidate_tasks = set()
+        candidate_mapping_count = 0
+        inserted_count = 0
+        skipped_existing_count = 0
+        skipped_missing_task_count = 0
+
+        for row in rows:
+            task_id = str(row["via"] or "")
+            if not task_id.isdigit():
+                continue
+            if not self._one("select 1 from tasks where id = ?", (task_id,)):
+                skipped_missing_task_count += 1
+                continue
+
+            lineage = {"upstream": row["upstream"], "downstream": row["downstream"], "via": task_id}
+            for table_name, direction, relation_type in (
+                (row["upstream"], "input", "reads_table"),
+                (row["downstream"], "output", "writes_table"),
+            ):
+                if self._one(
+                    "select 1 from task_tables where task_id = ? and table_name = ? and direction = ?",
+                    (task_id, table_name, direction),
+                ):
+                    skipped_existing_count += 1
+                    continue
+                candidate_mapping_count += 1
+                candidate_tasks.add(task_id)
+                if len(samples) < 20:
+                    samples.append(
+                        {
+                            "task_id": task_id,
+                            "table_name": table_name,
+                            "direction": direction,
+                            "lineage": lineage,
+                        }
+                    )
+                if apply:
+                    cursor = self.conn.execute(
+                        "insert or ignore into task_tables (task_id, table_name, direction) values (?, ?, ?)",
+                        (task_id, table_name, direction),
+                    )
+                    inserted_count += cursor.rowcount
+                    self.upsert_asset_edge(
+                        "task",
+                        task_id,
+                        "table",
+                        table_name,
+                        relation_type,
+                        "lineage_task_id",
+                        "high",
+                        {**lineage, "direction": direction},
+                        commit=False,
+                    )
+
+        if apply:
+            self.conn.commit()
+        return {
+            "dry_run": not apply,
+            "table": table,
+            "limit": limit,
+            "candidate_task_count": len(candidate_tasks),
+            "candidate_mapping_count": candidate_mapping_count,
+            "inserted_count": inserted_count,
+            "skipped_existing_count": skipped_existing_count,
+            "skipped_missing_task_count": skipped_missing_task_count,
+            "samples": samples,
+        }
+
     def reconcile_active_tables(self, table_names):
         names = sorted({name for name in table_names if name})
         if not names:

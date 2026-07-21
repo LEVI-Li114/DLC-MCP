@@ -1,5 +1,8 @@
+import json
 import os
 import sqlite3
+import subprocess
+import sys
 from datetime import date
 import unittest
 from unittest.mock import patch
@@ -1097,6 +1100,114 @@ class AssetGovernanceIssueInventoryTest(unittest.TestCase):
         self.assertIn("unknown owner", report["issue_summary_by_owner"])
         self.assertIn("top_governance_issues", report)
         self.assertIn("responsibility_buckets", report)
+
+
+class LineageTaskTableReconciliationTest(unittest.TestCase):
+    def _store(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        return store
+
+    def test_reconcile_lineage_task_tables_dry_run_does_not_write(self):
+        store = self._store()
+        store.upsert_task({"id": "20250808125219242", "name": "build_ads_b"})
+        store.upsert_lineage("ods_a", "ads_b", "20250808125219242")
+
+        result = store.reconcile_task_tables_from_lineage()
+
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["candidate_task_count"], 1)
+        self.assertEqual(result["candidate_mapping_count"], 2)
+        self.assertEqual(result["inserted_count"], 0)
+        self.assertEqual(store.get_table_tasks("ads_b")["tasks"], [])
+
+    def test_reconcile_lineage_task_tables_apply_writes_mappings_and_edges(self):
+        store = self._store()
+        store.upsert_task({"id": "20250808125219242", "name": "build_ads_b"})
+        store.upsert_lineage("ods_a", "ads_b", "20250808125219242")
+
+        result = store.reconcile_task_tables_from_lineage(apply=True)
+
+        self.assertFalse(result["dry_run"])
+        self.assertEqual(result["candidate_mapping_count"], 2)
+        self.assertEqual(result["inserted_count"], 2)
+        self.assertEqual(store.get_table_tasks("ods_a")["tasks"][0]["direction"], "input")
+        self.assertEqual(store.get_table_tasks("ads_b")["tasks"][0]["direction"], "output")
+        edges = [dict(row) for row in store._all("select * from asset_edges where evidence_source = 'lineage_task_id' order by relation_type")]
+        self.assertEqual([edge["relation_type"] for edge in edges], ["reads_table", "writes_table"])
+        self.assertTrue(all(edge["confidence"] == "high" for edge in edges))
+
+        second = store.reconcile_task_tables_from_lineage(apply=True)
+        self.assertEqual(second["candidate_mapping_count"], 0)
+        self.assertEqual(second["inserted_count"], 0)
+        self.assertEqual(second["skipped_existing_count"], 2)
+
+    def test_reconcile_lineage_task_tables_ignores_non_numeric_via(self):
+        store = self._store()
+        store.upsert_task({"id": "ads_b", "name": "not_numeric"})
+        store.upsert_lineage("ods_a", "ads_b", "ads_b")
+
+        result = store.reconcile_task_tables_from_lineage()
+
+        self.assertEqual(result["candidate_mapping_count"], 0)
+        self.assertEqual(result["samples"], [])
+
+    def test_reconcile_lineage_task_tables_skips_missing_task_id(self):
+        store = self._store()
+        store.upsert_lineage("ods_a", "ads_b", "20250808125219242")
+
+        result = store.reconcile_task_tables_from_lineage(apply=True)
+
+        self.assertEqual(result["skipped_missing_task_count"], 1)
+        self.assertEqual(result["candidate_mapping_count"], 0)
+        self.assertEqual(store.get_table_tasks("ads_b")["tasks"], [])
+
+    def test_reconcile_lineage_task_tables_table_filter_matches_upstream_or_downstream(self):
+        store = self._store()
+        store.upsert_task({"id": "20250808125219242", "name": "build_ads_b"})
+        store.upsert_task({"id": "20250808121006578", "name": "build_ads_c"})
+        store.upsert_lineage("ods_a", "ads_b", "20250808125219242")
+        store.upsert_lineage("ods_c", "ads_c", "20250808121006578")
+
+        result = store.reconcile_task_tables_from_lineage(table="ads_b")
+
+        self.assertEqual(result["table"], "ads_b")
+        self.assertEqual(result["candidate_task_count"], 1)
+        self.assertEqual(result["candidate_mapping_count"], 2)
+        self.assertEqual(result["samples"][0]["task_id"], "20250808125219242")
+
+    def test_reconcile_lineage_task_tables_cli_dry_run_and_apply(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "assets.db")
+            store = AssetStore(sqlite3.connect(db_path))
+            store.init_schema()
+            store.upsert_task({"id": "20250808125219242", "name": "build_ads_b"})
+            store.upsert_lineage("ods_a", "ads_b", "20250808125219242")
+
+            dry_run = subprocess.run(
+                [sys.executable, "-m", "dlc_mcp.reconcile_lineage_task_tables", "--db", db_path, "--limit", "100"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            dry_run_data = json.loads(dry_run.stdout)
+            self.assertTrue(dry_run_data["dry_run"])
+            self.assertEqual(dry_run_data["inserted_count"], 0)
+
+            apply = subprocess.run(
+                [sys.executable, "-m", "dlc_mcp.reconcile_lineage_task_tables", "--db", db_path, "--limit", "100", "--apply"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            apply_data = json.loads(apply.stdout)
+            self.assertFalse(apply_data["dry_run"])
+            self.assertEqual(apply_data["inserted_count"], 2)
+
+            verify = AssetStore(sqlite3.connect(db_path))
+            self.assertEqual(verify.get_table_tasks("ads_b")["tasks"][0]["direction"], "output")
 
 
 if __name__ == "__main__":
