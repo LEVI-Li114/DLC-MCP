@@ -1544,6 +1544,7 @@ class AssetStore:
                 coalesce(u.upstream_count, 0) as upstream_count,
                 coalesce(tt.task_count, 0) as task_count,
                 coalesce(pt.producer_task_count, 0) as producer_task_count,
+                coalesce(ct.consumer_task_count, 0) as consumer_task_count,
                 coalesce(r.run_count, 0) as run_count
             from tables t
             left join (select table_name, count(*) as column_count from columns group by table_name) c on c.table_name = t.name
@@ -1552,6 +1553,7 @@ class AssetStore:
             left join (select downstream, count(*) as upstream_count from lineage group by downstream) u on u.downstream = t.name
             left join (select table_name, count(distinct task_id) as task_count from task_tables group by table_name) tt on tt.table_name = t.name
             left join (select table_name, count(distinct task_id) as producer_task_count from task_tables where direction = 'output' group by table_name) pt on pt.table_name = t.name
+            left join (select table_name, count(distinct task_id) as consumer_task_count from task_tables where direction = 'input' group by table_name) ct on ct.table_name = t.name
             left join (
                 select tt.table_name, count(distinct r.instance_id) as run_count
                 from task_tables tt
@@ -1580,6 +1582,11 @@ class AssetStore:
                 continue
             item["gaps"] = [_gap_label(gap) for gap in gaps]
             item["gap_keys"] = gaps
+            if "producer_tasks" in gaps:
+                diagnosis = diagnose_producer_mapping_gap(item)
+                item["producer_diagnosis"] = diagnosis
+                item["suspected_root_cause"] = diagnosis["root_cause"]
+                item["recommended_next_check"] = diagnosis["next_check"]
             results.append(item)
             if len(results) >= limit:
                 break
@@ -1653,16 +1660,20 @@ class AssetStore:
                     coalesce(c.column_count, 0) as column_count,
                     coalesce(q.rule_count, 0) as quality_rule_count,
                     coalesce(d.downstream_count, 0) as downstream_count,
+                    coalesce(u.upstream_count, 0) as upstream_count,
                     coalesce(tt.task_count, 0) as task_count,
                     coalesce(pt.producer_task_count, 0) as producer_task_count,
+                    coalesce(ct.consumer_task_count, 0) as consumer_task_count,
                     coalesce(r.run_count, 0) as run_count
                 from tables t
                 left join expert_labels el on el.asset_type = 'table' and el.asset_name = t.name
                 left join (select table_name, count(*) as column_count from columns group by table_name) c on c.table_name = t.name
                 left join (select table_name, count(*) as rule_count from quality_rules group by table_name) q on q.table_name = t.name
                 left join (select upstream, count(*) as downstream_count from lineage group by upstream) d on d.upstream = t.name
+                left join (select downstream, count(*) as upstream_count from lineage group by downstream) u on u.downstream = t.name
                 left join (select table_name, count(distinct task_id) as task_count from task_tables group by table_name) tt on tt.table_name = t.name
                 left join (select table_name, count(distinct task_id) as producer_task_count from task_tables where direction = 'output' group by table_name) pt on pt.table_name = t.name
+                left join (select table_name, count(distinct task_id) as consumer_task_count from task_tables where direction = 'input' group by table_name) ct on ct.table_name = t.name
                 left join (
                     select tt.table_name, count(distinct r.instance_id) as run_count
                     from task_tables tt
@@ -3349,20 +3360,8 @@ def _unknown_layer_issue_detail(table):
 
 
 def _missing_task_mapping_issue_detail(table):
-    if _is_unknown_layer(table) and _has_inferable_layer(table):
-        return (
-            "layer_mapping_gap",
-            "Repair the unknown layer first with refresh_inferred_layers, then re-check producer task mapping.",
-        )
-    if int(table.get("task_count") or 0) == 0:
-        return (
-            "parser_gap",
-            "Check raw task inputs/outputs, SQL table-name normalization, and whether the table appears under a database-qualified name.",
-        )
-    return (
-        "producer_mapping_gap",
-        "Check task outputs, SQL INSERT/CREATE statements, and table-name normalization for this table.",
-    )
+    diagnosis = diagnose_producer_mapping_gap(table)
+    return diagnosis["root_cause"], diagnosis["next_check"]
 
 
 def _missing_task_runs_issue_detail(table):
@@ -3561,11 +3560,15 @@ def _governance_issue(table, issue_type, root_cause, next_check):
         "column_count": int(table.get("column_count") or 0),
         "quality_rule_count": int(table.get("quality_rule_count") or 0),
         "downstream_count": int(table.get("downstream_count") or 0),
+        "upstream_count": int(table.get("upstream_count") or 0),
         "task_count": int(table.get("task_count") or 0),
         "producer_task_count": int(table.get("producer_task_count") or 0),
+        "consumer_task_count": int(table.get("consumer_task_count") or 0),
         "run_count": int(table.get("run_count") or 0),
         "data_source_id": table.get("data_source_id", ""),
     }
+    if issue_type == "missing_task_mapping" and int(table.get("producer_task_count") or 0) == 0:
+        evidence["producer_diagnosis"] = diagnose_producer_mapping_gap(table)
     return {
         "issue_type": issue_type,
         "asset_type": "table",

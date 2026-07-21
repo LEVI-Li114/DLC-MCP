@@ -667,6 +667,34 @@ class AssetStoreTest(unittest.TestCase):
         self.assertFalse(diagnosis["evidence"]["live_checked"])
         self.assertIn("InternalError", diagnosis["evidence"]["live_error"])
 
+    def test_producer_task_coverage_gaps_include_diagnosis(self):
+        store = make_store()
+        store.upsert_table({"name": "ads_has_only_input", "layer": "ads", "data_source_id": "DLC"})
+        store.upsert_table({"name": "ads_lineage_only", "layer": "ads", "data_source_id": "DLC"})
+        store.upsert_task({"id": "consumer", "name": "consumer", "inputs": ["ads_has_only_input"]})
+        store.upsert_lineage("dwd_source", "ads_lineage_only", "lineage_api")
+
+        gaps = store.list_asset_coverage_gaps("producer_tasks", "ads", 20)["results"]
+        by_name = {row["name"]: row for row in gaps}
+
+        self.assertEqual(by_name["ads_has_only_input"]["suspected_root_cause"], "consumer_only_mapping")
+        self.assertEqual(by_name["ads_has_only_input"]["producer_diagnosis"]["root_cause"], "consumer_only_mapping")
+        self.assertIn("outputs", by_name["ads_has_only_input"]["recommended_next_check"])
+        self.assertEqual(by_name["ads_lineage_only"]["suspected_root_cause"], "lineage_without_task_mapping")
+        self.assertEqual(by_name["ads_lineage_only"]["producer_diagnosis"]["evidence_source"], "cache")
+
+    def test_governance_issue_inventory_includes_producer_diagnosis(self):
+        store = make_store()
+        store.upsert_table({"name": "ads_has_only_input", "layer": "ads", "data_source_id": "DLC"})
+        store.upsert_task({"id": "consumer", "name": "consumer", "inputs": ["ads_has_only_input"]})
+
+        inventory = store.get_asset_governance_issue_inventory(layer="ads", issue_type="missing_task_mapping", limit=10)
+        issue = next(item for item in inventory["results"] if item["asset_name"] == "ads_has_only_input")
+
+        self.assertEqual(issue["suspected_root_cause"], "consumer_only_mapping")
+        self.assertEqual(issue["recommended_next_check"], issue["evidence"]["producer_diagnosis"]["next_check"])
+        self.assertEqual(issue["evidence"]["producer_diagnosis"]["evidence_source"], "cache")
+
     def test_prune_task_runs_keeps_only_recent_seven_calendar_days(self):
         store = make_store()
         for day in ("2026-07-06", "2026-07-07", "2026-07-13"):
