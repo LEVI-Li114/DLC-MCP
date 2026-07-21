@@ -1508,6 +1508,27 @@ class McpTest(unittest.TestCase):
         self.assertIn("运行实例缺口原因", text)
         self.assertIn("有产出任务但缺运行实例", text)
 
+    def test_coverage_gap_markdown_includes_producer_diagnosis(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        store.upsert_table({"name": "ads_has_only_input", "layer": "ads", "data_source_id": "DLC"})
+        store.upsert_task({"id": "consumer", "name": "consumer", "inputs": ["ads_has_only_input"]})
+
+        text = _call_tool(
+            store,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "list_asset_coverage_gaps", "arguments": {"gap_type": "producer_tasks", "layer": "ads", "limit": 10}},
+            },
+        )["result"]["content"][0]["text"]
+
+        assert "疑似原因" in text
+        assert "下一步检查" in text
+        assert "consumer_only_mapping" in text
+        assert "SQL INSERT/CREATE" in text
+
 
 class FakeLive:
     def __init__(self, store):

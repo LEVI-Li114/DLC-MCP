@@ -1040,7 +1040,7 @@ def _format_markdown(tool_name, data):
                     ],
                 ),
                 _table(
-                    ["表名", "层级", "负责人", "字段", "质量规则", "上游", "下游", "任务", "产出任务", "运行实例", "运行实例缺口原因", "数据源", "缺口"],
+                    ["表名", "层级", "负责人", "字段", "质量规则", "上游", "下游", "任务", "产出任务", "运行实例", "运行实例缺口原因", "数据源", "缺口", "疑似原因", "下一步检查"],
                     [
                         [
                             r.get("name"),
@@ -1056,6 +1056,8 @@ def _format_markdown(tool_name, data):
                             _run_gap_reason_label(r.get("run_gap_reason")),
                             r.get("data_source_id"),
                             "、".join(r.get("gaps") or []),
+                            r.get("suspected_root_cause", ""),
+                            r.get("recommended_next_check", ""),
                         ]
                         for r in rows
                     ],
