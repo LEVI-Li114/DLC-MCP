@@ -396,6 +396,41 @@ def test_patrol_normalizes_missing_live_evidence_into_findings():
         "missing_task_runs",
     ]
     assert all(finding["severity"] == "P1" for finding in result["findings"])
+    producer_finding = next(finding for finding in result["findings"] if finding["issue_type"] == "missing_producer_task")
+    diagnosis = producer_finding["evidence"]["producer_diagnosis"]
+    assert diagnosis["root_cause"] == "lineage_without_task_mapping"
+    assert diagnosis["evidence_source"] == "patrol_live_context"
+    assert diagnosis["evidence"]["live_checked"] is True
+    assert diagnosis["evidence"]["live_producer_task_count"] == 0
+
+
+def test_patrol_producer_diagnosis_records_live_task_error():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    table = {"name": "ads_need_live", "layer": "ads", "owner": "tencent", "database_name": "dw"}
+    evidence = {
+        "source_policy": {"metadata": "cache", "columns": "cache", "lineage": "cache", "tasks": "live_only", "quality": "live_only", "runs": "live_only"},
+        "cached": {
+            "metadata": {"status": "complete", "core_level": "P2"},
+            "columns": {"status": "complete", "count": 10},
+            "lineage": {"status": "complete", "upstream_count": 1, "downstream_count": 0},
+        },
+        "live": {
+            "tasks": {"status": "live_failed", "producer_count": 0, "consumer_count": 0, "raw": {"error": "live_failed", "message": "ListTasks failed: InternalError temporary unavailable"}},
+            "quality": {"status": "missing", "rule_count": 0},
+            "runs": {"status": "missing", "run_count": 0, "summary_status": "not_run"},
+        },
+        "errors": [],
+    }
+
+    result = PatrolService(store, PatrolLive(store))._normalize_table_result(table, evidence)
+
+    producer_finding = next(finding for finding in result["findings"] if finding["issue_type"] == "missing_producer_task")
+    diagnosis = producer_finding["evidence"]["producer_diagnosis"]
+    assert diagnosis["root_cause"] == "live_evidence_unavailable"
+    assert diagnosis["evidence_source"] == "patrol_live_context"
+    assert diagnosis["evidence"]["live_checked"] is False
+    assert "InternalError" in diagnosis["evidence"]["live_error"]
 
 
 def test_patrol_summary_counts_live_and_severity_buckets():

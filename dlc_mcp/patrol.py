@@ -3,6 +3,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime
 
+from .assets import diagnose_producer_mapping_gap
 from .source import Source
 
 
@@ -313,6 +314,27 @@ class PatrolService:
             status = "missing"
         return {"status": status, "run_count": len(runs), "summary_status": summary_status, "raw": data}
 
+    def _producer_diagnosis(self, table, cached, live_tasks):
+        lineage = cached.get("lineage", {})
+        context = {
+            "name": table.get("name", ""),
+            "layer": table.get("layer", ""),
+            "task_count": live_tasks.get("count", 0),
+            "producer_task_count": live_tasks.get("producer_count", 0),
+            "consumer_task_count": live_tasks.get("consumer_count", 0),
+            "upstream_count": lineage.get("upstream_count", 0),
+            "downstream_count": lineage.get("downstream_count", 0),
+            "run_count": 0,
+        }
+        if live_tasks.get("status") == "live_failed":
+            raw = live_tasks.get("raw") or {}
+            return diagnose_producer_mapping_gap(
+                context,
+                live_error=raw.get("message") or raw.get("error") or "live task evidence unavailable",
+                evidence_source="patrol_live_context",
+            )
+        return diagnose_producer_mapping_gap(context, live_tasks=live_tasks.get("raw", {}), evidence_source="patrol_live_context")
+
     def _finding(self, issue_type, severity, source, evidence, owner_bucket="warehouse_owner", suggested_action=""):
         return {"issue_type": issue_type, "severity": severity, "source": source, "evidence": evidence, "owner_bucket": owner_bucket, "suggested_action": suggested_action}
 
@@ -326,8 +348,11 @@ class PatrolService:
             findings.append(self._finding("missing_columns", "P0", "cache", cached.get("columns", {}), suggested_action="Refresh table columns cache."))
         if cached.get("lineage", {}).get("status") == "missing":
             findings.append(self._finding("missing_lineage", "P1", "cache", cached.get("lineage", {}), suggested_action="Refresh table lineage cache."))
-        if live.get("tasks", {}).get("status") == "missing":
-            findings.append(self._finding("missing_producer_task", "P1", "live", live.get("tasks", {}), suggested_action="Check ListTasks inputs/outputs or SQL parsing for this table."))
+        if live.get("tasks", {}).get("status") in {"missing", "live_failed"}:
+            task_evidence = dict(live.get("tasks", {}))
+            diagnosis = self._producer_diagnosis(table, cached, task_evidence)
+            task_evidence["producer_diagnosis"] = diagnosis
+            findings.append(self._finding("missing_producer_task", "P1", "live", task_evidence, suggested_action=diagnosis["next_check"]))
         if live.get("quality", {}).get("status") == "missing":
             findings.append(self._finding("missing_quality_rules", "P1", "live", live.get("quality", {}), suggested_action="Confirm or add minimum quality rules for this core table."))
         run_status = live.get("runs", {}).get("status")
