@@ -484,7 +484,7 @@ def _temporary_table_predicate(column):
         for pattern in (
             'tmp\\_%',
             '%\\_tmp',
-            '%\\_tmp\\_%',
+            '%\\_tmp%',
             '%\\_bak',
             '%\\_bak%',
             '%\\_copy',
