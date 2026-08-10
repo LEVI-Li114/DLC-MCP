@@ -30,6 +30,20 @@ class TencentCloudClient:
             endpoint=os.environ.get("WEDATA_ENDPOINT"),
         )
 
+    @classmethod
+    def dlc_from_env(cls):
+        missing = [name for name in ("TENCENTCLOUD_SECRET_ID", "TENCENTCLOUD_SECRET_KEY") if not os.environ.get(name)]
+        if missing:
+            raise RuntimeError("missing environment variables: " + ", ".join(missing))
+        return cls(
+            secret_id=os.environ["TENCENTCLOUD_SECRET_ID"],
+            secret_key=os.environ["TENCENTCLOUD_SECRET_KEY"],
+            service="dlc",
+            version=os.environ.get("DLC_API_VERSION", "2021-01-25"),
+            region=os.environ.get("TENCENTCLOUD_REGION", "ap-guangzhou"),
+            endpoint=os.environ.get("DLC_ENDPOINT"),
+        )
+
     def call(self, action, payload):
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         now = datetime.datetime.utcnow()

@@ -257,6 +257,27 @@ TOOLS = {
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
     },
+    "submit_partition_count_query": {
+        "description": "Submit an asynchronous Spark SQL COUNT(*) for one exact validated table partition. Arbitrary SQL is not accepted.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "table_name": {"type": "string"},
+                "partition": {"type": "object", "additionalProperties": {"type": "string"}},
+            },
+            "required": ["table_name", "partition"],
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False},
+    },
+    "get_partition_count_query": {
+        "description": "Get the current status and validated row count for a submitted partition query.",
+        "schema": {"type": "object", "properties": {"query_id": {"type": "string"}}, "required": ["query_id"]},
+    },
+    "cancel_partition_count_query": {
+        "description": "Cancel only the DLC query task recorded for this partition-count query.",
+        "schema": {"type": "object", "properties": {"query_id": {"type": "string"}}, "required": ["query_id"]},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False},
+    },
 }
 
 
@@ -264,7 +285,7 @@ for _tool_spec in TOOLS.values():
     _tool_spec["schema"] = _with_source_schema(_tool_spec["schema"])
 
 
-def handle_request(store, request, live=None):
+def handle_request(store, request, live=None, query_service=None):
     method = request.get("method")
     if method == "initialize":
         return _result(request, {"protocolVersion": "2024-11-05", "serverInfo": {"name": "dlc-mcp", "version": "0.1.0"}, "capabilities": {"tools": {}}})
@@ -280,7 +301,7 @@ def handle_request(store, request, live=None):
         ]
         return _result(request, {"tools": tools})
     if method == "tools/call":
-        return _call_tool(store, request, live)
+        return _call_tool(store, request, live, query_service)
     if method == "notifications/initialized":
         return None
     return _error(request, -32601, "method_not_found")
@@ -368,7 +389,7 @@ def _format_with_meta(tool_name, data, meta):
     return _format_query_meta(meta) + "\n\n" + _format_markdown(tool_name, data)
 
 
-def _call_tool(store, request, live=None):
+def _call_tool(store, request, live=None, query_service=None):
     params = request.get("params") or {}
     name = params.get("name")
     args = params.get("arguments") or {}
@@ -378,6 +399,21 @@ def _call_tool(store, request, live=None):
     meta["source"] = source
     if name not in TOOLS:
         return _error(request, -32602, "unknown_tool")
+
+    if name in {"submit_partition_count_query", "get_partition_count_query", "cancel_partition_count_query"}:
+        if query_service is None:
+            data = _error_data("query_service_unavailable", detail="set DLC_QUERY_ENABLED=1 and configure the dedicated query resource group")
+        else:
+            try:
+                if name == "submit_partition_count_query":
+                    data = query_service.submit_partition_count_query(args["table_name"], args["partition"])
+                elif name == "get_partition_count_query":
+                    data = query_service.get_partition_count_query(args["query_id"])
+                else:
+                    data = query_service.cancel_partition_count_query(args["query_id"])
+            except Exception as exc:
+                data = _error_data(getattr(exc, "code", "QUERY_ERROR"), detail=getattr(exc, "safe_message", "query operation failed"))
+        return _result(request, {"content": [{"type": "text", "text": _format_with_meta(name, data, meta)}]})
 
     if name == "search_assets":
         data = store.search_assets(args["query"])
@@ -723,6 +759,20 @@ def _format_patrol_snapshot_report(data):
 def _format_markdown(tool_name, data):
     if isinstance(data, dict) and data.get("error"):
         return f"**未找到**\n\n- 错误：`{_cell(data['error'])}`\n" + "\n".join(f"- {k}: `{_cell(v)}`" for k, v in data.items() if k != "error")
+    if tool_name in {"submit_partition_count_query", "get_partition_count_query", "cancel_partition_count_query"}:
+        lines = [
+            f"查询ID：`{_cell(data.get('query_id'))}`",
+            f"表：`{_cell(data.get('table_name'))}`",
+            f"分区：`{_cell(json.dumps(data.get('partition') or {}, ensure_ascii=False, sort_keys=True))}`",
+            f"状态：**{_cell(data.get('status'))}**",
+        ]
+        if data.get("row_count") is not None:
+            lines.append(f"数据量：**{data.get('row_count')}** 行")
+        if data.get("duplicate"):
+            lines.append("幂等命中：是（复用已有查询）")
+        if data.get("error_code"):
+            lines.append(f"错误码：`{_cell(data.get('error_code'))}`")
+        return _section("Spark SQL 分区计数查询", lines)
     if isinstance(data, dict) and data.get("errors"):
         error_rows = [
             [err.get("module"), err.get("status"), err.get("api_action"), err.get("error_message"), err.get("retryable")]

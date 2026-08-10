@@ -74,6 +74,8 @@ Query failures are reported as `check_failed` or `partial_live`; they are not tr
 
 Query mode does not mutate remote WeData/DLC business objects. It may read remote metadata/code/project facts and update the local SQLite registry or patrol snapshots. Tools are advertised with MCP `readOnlyHint` annotations so clients that support tool annotations can make safer auto-approval decisions, but confirmation prompts are still controlled by each MCP Host.
 
+Partition row-count queries are a separately gated exception: when `DLC_QUERY_ENABLED=1`, the server may submit a fixed, read-only Spark SQL `COUNT(*)` to a dedicated DLC resource group. The MCP schema never accepts arbitrary SQL. Partitioned tables require every metadata-declared partition key, submissions are asynchronous, and status/result retrieval uses a local query ID.
+
 ## Asset patrol modes
 
 The asset patrol command reuses the existing server registry for stable facts and live-refreshes dynamic evidence during the patrol run.
@@ -173,6 +175,26 @@ Update this list whenever a new MCP tool is added.
 | `get_asset_governance_daily_report(instance_date, layer, core_level)` | Return a daily governance patrol report. |
 | `is_core_table(table_name)` | Explain whether a table is core and why. |
 | `cleanup_task_name_pseudo_tables(dry_run, limit)` | Clean up pseudo table assets derived from task names. |
+| `submit_partition_count_query(table_name, partition)` | Submit a fixed Spark SQL count for one exact validated partition. |
+| `get_partition_count_query(query_id)` | Poll query status and return the validated numeric row count. |
+| `cancel_partition_count_query(query_id)` | Cancel only the DLC query task recorded for this query ID. |
+
+Safe query configuration example:
+
+```bash
+DLC_QUERY_ENABLED=1
+DLC_QUERY_DATABASE=byai_bigdata
+DLC_QUERY_DATASOURCE=DataLakeCatalog
+DLC_QUERY_RESOURCE_GROUP=dlc-mcp-query-low-priority
+DLC_QUERY_MAX_RUNTIME_SECONDS=300
+DLC_QUERY_MAX_CONCURRENT=2
+```
+
+Example user flow:
+
+1. Ask: `查 orders 表 ds=2026-08-10 分区有多少数据`.
+2. The client calls `submit_partition_count_query` and receives `query_id` with status `SUBMITTED`.
+3. The client calls `get_partition_count_query(query_id)` until it returns `SUCCEEDED` and `row_count`.
 
 The project, member, task-relation, and table-detail tools use the same query-mode cache-first model as the existing asset tools. By default they read SQLite first and live-refresh only when the cached fact is missing or incomplete. Set `live=true` to force-refresh the requested fact from WeData. `GetTable` requires a real table GUID for live refresh; the service does not infer a table name from a task name.
 
