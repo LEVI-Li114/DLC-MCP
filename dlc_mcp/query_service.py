@@ -69,7 +69,7 @@ class QueryService:
             job = self.store.update_status(job.query_id, QueryStatusPatch("SUBMISSION_UNCERTAIN", now, error_code="SUBMISSION_UNCERTAIN", error_message="submission outcome is uncertain"))
             return self._response(job)
         except QueryExecutorError as exc:
-            job = self.store.update_status(job.query_id, QueryStatusPatch("FAILED", now, completed_at=now, error_code=exc.code, error_message="query submission failed"))
+            job = self.store.update_status(job.query_id, QueryStatusPatch("FAILED", now, completed_at=now, error_code=exc.code, error_message=str(exc)[:300]))
             return self._response(job)
         self.store.update_submission(job.query_id, ref.task_id, now)
         return self._response(self.store.get_job(job.query_id))

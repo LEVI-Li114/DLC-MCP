@@ -14,11 +14,14 @@ class FakeClient:
         self.timeout = False
         self.state = 2
         self.result = [["42"]]
+        self.error = None
 
     def call(self, action, payload):
         self.calls.append((action, payload))
         if self.timeout:
             raise socket.timeout()
+        if self.error:
+            return {"Response": {"Error": {"Code": self.error, "Message": "unsafe details"}, "RequestId": "r"}}
         if action == "CreateTasks":
             return {"Response": {"TaskIdSet": ["task-1"]}}
         if action == "DescribeMCPTask":
@@ -52,6 +55,14 @@ def test_transport_uncertainty_is_not_spark_failure():
     client.timeout = True
     with pytest.raises(QueryTransportUncertain):
         QueryExecutor(client, policy()).submit_count_query(validated())
+
+
+def test_api_error_exposes_only_tencent_error_code():
+    client = FakeClient()
+    client.error = "ResourceNotFound.DataEngineNotFound"
+    with pytest.raises(Exception, match="DLC API error: ResourceNotFound.DataEngineNotFound") as exc:
+        QueryExecutor(client, policy()).submit_count_query(validated())
+    assert "unsafe details" not in str(exc.value)
 
 
 def test_status_result_and_cancel_are_task_scoped():

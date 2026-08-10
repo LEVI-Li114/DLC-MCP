@@ -86,14 +86,15 @@ class QueryExecutor:
             raise QueryTransportUncertain("query submission outcome is uncertain") from exc
         except Exception as exc:
             raise QueryExecutorError("query submission failed") from exc
-        task_ids = ((response.get("Response") or {}).get("TaskIdSet") or []) if isinstance(response, dict) else []
+        body = _response_body(response)
+        task_ids = body.get("TaskIdSet") or []
         if len(task_ids) != 1 or not task_ids[0]:
             raise QueryResultInvalid("DLC submission returned an invalid task id")
         return ExternalTaskRef(str(task_ids[0]))
 
     def get_status(self, task_id: str) -> ExternalStatus:
         response = self.client.call("DescribeMCPTask", {"TaskId": task_id})
-        info = (response.get("Response") or {}).get("TaskInfo") or {}
+        info = _response_body(response).get("TaskInfo") or {}
         state = info.get("State")
         status = {0: "SUBMITTED", 1: "RUNNING", 2: "SUCCEEDED", 3: "RUNNING", 4: "SUBMITTED", -1: "FAILED", -3: "CANCELLED"}.get(state)
         if status is None:
@@ -102,7 +103,7 @@ class QueryExecutor:
 
     def get_result(self, task_id: str) -> CountResult:
         response = self.client.call("DescribeMCPTaskResult", {"TaskId": task_id})
-        body = response.get("Response") or {}
+        body = _response_body(response)
         info = body.get("TaskResult") or body.get("TaskInfo") or body.get("Result") or {}
         if info.get("State") not in (None, 2):
             raise QueryResultInvalid("query result is not in a successful state")
@@ -122,7 +123,18 @@ class QueryExecutor:
         return CountResult(int(value))
 
     def cancel(self, task_id: str) -> None:
-        self.client.call("CancelTask", {"TaskId": task_id})
+        _response_body(self.client.call("CancelTask", {"TaskId": task_id}))
+
+
+def _response_body(response):
+    body = response.get("Response") if isinstance(response, dict) else None
+    if not isinstance(body, dict):
+        raise QueryResultInvalid("DLC returned an invalid response envelope")
+    error = body.get("Error")
+    if isinstance(error, dict):
+        code = str(error.get("Code") or "UnknownError")[:120]
+        raise QueryExecutorError(f"DLC API error: {code}")
+    return body
 
 
 def _bounded_int(name, default, minimum, maximum):

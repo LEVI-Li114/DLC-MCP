@@ -772,6 +772,8 @@ def _format_markdown(tool_name, data):
             lines.append("幂等命中：是（复用已有查询）")
         if data.get("error_code"):
             lines.append(f"错误码：`{_cell(data.get('error_code'))}`")
+        if data.get("error_message"):
+            lines.append(f"错误：`{_cell(data.get('error_message'))}`")
         return _section("Spark SQL 分区计数查询", lines)
     if isinstance(data, dict) and data.get("errors"):
         error_rows = [
