@@ -24,7 +24,7 @@ class FakeClient:
         if action == "DescribeMCPTask":
             return {"Response": {"TaskInfo": {"State": self.state}}}
         if action == "DescribeMCPTaskResult":
-            return {"Response": {"TaskInfo": {"State": 2, "ResultSchema": [{"Name": "row_count", "Type": "bigint"}], "ResultSet": json.dumps(self.result)}}}
+            return {"Response": {"TaskResult": {"State": 2, "ResultSchema": [{"Name": "row_count", "Type": "bigint"}], "ResultSet": json.dumps(self.result)}}}
         return {"Response": {"RequestId": "r"}}
 
 

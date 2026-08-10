@@ -102,7 +102,8 @@ class QueryExecutor:
 
     def get_result(self, task_id: str) -> CountResult:
         response = self.client.call("DescribeMCPTaskResult", {"TaskId": task_id})
-        info = (response.get("Response") or {}).get("TaskInfo") or (response.get("Response") or {}).get("Result") or {}
+        body = response.get("Response") or {}
+        info = body.get("TaskResult") or body.get("TaskInfo") or body.get("Result") or {}
         if info.get("State") not in (None, 2):
             raise QueryResultInvalid("query result is not in a successful state")
         schema = info.get("ResultSchema") or []
