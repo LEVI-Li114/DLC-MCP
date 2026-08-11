@@ -49,9 +49,6 @@ class QueryService:
         normalized_partition = validate_partition(partition_profile, partition)
         table_identifier = f"{database}.{table.get('name') or lookup_name}"
         validated = make_validated_query(table_identifier, normalized_partition, database)
-        existing = self.store.find_active_by_idempotency_key(validated.idempotency_key, now)
-        if existing:
-            return self._response(existing, duplicate=True)
         if self.store.count_active(now) >= self.policy.max_concurrent_queries:
             raise QueryServiceError("QUERY_QUOTA_EXCEEDED", "too many partition queries are active")
         job = QueryJob(

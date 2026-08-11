@@ -179,6 +179,8 @@ Update this list whenever a new MCP tool is added.
 | `get_partition_count_query(query_id)` | Poll query status and return the validated numeric row count. |
 | `cancel_partition_count_query(query_id)` | Cancel only the DLC query task recorded for this query ID. |
 
+Every accepted `submit_partition_count_query` call creates a new local query ID and a new DLC task, even for the same table and partition. Running-query concurrency limits still apply; a new call is rejected while the configured limit is full rather than reusing an earlier query.
+
 Safe query configuration example:
 
 ```bash

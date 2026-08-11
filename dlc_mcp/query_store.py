@@ -69,15 +69,6 @@ class QueryStore:
         row = self.conn.execute("select * from query_jobs where query_id = ?", (query_id,)).fetchone()
         return _job(row) if row else None
 
-    def find_active_by_idempotency_key(self, key: str, now: datetime):
-        row = self.conn.execute(
-            "select * from query_jobs where idempotency_key = ? and expires_at > ? order by created_at desc limit 1",
-            (key, _iso(now)),
-        ).fetchone()
-        if not row or row["status"] not in ACTIVE_STATUSES | {"SUCCEEDED"}:
-            return None
-        return _job(row)
-
     def count_active(self, now: datetime) -> int:
         placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
         return self.conn.execute(

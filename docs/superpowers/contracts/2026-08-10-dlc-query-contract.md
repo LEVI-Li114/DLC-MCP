@@ -12,7 +12,7 @@ Only generated, exact-partition `COUNT(*)` queries are allowed. Production WeDat
 | --- | --- | --- | --- |
 | submit | `CreateTasks` | `Tasks.TaskType=SparkSQLTask`, Base64 `Tasks.SQL`, `Tasks.FailureTolerance=Terminate`, `DatabaseName`, `DatasourceConnectionName`, `ResourceGroupName`, optional `DataEngineName` | `Response.TaskIdSet[0]` |
 | status | `DescribeMCPTask` | `TaskId` | `Response.TaskInfo.State`, `Response.TaskInfo.OutputMessage` |
-| result | `DescribeMCPTaskResult` | `TaskId` | `Response.TaskInfo.State`, `ResultSchema`, `ResultSet` |
+| result | `DescribeMCPTaskResult` | `TaskId` | `Response.TaskResult.State`, `ResultSchema`, `ResultSet` |
 | cancel | `CancelTask` | `TaskId` | successful API acknowledgement |
 
 Official references:
@@ -45,6 +45,8 @@ The result must have exactly one schema column named `row_count`, exactly one da
 - `DLC_QUERY_RESOURCE_GROUP` is mandatory when submission is enabled.
 - The service rejects tables outside `DLC_QUERY_DATABASE` and, when available, outside `WEDATA_PROJECT_ID`.
 - Maximum concurrency defaults to two.
+- Every accepted submission creates a new local query ID and a new DLC task. Results from earlier successful queries are never reused.
+- Concurrency limits are checked before task creation; when the limit is full, the new request is rejected instead of being merged with an existing query.
 - Maximum runtime defaults to 300 seconds. Expired running tasks are cancelled using only their recorded DLC task ID.
 - A transport timeout during submission becomes `SUBMISSION_UNCERTAIN` and is never blindly resubmitted.
 - Only SQL hashes, partition values, task IDs, state, and numeric results are stored. Raw SQL and credentials are not persisted.

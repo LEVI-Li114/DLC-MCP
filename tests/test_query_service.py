@@ -58,12 +58,21 @@ def test_missing_table_does_not_submit():
     assert executor.submissions == []
 
 
-def test_duplicate_submission_returns_existing_query():
+def test_repeated_submission_creates_a_new_query():
     service, executor, _ = make_service()
     first = service.submit_partition_count_query("orders", {"ds": "2026-08-10"})
     second = service.submit_partition_count_query("orders", {"ds": "2026-08-10"})
-    assert second["query_id"] == first["query_id"]
-    assert second["duplicate"] is True
+    assert second["query_id"] != first["query_id"]
+    assert second["duplicate"] is False
+    assert len(executor.submissions) == 2
+
+
+def test_repeated_submission_still_obeys_concurrency_limit():
+    service, executor, _ = make_service()
+    service.policy = QueryExecutionPolicy(True, "dw", "DataLakeCatalog", "engine", "rg", 300, 1, 7200, 3600)
+    service.submit_partition_count_query("orders", {"ds": "2026-08-10"})
+    with pytest.raises(QueryServiceError, match="QUERY_QUOTA_EXCEEDED"):
+        service.submit_partition_count_query("orders", {"ds": "2026-08-10"})
     assert len(executor.submissions) == 1
 
 

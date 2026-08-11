@@ -18,6 +18,7 @@ Run `pytest -q`. Confirm the MCP submit schema contains no `sql` field and all q
 
 - Start with one database, one dedicated resource group, concurrency `1`, and runtime at most 300 seconds.
 - Allow only exact partitions with validated metadata keys.
+- Treat every accepted submission as a new DLC task, including repeated requests for the same table and partition.
 - Monitor DLC queue time, execution time, scanned bytes, failure count, cancellation count, and production resource-group health.
 - Raise concurrency only after several days without production-task impact.
 
