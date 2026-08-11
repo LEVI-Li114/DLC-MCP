@@ -178,8 +178,8 @@ Update this list whenever a new MCP tool is added.
 
 ### DLC SQL 查询
 
-配置 `DLC_QUERY_DATA_ENGINE_NAME`（建议显式指定生产查询引擎）以及可选的
-`DLC_QUERY_DATABASE_NAME`、`DLC_QUERY_DATASOURCE_CONNECTION_NAME` 后，先调用
+配置 `DLC_QUERY_ENGINE`（建议显式指定生产查询引擎）以及可选的
+`DLC_QUERY_DATABASE`、`DLC_QUERY_DATASOURCE` 后，先调用
 `submit_dlc_sql_query`，再使用返回的 `task_id` 调用
 `get_dlc_sql_query_result`。结果超过一页时，把返回的 `next_token` 传入下一次调用。
 

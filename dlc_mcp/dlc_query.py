@@ -117,11 +117,12 @@ class DLCQueryService:
             }
         }
         options = {
-            "DatabaseName": database_name or os.environ.get("DLC_QUERY_DATABASE_NAME", ""),
-            "DataEngineName": data_engine_name or os.environ.get("DLC_QUERY_DATA_ENGINE_NAME", ""),
+            "DatabaseName": database_name or _query_env("DLC_QUERY_DATABASE", "DLC_QUERY_DATABASE_NAME"),
+            "DataEngineName": data_engine_name or _query_env("DLC_QUERY_ENGINE", "DLC_QUERY_DATA_ENGINE_NAME"),
             "DatasourceConnectionName": datasource_connection_name
-            or os.environ.get("DLC_QUERY_DATASOURCE_CONNECTION_NAME", os.environ.get("DLC_CATALOG", "DataLakeCatalog")),
-            "ResourceGroupName": resource_group_name or os.environ.get("DLC_QUERY_RESOURCE_GROUP_NAME", ""),
+            or _query_env("DLC_QUERY_DATASOURCE", "DLC_QUERY_DATASOURCE_CONNECTION_NAME")
+            or os.environ.get("DLC_CATALOG", "DataLakeCatalog"),
+            "ResourceGroupName": resource_group_name or _query_env("DLC_QUERY_RESOURCE_GROUP", "DLC_QUERY_RESOURCE_GROUP_NAME"),
         }
         payload.update({key: value for key, value in options.items() if value})
         response = self.client.call("CreateTask", payload)
@@ -176,6 +177,10 @@ def _response_body(response):
     if error:
         raise RuntimeError(f"dlc_api_error:{error.get('Code', 'unknown')}:{error.get('Message', '')}")
     return body
+
+
+def _query_env(primary, legacy):
+    return os.environ.get(primary, "") or os.environ.get(legacy, "")
 
 
 def _parse_result_set(value):

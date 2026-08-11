@@ -65,9 +65,9 @@ class DLCQueryServiceTest(unittest.TestCase):
             "os.environ",
             {
                 "DLC_QUERY_TASK_TYPE": "spark",
-                "DLC_QUERY_DATA_ENGINE_NAME": "spark-engine",
-                "DLC_QUERY_DATABASE_NAME": "crm",
-                "DLC_QUERY_DATASOURCE_CONNECTION_NAME": "DataLakeCatalog",
+                "DLC_QUERY_ENGINE": "spark-engine",
+                "DLC_QUERY_DATABASE": "crm",
+                "DLC_QUERY_DATASOURCE": "DataLakeCatalog",
             },
             clear=False,
         ):
