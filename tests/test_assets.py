@@ -190,8 +190,11 @@ class AssetStoreTest(unittest.TestCase):
         self.assertIn(("wedata", "ListTasks"), by_action)
         self.assertIn(("wedata", "GetTableColumns"), by_action)
         self.assertIn(("dlc", "DescribeTablePartitions"), by_action)
+        self.assertIn(("dlc", "CreateTask"), by_action)
+        self.assertIn(("dlc", "DescribeTaskResult"), by_action)
         self.assertEqual(by_action[("wedata", "ListTasks")]["doc_category"], "数据开发相关接口")
         self.assertEqual(by_action[("dlc", "DescribeTablePartitions")]["product"], "DLC")
+        self.assertEqual(by_action[("dlc", "CreateTask")]["doc_category"], "任务相关接口")
 
     def test_cloud_api_catalog_can_be_extended(self):
         store = make_store()

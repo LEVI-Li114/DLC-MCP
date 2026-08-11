@@ -178,6 +178,8 @@ Update this list whenever a new MCP tool is added.
 | `submit_partition_count_query(table_name, partition)` | Submit a fixed Spark SQL count for one exact validated partition. |
 | `get_partition_count_query(query_id)` | Poll query status and return the validated numeric row count. |
 | `cancel_partition_count_query(query_id)` | Cancel only the DLC query task recorded for this query ID. |
+| `submit_dlc_sql_query(sql, database_name, data_engine_name, datasource_connection_name)` | Submit one read-only `SELECT`/`WITH` statement to DLC; joins including `FULL OUTER JOIN` are allowed. |
+| `get_dlc_sql_query_result(task_id, next_token, max_results)` | Poll a DLC SQL task and return one page of status/results. |
 
 Every accepted `submit_partition_count_query` call creates a new local query ID and a new DLC task, even for the same table and partition. Running-query concurrency limits still apply; a new call is rejected while the configured limit is full rather than reusing an earlier query.
 
@@ -197,6 +199,17 @@ Example user flow:
 1. Ask: `查 orders 表 ds=2026-08-10 分区有多少数据`.
 2. The client calls `submit_partition_count_query` and receives `query_id` with status `SUBMITTED`.
 3. The client calls `get_partition_count_query(query_id)` until it returns `SUCCEEDED` and `row_count`.
+
+### DLC SQL 查询
+
+配置 `DLC_QUERY_ENGINE`（建议显式指定生产查询引擎）以及可选的
+`DLC_QUERY_DATABASE`、`DLC_QUERY_DATASOURCE` 后，先调用
+`submit_dlc_sql_query`，再使用返回的 `task_id` 调用
+`get_dlc_sql_query_result`。结果超过一页时，把返回的 `next_token` 传入下一次调用。
+
+该入口默认使用 Spark SQL，只接受一条只读 `SELECT` 或 `WITH` 语句；DDL、DML、
+`SET`、`USE`、多语句会在提交到 DLC 前被拒绝。可通过
+`DLC_QUERY_TASK_TYPE=presto` 切换到 Presto SQLTask。
 
 The project, member, task-relation, and table-detail tools use the same query-mode cache-first model as the existing asset tools. By default they read SQLite first and live-refresh only when the cached fact is missing or incomplete. Set `live=true` to force-refresh the requested fact from WeData. `GetTable` requires a real table GUID for live refresh; the service does not infer a table name from a task name.
 

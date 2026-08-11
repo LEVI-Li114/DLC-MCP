@@ -202,6 +202,28 @@ TENCENT_CLOUD_API_CATALOG = [
         "description": "查询 DLC 表分区信息。",
         "usage": "可选同步分区事实，支撑分区健康和产出检查。",
     },
+    {
+        "service": "dlc",
+        "action": "CreateTask",
+        "provider": "Tencent Cloud",
+        "product": "DLC",
+        "doc_category": "任务相关接口",
+        "source_url": "https://cloud.tencent.com/document/product/1342/53775",
+        "description": "提交 Presto SQLTask 或 SparkSQLTask。",
+        "usage": "由 submit_dlc_sql_query 提交经过只读校验的单条查询 SQL。",
+        "used_by": "dlc_mcp.dlc_query.DLCQueryService.submit",
+    },
+    {
+        "service": "dlc",
+        "action": "DescribeTaskResult",
+        "provider": "Tencent Cloud",
+        "product": "DLC",
+        "doc_category": "任务相关接口",
+        "source_url": "https://cloud.tencent.com/document/product/1342/66644",
+        "description": "查询 DLC 任务状态及分页结果。",
+        "usage": "由 get_dlc_sql_query_result 查询 SQL 任务进度、错误和结果页。",
+        "used_by": "dlc_mcp.dlc_query.DLCQueryService.result",
+    },
 ]
 
 class AssetStore:

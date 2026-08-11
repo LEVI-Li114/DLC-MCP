@@ -1,5 +1,7 @@
 import json
+import os
 import unittest
+from unittest.mock import patch
 
 from dlc_mcp.tencentcloud import TencentCloudClient
 
@@ -48,6 +50,24 @@ class TencentCloudClientTest(unittest.TestCase):
         self.assertEqual(opener.request.headers["X-tc-region"], "ap-guangzhou")
         self.assertIn("TC3-HMAC-SHA256", opener.request.headers["Authorization"])
         self.assertEqual(json.loads(opener.request.data.decode("utf-8")), {"ProjectId": "p1"})
+
+    def test_builds_dlc_client_from_environment(self):
+        with patch.dict(
+            os.environ,
+            {
+                "TENCENTCLOUD_SECRET_ID": "sid",
+                "TENCENTCLOUD_SECRET_KEY": "skey",
+                "TENCENTCLOUD_REGION": "ap-shanghai",
+                "DLC_API_VERSION": "2021-01-25",
+            },
+            clear=False,
+        ):
+            client = TencentCloudClient.dlc_from_env()
+
+        self.assertEqual(client.service, "dlc")
+        self.assertEqual(client.endpoint, "dlc.tencentcloudapi.com")
+        self.assertEqual(client.version, "2021-01-25")
+        self.assertEqual(client.region, "ap-shanghai")
 
 
 if __name__ == "__main__":

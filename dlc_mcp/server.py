@@ -4,6 +4,7 @@ import sqlite3
 import sys
 
 from .assets import AssetStore
+from .dlc_query import DLCQueryService
 from .live import LiveWeData
 from .mcp import handle_request
 from .query_runtime import build_query_service
@@ -20,11 +21,12 @@ def main():
     store.init_schema()
     live = LiveWeData(store) if os.environ.get("TENCENTCLOUD_SECRET_ID") and os.environ.get("TENCENTCLOUD_SECRET_KEY") and os.environ.get("WEDATA_PROJECT_ID") else None
     query_service = build_query_service(store)
+    dlc_query_service = DLCQueryService() if _query_enabled() and os.environ.get("TENCENTCLOUD_SECRET_ID") and os.environ.get("TENCENTCLOUD_SECRET_KEY") else None
 
     for line in sys.stdin:
         if not line.strip():
             continue
-        response = handle_request(store, json.loads(line), live, query_service)
+        response = handle_request(store, json.loads(line), live, query_service, dlc_query_service)
         if response is not None:
             sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
             sys.stdout.flush()
@@ -40,6 +42,10 @@ def _load_env_file(path):
                 continue
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+def _query_enabled():
+    return os.environ.get("DLC_QUERY_ENABLED", "0") == "1"
 
 
 if __name__ == "__main__":
