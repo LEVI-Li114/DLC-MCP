@@ -5,6 +5,7 @@ import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from .assets import AssetStore
+from .dlc_query import DLCQueryService
 from .live import LiveWeData
 from .mcp import handle_request
 from .server import _load_env_file
@@ -21,7 +22,8 @@ def main():
     store = AssetStore(sqlite3.connect(db_path))
     store.init_schema()
     live = LiveWeData(store) if _has_live_env() else None
-    handler = _handler(store, live)
+    query_service = DLCQueryService() if _has_cloud_credentials() else None
+    handler = _handler(store, live, query_service)
     HTTPServer((args.host, args.port), handler).serve_forever()
 
 
@@ -29,7 +31,11 @@ def _has_live_env():
     return os.environ.get("TENCENTCLOUD_SECRET_ID") and os.environ.get("TENCENTCLOUD_SECRET_KEY") and os.environ.get("WEDATA_PROJECT_ID")
 
 
-def _handler(store, live):
+def _has_cloud_credentials():
+    return os.environ.get("TENCENTCLOUD_SECRET_ID") and os.environ.get("TENCENTCLOUD_SECRET_KEY")
+
+
+def _handler(store, live, query_service=None):
     token = os.environ.get("DLC_MCP_GATEWAY_TOKEN", "")
 
     class GatewayHandler(BaseHTTPRequestHandler):
@@ -48,7 +54,7 @@ def _handler(store, live):
                 return
             length = int(self.headers.get("content-length") or 0)
             request = json.loads(self.rfile.read(length) or b"{}")
-            response = handle_request(store, request, live)
+            response = handle_request(store, request, live, query_service)
             if response is None:
                 self.send_response(204)
                 self.end_headers()

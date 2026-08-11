@@ -2,6 +2,7 @@ import json
 import os
 
 from .cleanup_derived_tables import cleanup_task_name_pseudo_tables
+from .dlc_query import QueryValidationError
 from .live_assets import LiveAssetService
 from .source import Source, resolve_source
 
@@ -19,6 +20,33 @@ def _with_source_schema(schema):
 
 
 TOOLS = {
+    "submit_dlc_sql_query": {
+        "description": "Submit one read-only SELECT/WITH statement to the Tencent Cloud DLC engine. FULL OUTER JOIN is supported.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "sql": {"type": "string"},
+                "database_name": {"type": "string"},
+                "data_engine_name": {"type": "string"},
+                "datasource_connection_name": {"type": "string"},
+                "resource_group_name": {"type": "string"},
+            },
+            "required": ["sql"],
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False},
+    },
+    "get_dlc_sql_query_result": {
+        "description": "Get status and one result page for a previously submitted DLC SQL task.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "next_token": {"type": "string"},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 1000},
+            },
+            "required": ["task_id"],
+        },
+    },
     "search_assets": {
         "description": "Search tables by name, domain, or description.",
         "schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
@@ -260,11 +288,12 @@ TOOLS = {
 }
 
 
-for _tool_spec in TOOLS.values():
-    _tool_spec["schema"] = _with_source_schema(_tool_spec["schema"])
+for _tool_name, _tool_spec in TOOLS.items():
+    if _tool_name not in {"submit_dlc_sql_query", "get_dlc_sql_query_result"}:
+        _tool_spec["schema"] = _with_source_schema(_tool_spec["schema"])
 
 
-def handle_request(store, request, live=None):
+def handle_request(store, request, live=None, query_service=None):
     method = request.get("method")
     if method == "initialize":
         return _result(request, {"protocolVersion": "2024-11-05", "serverInfo": {"name": "dlc-mcp", "version": "0.1.0"}, "capabilities": {"tools": {}}})
@@ -280,7 +309,7 @@ def handle_request(store, request, live=None):
         ]
         return _result(request, {"tools": tools})
     if method == "tools/call":
-        return _call_tool(store, request, live)
+        return _call_tool(store, request, live, query_service)
     if method == "notifications/initialized":
         return None
     return _error(request, -32601, "method_not_found")
@@ -368,7 +397,7 @@ def _format_with_meta(tool_name, data, meta):
     return _format_query_meta(meta) + "\n\n" + _format_markdown(tool_name, data)
 
 
-def _call_tool(store, request, live=None):
+def _call_tool(store, request, live=None, query_service=None):
     params = request.get("params") or {}
     name = params.get("name")
     args = params.get("arguments") or {}
@@ -379,7 +408,29 @@ def _call_tool(store, request, live=None):
     if name not in TOOLS:
         return _error(request, -32602, "unknown_tool")
 
-    if name == "search_assets":
+    if name in {"submit_dlc_sql_query", "get_dlc_sql_query_result"}:
+        meta["source"] = "dlc_live"
+        if query_service is None:
+            data = _error_data("dlc_query_service_unavailable")
+        else:
+            try:
+                if name == "submit_dlc_sql_query":
+                    data = query_service.submit(
+                        args.get("sql", ""),
+                        database_name=args.get("database_name", ""),
+                        data_engine_name=args.get("data_engine_name", ""),
+                        datasource_connection_name=args.get("datasource_connection_name", ""),
+                        resource_group_name=args.get("resource_group_name", ""),
+                    )
+                else:
+                    data = query_service.result(
+                        args.get("task_id", ""),
+                        next_token=args.get("next_token", ""),
+                        max_results=args.get("max_results", 1000),
+                    )
+            except (QueryValidationError, RuntimeError, ValueError, OSError) as exc:
+                data = _error_data(str(exc))
+    elif name == "search_assets":
         data = store.search_assets(args["query"])
     elif name == "search_tasks":
         data = store.search_tasks(args["query"])
@@ -733,6 +784,36 @@ def _format_markdown(tool_name, data):
             ["模块", "状态", "API", "错误", "可重试"],
             error_rows,
         )
+    if tool_name == "submit_dlc_sql_query":
+        return _section(
+            "DLC SQL 已提交",
+            [
+                f"任务 ID：`{_cell(data.get('task_id'))}`",
+                f"状态：`{_cell(data.get('status'))}`",
+                f"引擎类型：`{_cell(data.get('engine_type'))}`",
+                f"数据引擎：`{_cell(data.get('data_engine_name'))}`",
+                f"数据库：`{_cell(data.get('database_name'))}`",
+                f"SQL SHA-256：`{_cell(data.get('sql_sha256'))}`",
+            ],
+        )
+    if tool_name == "get_dlc_sql_query_result":
+        lines = [
+            f"任务 ID：`{_cell(data.get('task_id'))}`",
+            f"状态：`{_cell(data.get('status'))}`（{_cell(data.get('state'))}）",
+            f"进度：{_cell(data.get('progress_percent'))}%",
+        ]
+        if data.get("message"):
+            lines.append(f"消息：{_cell(data.get('message'))}")
+        if data.get("next_token"):
+            lines.append(f"下一页 token：`{_cell(data.get('next_token'))}`")
+        result = _section("DLC SQL 查询结果", lines)
+        rows = data.get("rows")
+        if isinstance(rows, list) and rows and all(isinstance(row, dict) for row in rows):
+            columns = list(rows[0].keys())
+            result += "\n\n" + _table(columns, [[row.get(column) for column in columns] for row in rows])
+        elif rows not in (None, [], ""):
+            result += "\n\n```json\n" + json.dumps(rows, ensure_ascii=False, indent=2) + "\n```"
+        return result
     if tool_name == "get_asset_governance_issue_inventory" and data.get("source") == "patrol_snapshot":
         if data.get("error"):
             return _section("治理问题清单", [f"错误：`{_cell(data.get('error'))}`", "没有可用巡检快照，请先运行每日巡检。"])

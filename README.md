@@ -173,6 +173,19 @@ Update this list whenever a new MCP tool is added.
 | `get_asset_governance_daily_report(instance_date, layer, core_level)` | Return a daily governance patrol report. |
 | `is_core_table(table_name)` | Explain whether a table is core and why. |
 | `cleanup_task_name_pseudo_tables(dry_run, limit)` | Clean up pseudo table assets derived from task names. |
+| `submit_dlc_sql_query(sql, database_name, data_engine_name, datasource_connection_name)` | Submit one read-only `SELECT`/`WITH` statement to DLC; joins including `FULL OUTER JOIN` are allowed. |
+| `get_dlc_sql_query_result(task_id, next_token, max_results)` | Poll a DLC SQL task and return one page of status/results. |
+
+### DLC SQL 查询
+
+配置 `DLC_QUERY_DATA_ENGINE_NAME`（建议显式指定生产查询引擎）以及可选的
+`DLC_QUERY_DATABASE_NAME`、`DLC_QUERY_DATASOURCE_CONNECTION_NAME` 后，先调用
+`submit_dlc_sql_query`，再使用返回的 `task_id` 调用
+`get_dlc_sql_query_result`。结果超过一页时，把返回的 `next_token` 传入下一次调用。
+
+该入口默认使用 Spark SQL，只接受一条只读 `SELECT` 或 `WITH` 语句；DDL、DML、
+`SET`、`USE`、多语句会在提交到 DLC 前被拒绝。可通过
+`DLC_QUERY_TASK_TYPE=presto` 切换到 Presto SQLTask。
 
 The project, member, task-relation, and table-detail tools use the same query-mode cache-first model as the existing asset tools. By default they read SQLite first and live-refresh only when the cached fact is missing or incomplete. Set `live=true` to force-refresh the requested fact from WeData. `GetTable` requires a real table GUID for live refresh; the service does not infer a table name from a task name.
 

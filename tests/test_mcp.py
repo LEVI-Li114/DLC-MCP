@@ -568,6 +568,39 @@ class McpTest(unittest.TestCase):
         self.assertEqual(tools["get_task_code"]["annotations"], {"readOnlyHint": True})
         self.assertEqual(tools["search_tasks"]["annotations"], {"readOnlyHint": True})
 
+    def test_tools_list_includes_dlc_sql_tools_with_safety_annotations(self):
+        response = handle_request(self.store, {"jsonrpc": "2.0", "id": 140, "method": "tools/list"})
+        tools = {tool["name"]: tool for tool in response["result"]["tools"]}
+
+        self.assertEqual(
+            tools["submit_dlc_sql_query"]["annotations"],
+            {"readOnlyHint": False, "destructiveHint": False},
+        )
+        self.assertEqual(tools["get_dlc_sql_query_result"]["annotations"], {"readOnlyHint": True})
+
+    def test_dlc_sql_tools_delegate_to_query_service(self):
+        class FakeQueryService:
+            def submit(self, sql, **options):
+                return {"status": "submitted", "task_id": "task-1", "engine_type": "spark", "sql_sha256": "abc", **options}
+
+            def result(self, task_id, **options):
+                return {"task_id": task_id, "state": 2, "status": "succeeded", "progress_percent": 100, "rows": [{"count": 2}], **options}
+
+        submitted = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 141, "method": "tools/call", "params": {"name": "submit_dlc_sql_query", "arguments": {"sql": "SELECT 1", "database_name": "crm"}}},
+            query_service=FakeQueryService(),
+        )
+        fetched = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 142, "method": "tools/call", "params": {"name": "get_dlc_sql_query_result", "arguments": {"task_id": "task-1", "max_results": 10}}},
+            query_service=FakeQueryService(),
+        )
+
+        self.assertIn("task-1", submitted["result"]["content"][0]["text"])
+        self.assertIn("succeeded", fetched["result"]["content"][0]["text"])
+        self.assertIn("count", fetched["result"]["content"][0]["text"])
+
     def test_get_task_code_returns_cached_sql(self):
         self.store.upsert_task_code(
             "project",
