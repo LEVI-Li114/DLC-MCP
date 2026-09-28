@@ -10,6 +10,8 @@ from .assets import AssetStore
 def import_wedata_snapshot(store, snapshot):
     for table in snapshot.get("tables", []):
         store.upsert_table(table)
+        if table.get("storage_bytes") or table.get("heat_value"):
+            store.upsert_table_stats(table["name"], table.get("storage_bytes", 0), table.get("heat_value", 0))
         for index, column in enumerate(table.get("columns", []), start=1):
             store.upsert_column(
                 table["name"],
@@ -125,6 +127,8 @@ def _table_from_api(item):
         "table_type": _get(item, "TableType", "Type", "TableKind", "tableType"),
         "catalog_name": _get(item, "CatalogName", "Catalog", "catalogName"),
         "schema_name": _get(item, "SchemaName", "Schema", "schemaName", default=database),
+        "storage_bytes": _get(item, "StorageSize", "DataSize", "StorageBytes", "TotalSize", default=0),
+        "heat_value": _get(item, "HeatValue", "Heat", default=0),
         "columns": [_column_from_api(column) for column in _get(item, "Columns", "ColumnList", "columns", default=[])],
         "raw": item,
     }

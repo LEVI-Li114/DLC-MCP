@@ -63,6 +63,34 @@ class LiveWeData:
         normalized = {"Response": {"Data": {"Items": items}, "PartitionFailures": []}}
         self._import({"table_partitions": normalized})
 
+    def sync_table_stats(self, table_name):
+        """通过 DLC DescribeTable 拉取单表存储大小与热度值并写入缓存。"""
+        table = self.store._one("select * from tables where name = ?", (table_name,))
+        if not table:
+            self.sync_table(table_name)
+            table = self.store._one("select * from tables where name = ?", (table_name,))
+        if not table:
+            raise RuntimeError("table_not_found")
+        table_data = self.store._table_dict(table)
+        database = table_data.get("database") or (table_data.get("raw") or {}).get("DatabaseName") or ""
+        if not database:
+            raise RuntimeError("missing database for DescribeTable")
+        payload = {
+            "DatasourceConnectionName": os.environ.get("DLC_CATALOG", "DataLakeCatalog"),
+            "DatabaseName": database,
+            "TableName": table_name,
+        }
+        response = _partition_client(self.client).call("DescribeTable", payload)
+        if "Error" in response.get("Response", {}):
+            error = response["Response"]["Error"]
+            raise RuntimeError(f"DescribeTable failed: {error.get('Code')} {error.get('Message')}")
+        table_detail = response.get("Response", {}).get("Table") or response.get("Response", {}).get("Data") or {}
+        if not isinstance(table_detail, dict):
+            table_detail = {}
+        storage_bytes = table_detail.get("StorageSize") or table_detail.get("DataSize") or table_detail.get("TotalSize") or 0
+        heat_value = table_detail.get("HeatValue") or table_detail.get("Heat") or 0
+        self.store.upsert_table_stats(table_name, storage_bytes, heat_value)
+
     def sync_task_runs(self, task_name="", task_id="", instance_date=""):
         start, end = _day_window(instance_date)
         payload = {

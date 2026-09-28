@@ -204,6 +204,17 @@ TENCENT_CLOUD_API_CATALOG = [
     },
     {
         "service": "dlc",
+        "action": "DescribeTable",
+        "provider": "Tencent Cloud",
+        "product": "DLC",
+        "doc_category": "元数据相关接口",
+        "source_url": "https://cloud.tencent.com/document/product/1342/53768",
+        "description": "查询 DLC 表详情，包含表热度值 HeatValue 与存储大小 StorageSize。",
+        "usage": "由 WEDATA_SYNC_TABLE_STATS 全量同步或 live.sync_table_stats 单表实时刷新写入表级存储与热度。",
+        "used_by": "dlc_mcp.sync_wedata._sync_table_stats, dlc_mcp.live.LiveWeData.sync_table_stats",
+    },
+    {
+        "service": "dlc",
         "action": "CreateTask",
         "provider": "Tencent Cloud",
         "product": "DLC",
@@ -252,7 +263,10 @@ class AssetStore:
                 manual_core_level text,
                 is_active integer not null default 1,
                 last_seen_at text not null default '',
-                deleted_at text not null default ''
+                deleted_at text not null default '',
+                storage_bytes integer not null default 0,
+                heat_value integer not null default 0,
+                stats_updated_at text not null default ''
             );
             create table if not exists columns (
                 table_name text not null,
@@ -494,6 +508,9 @@ class AssetStore:
         self._add_column_if_missing("tables", "catalog_name", "text not null default ''")
         self._add_column_if_missing("tables", "schema_name", "text not null default ''")
         self._add_column_if_missing("tables", "raw_json", "text not null default '{}'")
+        self._add_column_if_missing("tables", "storage_bytes", "integer not null default 0")
+        self._add_column_if_missing("tables", "heat_value", "integer not null default 0")
+        self._add_column_if_missing("tables", "stats_updated_at", "text not null default ''")
         self._add_column_if_missing("tables", "is_active", "integer not null default 1")
         self._add_column_if_missing("tables", "last_seen_at", "text not null default ''")
         self._add_column_if_missing("tables", "deleted_at", "text not null default ''")
@@ -926,6 +943,18 @@ class AssetStore:
                 {"database": item.get("database", ""), "guid": item.get("guid", ""), "project_id": item.get("project_id", "")},
                 commit=False,
             )
+        self.conn.commit()
+
+    def upsert_table_stats(self, table_name, storage_bytes=0, heat_value=0):
+        """写入 DLC DescribeTable 返回的表级存储大小与热度值。"""
+        self.conn.execute(
+            """
+            update tables
+            set storage_bytes = ?, heat_value = ?, stats_updated_at = datetime('now')
+            where name = ?
+            """,
+            (int(storage_bytes or 0), int(heat_value or 0), table_name),
+        )
         self.conn.commit()
 
     def refresh_inferred_layers(self):
@@ -2136,6 +2165,16 @@ class AssetStore:
             "data_source": None if data_source and data_source.get("error") else data_source,
             "expert_label": self._label_or_none("table", table_name),
             "columns": [dict(row) for row in self._all("select name, type, description from columns where table_name = ? order by ordinal, name", (table_name,))],
+            "storage": {
+                "total_storage_bytes": int(table_data.get("storage_bytes") or 0),
+                "source": "dlc_describe_table" if (table_data.get("storage_bytes") or table_data.get("heat_value") or table_data.get("stats_updated_at")) else "not_available",
+                "updated_at": table_data.get("stats_updated_at", ""),
+            },
+            "heat": {
+                "heat_value": int(table_data.get("heat_value") or 0),
+                "source": "dlc_describe_table" if table_data.get("heat_value") else "not_available",
+                "updated_at": table_data.get("stats_updated_at", ""),
+            },
             "lineage": self.get_table_lineage(table_name),
             "quality": {
                 "rule_count": len(rules),
@@ -2323,21 +2362,27 @@ class AssetStore:
         task_counts = self._task_dependency_counts(table_name)
         latest_run_count = len(profile.get("latest_runs") or [])
         expert = profile.get("expert_label") or {}
+        table_data = profile.get("table") or {}
+        heat_value = int(table_data.get("heat_value") or 0)
+        heat_available = heat_value > 0 or bool(table_data.get("stats_updated_at"))
         counts = {
             "downstream_count": len(lineage.get("downstream") or []),
             "consumer_task_count": task_counts.get("consumer_task_count", 0),
             "producer_task_count": task_counts.get("producer_task_count", 0),
             "quality_rule_count": quality.get("rule_count", 0),
             "latest_run_count": latest_run_count,
+            "heat_value": heat_value,
         }
         signals = _usage_signals(counts, expert)
-        gaps = ["缺真实查询日志"]
+        gaps = []
+        if not heat_available:
+            gaps.append("缺真实查询日志")
         if not signals:
             gaps.append("缺使用证据")
         usage_level = _usage_level(counts, expert)
         return {
             "table_name": table_name,
-            "usage_source": "metadata_proxy",
+            "usage_source": "dlc_metadata" if heat_available else "metadata_proxy",
             **counts,
             "expert_use_case": expert.get("use_case", ""),
             "usage_level": usage_level,
@@ -3322,14 +3367,20 @@ def _usage_signals(counts, expert):
         signals.append(f"配置了 {counts.get('quality_rule_count')} 条质量规则。")
     if counts.get("latest_run_count", 0):
         signals.append(f"最近有 {counts.get('latest_run_count')} 条产出运行实例。")
+    if counts.get("heat_value", 0):
+        signals.append(f"DLC 元数据表热度值为 {counts.get('heat_value')}。")
     if expert.get("use_case"):
         signals.append(f"专家标注使用场景：{expert.get('use_case')}。")
     return signals
 
 
 def _usage_level(counts, expert):
+    if counts.get("heat_value", 0) >= 50:
+        return "高"
     if counts.get("downstream_count", 0) >= 5 or counts.get("consumer_task_count", 0) >= 5 or expert.get("use_case"):
         return "高"
+    if counts.get("heat_value", 0) >= 10:
+        return "中"
     if counts.get("downstream_count", 0) or counts.get("consumer_task_count", 0) or counts.get("latest_run_count", 0):
         return "中"
     if counts.get("producer_task_count", 0) or counts.get("quality_rule_count", 0):
@@ -3338,13 +3389,13 @@ def _usage_level(counts, expert):
 
 
 def _usage_profile_suggestions(usage_level, gaps):
-    suggestions = ["接入 BI、网关或查询日志后，可将当前 metadata_proxy 升级为真实使用热度。"]
+    suggestions = []
+    if "缺真实查询日志" in gaps:
+        suggestions.append("当前使用画像不包含真实查询次数、访问用户数和最近访问时间，可运行 DLC 表热度同步（WEDATA_SYNC_TABLE_STATS=1）补充热度值。")
     if usage_level == "高":
         suggestions.append("将该资产纳入重点保障清单，优先补齐 SLA、质量规则和 Owner。")
     elif usage_level in {"低", "未知"}:
         suggestions.append("结合业务 Owner 复核使用价值，判断是否需要沉淀场景或进入下线观察。")
-    if "缺真实查询日志" in gaps:
-        suggestions.append("当前使用画像不包含真实查询次数、访问用户数和最近访问时间。")
     return suggestions
 
 
@@ -4114,6 +4165,15 @@ def _asset_value_dimensions(table, downstream_count, rule_count, failed_runs, ta
         run_stability = 10
     elif latest_runs:
         run_stability = 3
+    heat = int(table.get("heat_value") or 0)
+    if heat >= 50:
+        usage_heat = 10
+    elif heat >= 10:
+        usage_heat = 6
+    elif heat > 0:
+        usage_heat = 3
+    else:
+        usage_heat = 0
     if name.startswith("tmp_") or name.endswith(("_tmp", "_test", "_bak", "_back")):
         business_signal = max(0, business_signal - 10)
         downstream_lineage = min(downstream_lineage, 5)
@@ -4125,7 +4185,7 @@ def _asset_value_dimensions(table, downstream_count, rule_count, failed_runs, ta
         "quality_governance": quality_governance,
         "run_stability": run_stability,
         "business_signal": business_signal,
-        "usage_heat": 0,
+        "usage_heat": usage_heat,
     }
 
 

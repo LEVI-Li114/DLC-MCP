@@ -444,6 +444,13 @@ def _call_tool(store, request, live=None, query_service=None):
             refreshed = _maybe_live_refresh(meta, args, data, lambda item: _has_error(item) or not item.get("columns"), lambda: live.sync_table(args["table_name"]), reason="incomplete" if not data.get("columns") else "")
             if refreshed:
                 data = store.get_table_profile(args["table_name"])
+            if not _has_error(data) and not (data.get("heat") or {}).get("heat_value"):
+                try:
+                    live.sync_table_stats(args["table_name"])
+                    data = store.get_table_profile(args["table_name"])
+                    meta["source"] = "cache_after_live_refresh"
+                except (RuntimeError, ValueError, OSError):
+                    pass
     elif name == "get_table_partition_profile":
         partition_date = args.get("partition_date", "")
         data = store.get_table_partition_profile(args["table_name"], partition_date)
@@ -586,6 +593,12 @@ def _call_tool(store, request, live=None, query_service=None):
         if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("signals")):
             live.sync_table(args["table_name"])
             data = store.get_asset_usage_profile(args["table_name"])
+        if live and not _has_error(data) and not data.get("heat_value"):
+            try:
+                live.sync_table_stats(args["table_name"])
+                data = store.get_asset_usage_profile(args["table_name"])
+            except (RuntimeError, ValueError, OSError):
+                pass
     elif name == "get_asset_lifecycle_profile":
         data = store.get_asset_lifecycle_profile(args["table_name"])
         if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("lifecycle_status") in {"新建/待补齐", "疑似废弃"}):

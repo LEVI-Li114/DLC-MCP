@@ -76,6 +76,14 @@ def main():
         dump["table_partitions"] = partitions_response
         print(f"saved raw table partitions dump to {partitions_path}", flush=True)
 
+    if os.environ.get("WEDATA_SYNC_TABLE_STATS") == "1":
+        stats_response = _sync_table_stats(client, sorted(catalog_tables or {}), catalog_tables=catalog_tables)
+        stats_path = os.path.join(work_dir, "dlc_table_stats.json")
+        with open(stats_path, "w", encoding="utf-8") as f:
+            json.dump(stats_response, f, ensure_ascii=False, indent=2)
+        dump["tables"] = _merge_table_catalog_with_stats(dump.get("tables", {}), stats_response)
+        print(f"saved raw DLC table stats dump to {stats_path}", flush=True)
+
     if os.environ.get("WEDATA_SYNC_DATA_SOURCES") == "1":
         data_sources_response = _list_all(client, "ListDataSources", {"ProjectId": project_id}, page_size)
         data_sources_path = os.path.join(work_dir, "wedata_data_sources.json")
@@ -154,6 +162,8 @@ def main():
         print(f"synced {len(dump['data_sources']['Response']['Data']['Items'])} WeData data sources", flush=True)
     if "table_partitions" in dump:
         print(f"synced partitions for {_response_item_count(dump['table_partitions'])} table partitions", flush=True)
+    if os.environ.get("WEDATA_SYNC_TABLE_STATS") == "1":
+        print(f"synced DLC table stats for {_response_item_count(dump['tables'])} tables", flush=True)
 
 
 def _list_all(client, action, payload, page_size, max_pages=None):
@@ -605,6 +615,75 @@ def _sync_partitions(client, project_id, table_names, page_size, progress_every=
         if progress_every and (index == total or index % progress_every == 0):
             print(f"synced partitions for {index}/{total} tables", flush=True)
     return {"Response": {"Data": {"Items": items}, "PartitionFailures": failures}}
+
+
+def _sync_table_stats(client, table_names, progress_every=10, catalog_tables=None):
+    """通过 DLC DescribeTable 拉取表级存储大小与热度值。"""
+    dlc_client = _partition_client(client)
+    items = []
+    failures = []
+    total = len(table_names)
+    for index, table_name in enumerate(table_names, start=1):
+        catalog_item = (catalog_tables or {}).get(table_name, {})
+        database = (
+            catalog_item.get("DatabaseName")
+            or catalog_item.get("Database")
+            or catalog_item.get("DbName")
+            or catalog_item.get("SchemaName")
+        )
+        if not database:
+            failures.append({"table": table_name, "error": "missing database for DescribeTable"})
+            continue
+        payload = {
+            "DatasourceConnectionName": os.environ.get("DLC_CATALOG", "DataLakeCatalog"),
+            "DatabaseName": database,
+            "TableName": table_name,
+        }
+        try:
+            response = dlc_client.call("DescribeTable", payload)
+        except Exception as exc:  # noqa: BLE001
+            failures.append({"table": table_name, "error": str(exc)})
+            continue
+        if "Error" in response.get("Response", {}):
+            error = response["Response"]["Error"]
+            failures.append({"table": table_name, "error": f"{error.get('Code')} {error.get('Message')}"})
+            continue
+        table = response.get("Response", {}).get("Table") or response.get("Response", {}).get("Data") or {}
+        if not isinstance(table, dict):
+            table = {}
+        item = {
+            "TableName": table_name,
+            "DatabaseName": database,
+            "StorageSize": table.get("StorageSize") or table.get("DataSize") or table.get("TotalSize") or 0,
+            "HeatValue": table.get("HeatValue") or table.get("Heat") or 0,
+        }
+        items.append(item)
+        if progress_every and (index == total or index % progress_every == 0):
+            print(f"synced DLC table stats for {index}/{total} tables", flush=True)
+    return {"Response": {"Data": {"Items": items}, "StatsFailures": failures}}
+
+
+def _merge_table_catalog_with_stats(tables_response, stats_response):
+    """把 DLC DescribeTable 热度/存储合并回 ListTable 表目录响应，供 snapshot 归一化。"""
+    merged = {"Response": {"Data": {"Items": []}}}
+    catalog_items = tables_response.get("Response", {}).get("Data", {}).get("Items") or []
+    by_name = {}
+    for item in catalog_items:
+        name = item.get("Name") or item.get("TableName")
+        if name:
+            by_name[name] = item
+    for stat in stats_response.get("Response", {}).get("Data", {}).get("Items") or []:
+        name = stat.get("TableName")
+        if not name:
+            continue
+        by_name[name] = {
+            **by_name.get(name, {}),
+            "TableName": name,
+            "StorageSize": stat.get("StorageSize", 0),
+            "HeatValue": stat.get("HeatValue", 0),
+        }
+    merged["Response"]["Data"]["Items"] = list(by_name.values())
+    return merged
 
 
 def _partition_payload(project_id, table_name, catalog_item=None):
