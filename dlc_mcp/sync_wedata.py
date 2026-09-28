@@ -619,7 +619,7 @@ def _sync_partitions(client, project_id, table_names, page_size, progress_every=
 
 def _sync_table_stats(client, table_names, progress_every=10, catalog_tables=None):
     """通过 DLC DescribeTable 拉取表级存储大小与热度值。"""
-    dlc_client = _partition_client(client)
+    dlc_client = _dlc_client()
     items = []
     failures = []
     total = len(table_names)
@@ -702,6 +702,18 @@ def _partition_payload(project_id, table_name, catalog_item=None):
         if item.get("DatabaseName") or item.get("Database") or item.get("DbName"):
             payload["DatabaseName"] = item.get("DatabaseName") or item.get("Database") or item.get("DbName")
     return payload
+
+
+def _dlc_client():
+    """构造独立的 DLC 服务客户端（DescribeTable 等 DLC 元数据接口必须用 dlc 服务签名）。"""
+    return TencentCloudClient(
+        os.environ["TENCENTCLOUD_SECRET_ID"],
+        os.environ["TENCENTCLOUD_SECRET_KEY"],
+        "dlc",
+        os.environ.get("DLC_API_VERSION", "2021-01-25"),
+        os.environ.get("TENCENTCLOUD_REGION", "ap-guangzhou"),
+        endpoint=os.environ.get("DLC_ENDPOINT"),
+    )
 
 
 def _partition_client(default_client):

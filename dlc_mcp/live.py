@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 
 from .assets import AssetStore, decode_task_code_info
-from .sync_wedata import _list_partitions, _merge_task_responses, _partition_client, _partition_items, _partition_payload, _partition_payload_ready, _sync_related_task_definitions
+from .sync_wedata import _dlc_client, _list_partitions, _merge_task_responses, _partition_client, _partition_items, _partition_payload, _partition_payload_ready, _sync_related_task_definitions
 from .tencentcloud import TencentCloudClient
 from .wedata import import_wedata_snapshot, snapshot_from_api_dump
 
@@ -80,7 +80,7 @@ class LiveWeData:
             "DatabaseName": database,
             "TableName": table_name,
         }
-        response = _partition_client(self.client).call("DescribeTable", payload)
+        response = _dlc_client().call("DescribeTable", payload)
         if "Error" in response.get("Response", {}):
             error = response["Response"]["Error"]
             raise RuntimeError(f"DescribeTable failed: {error.get('Code')} {error.get('Message')}")
