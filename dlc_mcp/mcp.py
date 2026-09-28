@@ -1624,6 +1624,46 @@ def _owner_display(item):
         return f"{owner} / {owner_name}"
     return owner_name or owner
 
+def _format_table_storage_heat(data):
+    storage = data.get("storage") or {}
+    heat = data.get("heat") or {}
+    has_storage = bool(storage.get("total_storage_bytes"))
+    has_heat = bool(heat.get("heat_value"))
+    if not has_storage and not has_heat:
+        return _section(
+            "存储与热度",
+            [
+                "表级存储/热度暂无数据（可通过 DLC DescribeTable 同步，或查询分区画像获取分区级存储）。",
+                f"存储来源：`{_cell(storage.get('source', 'not_available'))}`",
+                f"热度来源：`{_cell(heat.get('source', 'not_available'))}`",
+            ],
+        )
+    lines = []
+    if has_storage:
+        lines.append(f"总存储大小：**{_human_bytes(storage.get('total_storage_bytes', 0))}** (`{storage.get('total_storage_bytes', 0)}` bytes)")
+    else:
+        lines.append(f"总存储大小：暂未获取 (来源 `{_cell(storage.get('source', 'not_available'))}`)")
+    if has_heat:
+        lines.append(f"表热度值：**{heat.get('heat_value')}**")
+    else:
+        lines.append(f"表热度值：暂未获取 (来源 `{_cell(heat.get('source', 'not_available'))}`)")
+    updated = storage.get("updated_at") or heat.get("updated_at")
+    if updated:
+        lines.append(f"更新于：`{updated}`")
+    return _section("存储与热度", lines)
+
+
+def _human_bytes(size):
+    size = int(size or 0)
+    if size <= 0:
+        return "0"
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} EB"
+
+
 def _format_table_profile(data):
     table = data.get("table", {})
     core = data.get("core", {})
@@ -1655,6 +1695,7 @@ def _format_table_profile(data):
                     f"依据：{', '.join(core.get('reasons') or [])}",
                 ],
             ),
+            _format_table_storage_heat(data),
             _format_expert_label(data.get("expert_label")),
             _section("字段信息", [f"字段数：{len(data.get('columns', []))}"]) + "\n\n" + _table(
                 ["字段名", "类型", "说明"],
