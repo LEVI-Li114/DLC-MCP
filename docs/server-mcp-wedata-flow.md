@@ -43,16 +43,13 @@ TENCENTCLOUD_REGION=ap-guangzhou
 WEDATA_VERSION=2025-08-06
 WEDATA_PROJECT_ID=2881307738992685056
 DLC_MCP_DB=/data/dlc-mcp/assets.db
-WEDATA_SYNC_METADATA=0
+WEDATA_SYNC_FIELDS=0
+WEDATA_SYNC_LINEAGE=0
+WEDATA_SYNC_QUALITY=0
 WEDATA_METADATA_TABLE_LIMIT=50
 WEDATA_METADATA_TABLES=
 WEDATA_SYNC_DATA_SOURCES=0
-WEDATA_SYNC_INSTANCES=0
-WEDATA_INSTANCE_LOOKBACK_DAYS=2
-WEDATA_INSTANCE_KEYWORDS=
-WEDATA_INSTANCE_MAX_PAGES=50
-WEDATA_INSTANCE_START=
-WEDATA_INSTANCE_END=
+WEDATA_INSTANCE_TIMEZONE=UTC+8
 ```
 
 Use the numeric WeData project id, not the project name.
@@ -101,13 +98,13 @@ Enable this when you want real fields, downstream lineage, and quality rules:
 
 ```bash
 cd /opt/dlc-mcp/DLC-MCP
-WEDATA_SYNC_METADATA=1 WEDATA_METADATA_TABLE_LIMIT=50 bash deploy/sync-wedata-incremental.sh
+WEDATA_SYNC_FIELDS=1 WEDATA_SYNC_LINEAGE=1 WEDATA_SYNC_QUALITY=1 WEDATA_METADATA_TABLE_LIMIT=50 bash deploy/sync-wedata-incremental.sh
 ```
 
 For a small targeted run:
 
 ```bash
-WEDATA_SYNC_METADATA=1 WEDATA_METADATA_TABLES=ads_bill_company_1d_di,dws_360_fin_job_seat_1d_di bash deploy/sync-wedata-incremental.sh
+WEDATA_SYNC_FIELDS=1 WEDATA_SYNC_LINEAGE=1 WEDATA_SYNC_QUALITY=1 WEDATA_METADATA_TABLES=ads_bill_company_1d_di,dws_360_fin_job_seat_1d_di bash deploy/sync-wedata-incremental.sh
 ```
 
 This uses:
@@ -137,10 +134,10 @@ After a backfill, do not use row counts alone as the acceptance check. Query `ge
 
 Full fact sync also calls `GetTask` for each task to rebuild real input/output mappings. Data-integration task node JSON is decoded from `TaskConfiguration.CodeContent`; no task-name fallback is allowed. The same mapping connects existing task instances and `data_source_tasks` to tables.
 
-Task instances retain seven calendar days by default:
+Task instances are not batch-synced; they are queried live (see section 6). Cached `task_runs` rows are pruned each incremental run:
 
 ```bash
-DLC_MCP_TASK_RUN_RETENTION_DAYS=7 bash deploy/sync-wedata-full.sh /etc/dlc-mcp/env
+DLC_MCP_TASK_RUN_RETENTION_DAYS=7 bash deploy/sync-wedata-incremental.sh /etc/dlc-mcp/env
 ```
 
 Quality rules are listed once for the project with pagination. A successful response replaces the prior SQLite rule cache; API failure leaves the existing cache intact.
@@ -168,41 +165,36 @@ cd /opt/dlc-mcp/DLC-MCP
 bash deploy/sync-wedata-full.sh /etc/dlc-mcp/env
 ```
 
-This syncs full task mappings, lineage, quality rules, and a wider task-instance window. It writes elapsed time and failures to:
+`deploy/sync-wedata-full.sh` drives four independent switches, all **off by default**. Enable only what you need:
+
+```bash
+DLC_MCP_FULL_SYNC_TASKS=1          # task list (ListTasks)
+DLC_MCP_FULL_SYNC_TASK_DETAILS=1   # per-task detail enrichment (GetTask)
+DLC_MCP_FULL_SYNC_LINEAGE=1        # downstream lineage (ListLineage)
+DLC_MCP_FULL_SYNC_QUALITY=1        # quality rules (ListQualityRules)
+```
+
+It writes elapsed time and failures to:
 
 ```text
 /data/dlc-mcp/sync/wedata_asset_facts_full_report.json
 ```
 
-## 6. Optional: Sync Task Runs
+## 6. Task Runs Are Queried Live
 
-After `ListTaskInstances` works for your tenant, enable run-instance sync:
+Task run instances are not batch-synced into the local store. The `get_task_runs` MCP tool fetches them live through `ListTaskInstances`:
 
-```bash
-sudo vi /etc/dlc-mcp/env
+```
+get_task_runs -> LiveAssetService.get_task_runs -> live.sync_task_runs -> ListTaskInstances
 ```
 
-```bash
-WEDATA_SYNC_INSTANCES=1
-WEDATA_INSTANCE_LOOKBACK_DAYS=2
-WEDATA_INSTANCE_KEYWORDS=ads_bill_company_1d_di,dws_360_fin_job_seat_1d_di
-WEDATA_INSTANCE_MAX_PAGES=50
-WEDATA_INSTANCE_START=2026-07-01 00:00:00
-WEDATA_INSTANCE_END=2026-07-01 23:59:59
-```
-
-Then rerun:
+Query a specific day by passing `instance_date`, or a task by `task_id` / `task_name`. The only related setting is the timezone:
 
 ```bash
-cd /opt/dlc-mcp/DLC-MCP
-bash deploy/sync-wedata-incremental.sh
+WEDATA_INSTANCE_TIMEZONE=UTC+8
 ```
 
-This populates task start time, end time, duration, and status for `get_task_runs(task_id)`.
-
-If `WEDATA_INSTANCE_START` and `WEDATA_INSTANCE_END` are empty, the sync uses a rolling window. With `WEDATA_INSTANCE_LOOKBACK_DAYS=2`, every cron run syncs yesterday and today.
-
-Use `WEDATA_INSTANCE_KEYWORDS` to limit instance sync to task names or task ids. Full-project instance sync can be very large, so do not enable it in scheduled sync without a keyword filter.
+The local `task_runs` table is still used for readiness/health rollups, and stale rows are pruned each incremental run via `DLC_MCP_TASK_RUN_RETENTION_DAYS`.
 
 ## 7. Smoke Test MCP On Server
 

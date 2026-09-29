@@ -170,9 +170,9 @@ def _format_next_actions(health, coverage):
     if counts.get("data_sources", 0) == 0:
         actions.append("开启 `WEDATA_SYNC_DATA_SOURCES=1`，补齐数据源和数据源关联任务。")
     if counts.get("task_runs", 0) == 0:
-        actions.append("用小窗口开启 `WEDATA_SYNC_INSTANCES=1`，补齐任务运行实例。")
+        actions.append("任务运行实例通过 `get_task_runs` 实时查询，按需查询目标任务的日期窗口。")
     if counts.get("columns", 0) == 0 or counts.get("lineage_edges", 0) == 0 or counts.get("quality_rules", 0) == 0:
-        actions.append("开启 `WEDATA_SYNC_METADATA=1` 并限制 `WEDATA_METADATA_TABLE_LIMIT`，补齐字段、血缘、质量规则。")
+        actions.append("开启 `WEDATA_SYNC_FIELDS=1` / `WEDATA_SYNC_LINEAGE=1` / `WEDATA_SYNC_QUALITY=1` 并限制 `WEDATA_METADATA_TABLE_LIMIT`，补齐字段、血缘、质量规则。")
     if not coverage.get("layers"):
         actions.append("当前没有表资产，先确认 `ListTasks` 或 `ListTable` 是否能返回真实表。")
     return _section("建议下一步", actions or ["当前基础覆盖较完整，下一步可抽样核对真实 WeData 页面和 MCP 返回是否一致。"])

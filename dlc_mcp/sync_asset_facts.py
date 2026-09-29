@@ -4,7 +4,7 @@ import os
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from .assets import AssetStore
 from .sync_table_fields import _call_with_retries
@@ -42,25 +42,9 @@ def main():
         metadata = _sync_lineage_quality(client, project_id, tables, page_size, args, report)
         dump.update(metadata)
 
-    if args.sync_instances:
-        start_time, end_time = _instance_window(args)
-        payload = {
-            "ProjectId": project_id,
-            "ScheduleTimeFrom": start_time,
-            "ScheduleTimeTo": end_time,
-            "TimeZone": os.environ.get("WEDATA_INSTANCE_TIMEZONE", "UTC+8"),
-        }
-        if args.instance_keyword:
-            payload["Keyword"] = args.instance_keyword
-        instances = _list_all_retried(client, "ListTaskInstances", payload, page_size, args, max_pages=args.instance_max_pages)
-        dump["task_instances"] = instances
-        report["instance_window"] = {"start": start_time, "end": end_time}
-        report["task_instance_count"] = len(instances.get("Response", {}).get("Data", {}).get("Items") or [])
-
     if report.get("quality_authoritative"):
         report["stale_quality_rules_deleted"] = store.clear_quality_rules()
     import_wedata_snapshot(store, snapshot_from_api_dump(dump))
-    report["task_run_retention"] = store.prune_task_runs(args.task_run_retention_days)
     report.update(
         {
             "started_at": datetime.now().isoformat(timespec="seconds"),
@@ -86,16 +70,11 @@ def _parse_args():
     parser.add_argument("--max-retries", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_MAX_RETRIES", "5")))
     parser.add_argument("--retry-base-sleep", type=float, default=float(os.environ.get("WEDATA_FULL_FACTS_RETRY_BASE_SLEEP", "2")))
     parser.add_argument("--progress-every", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_PROGRESS_EVERY", "50")))
-    parser.add_argument("--instance-lookback-days", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_INSTANCE_LOOKBACK_DAYS", "7")))
-    parser.add_argument("--instance-max-pages", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_INSTANCE_MAX_PAGES", "500")))
-    parser.add_argument("--instance-keyword", default=os.environ.get("WEDATA_FULL_FACTS_INSTANCE_KEYWORD", ""))
     parser.add_argument("--task-detail-workers", type=int, default=int(os.environ.get("WEDATA_FULL_FACTS_TASK_DETAIL_WORKERS", "8")))
-    parser.add_argument("--task-run-retention-days", type=int, default=int(os.environ.get("DLC_MCP_TASK_RUN_RETENTION_DAYS", "7")))
     parser.add_argument("--sync-tasks", action="store_true", default=os.environ.get("WEDATA_FULL_FACTS_SYNC_TASKS", "1") == "1")
     parser.add_argument("--sync-task-details", action="store_true", default=os.environ.get("WEDATA_FULL_FACTS_SYNC_TASK_DETAILS", "1") == "1")
     parser.add_argument("--sync-lineage", action="store_true", default=os.environ.get("WEDATA_FULL_FACTS_SYNC_LINEAGE", "1") == "1")
     parser.add_argument("--sync-quality", action="store_true", default=os.environ.get("WEDATA_FULL_FACTS_SYNC_QUALITY", "1") == "1")
-    parser.add_argument("--sync-instances", action="store_true", default=os.environ.get("WEDATA_FULL_FACTS_SYNC_INSTANCES", "1") == "1")
     parser.add_argument("--fail-on-error", action="store_true", default=os.environ.get("WEDATA_FULL_FACTS_FAIL_ON_ERROR", "0") == "1")
     return parser.parse_args()
 
@@ -217,12 +196,6 @@ def _call_page(client, action, payload, page, page_size, args):
 def _pages_from_total(data, page_size):
     total = int(data.get("TotalCount") or 0)
     return (total + page_size - 1) // page_size if total else 0
-
-
-def _instance_window(args):
-    end = datetime.now()
-    start = end - timedelta(days=max(args.instance_lookback_days, 1) - 1)
-    return f"{start:%Y-%m-%d} 00:00:00", f"{end:%Y-%m-%d} 23:59:59"
 
 
 def _sleep(args):

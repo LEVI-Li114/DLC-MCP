@@ -236,18 +236,11 @@ DLC_MCP_GATEWAY_TOKEN=your-token \
 
 ```bash
 WEDATA_SYNC_TABLE_CATALOG=1 \
-WEDATA_SYNC_METADATA=1 \
+WEDATA_SYNC_FIELDS=1 \
+WEDATA_SYNC_LINEAGE=1 \
+WEDATA_SYNC_QUALITY=1 \
 WEDATA_METADATA_TABLE_LIMIT=50 \
 WEDATA_SYNC_DATA_SOURCES=1 \
-WEDATA_SYNC_INSTANCES=1 \
-WEDATA_INSTANCE_MAX_PAGES=20 \
-bash deploy/sync-wedata-incremental.sh
-```
-
-如果任务实例量太大，先加关键词限制：
-
-```bash
-WEDATA_INSTANCE_KEYWORDS=ads_bill_company_1d_di,dws_360_fin_job_seat_1d_di \
 bash deploy/sync-wedata-incremental.sh
 ```
 
@@ -260,7 +253,6 @@ bash deploy/sync-wedata-incremental.sh
 - 字段能同步。
 - 数据源能同步。
 - 数据源关联任务能同步。
-- 任务运行实例能同步。
 - raw JSON dump 已保存。
 - SQLite 中有结构化资产数据。
 - MCP smoke test 可以列出工具并查询资产。
@@ -287,18 +279,14 @@ DLC_MCP_SYNC_DIR=/data/dlc-mcp/sync
 
 WEDATA_PAGE_SIZE=100
 WEDATA_SYNC_TABLE_CATALOG=1
-WEDATA_SYNC_METADATA=1
+WEDATA_SYNC_FIELDS=1
+WEDATA_SYNC_LINEAGE=1
+WEDATA_SYNC_QUALITY=1
 WEDATA_METADATA_TABLE_LIMIT=100
 WEDATA_METADATA_TABLES=
 WEDATA_METADATA_WORKERS=4
 
 WEDATA_SYNC_DATA_SOURCES=1
-WEDATA_SYNC_INSTANCES=1
-WEDATA_INSTANCE_LOOKBACK_DAYS=2
-WEDATA_INSTANCE_KEYWORDS=
-WEDATA_INSTANCE_MAX_PAGES=50
-WEDATA_INSTANCE_START=
-WEDATA_INSTANCE_END=
 WEDATA_INSTANCE_TIMEZONE=UTC+8
 
 DLC_MCP_GATEWAY_HOST=0.0.0.0
@@ -533,7 +521,7 @@ partial
 
 - 未同步 WeData 任务列表。
 - 未同步任务表映射。
-- 未同步任务运行实例。
+- 任务运行实例未缓存（可用 get_task_runs 实时查询）。
 - 未同步数据源。
 - 未同步数据源关联任务。
 
@@ -579,19 +567,15 @@ DLC_MCP_PYTHON=python3
 WEDATA_PAGE_SIZE=100
 WEDATA_SYNC_TABLE_CATALOG=1
 
-WEDATA_SYNC_METADATA=1
+WEDATA_SYNC_FIELDS=1
+WEDATA_SYNC_LINEAGE=1
+WEDATA_SYNC_QUALITY=1
 WEDATA_METADATA_TABLE_LIMIT=50
 WEDATA_METADATA_TABLES=
 WEDATA_METADATA_WORKERS=4
 
 WEDATA_SYNC_DATA_SOURCES=1
 
-WEDATA_SYNC_INSTANCES=1
-WEDATA_INSTANCE_LOOKBACK_DAYS=2
-WEDATA_INSTANCE_KEYWORDS=
-WEDATA_INSTANCE_MAX_PAGES=20
-WEDATA_INSTANCE_START=
-WEDATA_INSTANCE_END=
 WEDATA_INSTANCE_TIMEZONE=UTC+8
 
 DLC_MCP_SYNC_HEALTH_CHECK=1
@@ -599,12 +583,7 @@ DLC_MCP_SYNC_GAP_TYPES=fields,lineage,quality,tasks,runs,data_source
 DLC_MCP_SYNC_GAP_LIMIT=20
 ```
 
-如果 `ListTaskInstances` 数据量过大或接口耗时，先限制关键词：
-
-```bash
-WEDATA_INSTANCE_KEYWORDS=ads_bill_company_1d_di,dws_360_fin_job_seat_1d_di
-WEDATA_INSTANCE_MAX_PAGES=20
-```
+任务运行实例不再批量同步，改为通过 `get_task_runs` 实时查询（`ListTaskInstances`）。
 
 ### 12.3 执行命令
 
@@ -672,12 +651,12 @@ python3 -m dlc_mcp.call_wedata_api ListTasks '{"ProjectId":"'$WEDATA_PROJECT_ID'
 
 #### 运行实例仍为 0
 
-优先检查：
+任务实例改为实时查询，优先检查：
 
-- `WEDATA_SYNC_INSTANCES=1` 是否生效。
-- 时间窗口是否有真实实例。
-- `WEDATA_INSTANCE_KEYWORDS` 是否过滤过严。
-- `WEDATA_INSTANCE_MAX_PAGES` 是否太小。
+- 调 `get_task_runs` 时传入的 `instance_date` / `task_id` 是否正确。
+- `ListTaskInstances` 是否有权限。
+- 该日期窗口内任务是否确有调度。
+- `WEDATA_INSTANCE_TIMEZONE` 是否与 WeData 项目时区一致。
 
 ## 13. 核心资产判断模型 V1
 

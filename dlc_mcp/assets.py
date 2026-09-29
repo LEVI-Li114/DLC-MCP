@@ -1586,7 +1586,7 @@ class AssetStore:
         if counts["quality_rules"] == 0:
             gaps.append("未同步质量规则")
         if counts["task_runs"] == 0:
-            gaps.append("未同步任务运行实例")
+            gaps.append("任务运行实例未缓存（可用 get_task_runs 实时查询）")
         if counts["data_sources"] == 0:
             gaps.append("未同步数据源")
         if counts["projects"] == 0:
@@ -3240,7 +3240,7 @@ def _production_suggestions(tasks, status):
     if status == "running":
         suggestions.append("任务仍在执行中，关注是否超过预期调度耗时。")
     if status == "not_run":
-        suggestions.append("找到产出任务但没有匹配运行实例，扩大实例同步窗口或确认 `WEDATA_INSTANCE_KEYWORDS` 命中任务。")
+        suggestions.append("找到产出任务但没有匹配运行实例，请用 `get_task_runs` 按日期实时查询确认。")
     if status == "unknown":
         suggestions.append("存在未知 WeData 实例状态，保留原始状态并补充状态映射。")
     return suggestions
@@ -3538,7 +3538,7 @@ def _missing_task_runs_issue_detail(table):
         )
     return (
         "instance_window_gap",
-        "Check ListTaskInstances time window, max pages, WEDATA_INSTANCE_KEYWORDS, and task_id alignment.",
+        "Check ListTaskInstances time window and task_id alignment via the live get_task_runs query.",
     )
 
 
@@ -3599,7 +3599,7 @@ def _cache_producer_diagnosis(layer, task_count, producer_count, consumer_count,
         return (
             "producer_present_run_missing",
             "该表已存在 output/producer 任务，问题应转向运行实例诊断。",
-            "检查 ListTaskInstances 时间窗口、关键词、分页和 task_id 对齐。",
+            "检查 ListTaskInstances 时间窗口、分页和 task_id 对齐，或用 `get_task_runs` 实时查询。",
         )
     if layer in {"", "unknown"}:
         return (
@@ -4092,11 +4092,11 @@ def _readiness_check(name, status, evidence, scored=True):
 
 def _table_readiness_actions(gaps):
     actions = {
-        "缺字段信息": "开启 `WEDATA_SYNC_METADATA=1`，检查 `ListTable` 是否返回 GUID 以及 `GetTableColumns` 权限。",
+        "缺字段信息": "开启 `WEDATA_SYNC_FIELDS=1`，检查 `ListTable` 是否返回 GUID 以及 `GetTableColumns` 权限。",
         "缺血缘信息": "检查 `ListLineage` 权限和表 GUID，必要时确认 WeData 是否维护血缘。",
         "缺质量规则": "与数仓/治理 Owner 确认是否需要补充分区产出、主键/非空、金额/数量合理性等质量规则。",
         "缺相关任务": "检查 `ListTasks` 返回的 inputs/outputs 是否包含该表，并核对任务表解析映射。",
-        "缺最近运行实例": "扩大 `WEDATA_INSTANCE_LOOKBACK_DAYS` 或设置 `WEDATA_INSTANCE_KEYWORDS` 命中相关任务。",
+        "缺最近运行实例": "任务实例走 `get_task_runs` 实时查询，请确认查询日期窗口内该任务确有调度。",
         "缺数据源关联": "检查 `ListTable` 是否返回 data_source_id，并开启 `WEDATA_SYNC_DATA_SOURCES=1`。",
     }
     return [actions.get(gap, f"补齐：{gap}") for gap in gaps] or ["画像信息较完整，可进入 Owner 核对、质量规则复核和使用场景沉淀。"]
@@ -4503,10 +4503,7 @@ def _normalize_gap_type(gap_type):
 
 def _task_run_window_from_env():
     return {
-        "start": os.environ.get("WEDATA_INSTANCE_START", ""),
-        "end": os.environ.get("WEDATA_INSTANCE_END", ""),
         "timezone": os.environ.get("WEDATA_INSTANCE_TIMEZONE", "UTC+8"),
-        "keywords": os.environ.get("WEDATA_INSTANCE_KEYWORDS", ""),
         "retention_days": int(os.environ.get("DLC_MCP_TASK_RUN_RETENTION_DAYS", "7") or 7),
     }
 

@@ -23,13 +23,25 @@ class DeployScriptsTest(unittest.TestCase):
             "DLC_MCP_PYTHON",
             "WEDATA_PAGE_SIZE",
             "WEDATA_SYNC_TABLE_CATALOG",
+            "WEDATA_SYNC_FIELDS",
+            "WEDATA_SYNC_LINEAGE",
+            "WEDATA_SYNC_QUALITY",
             "WEDATA_METADATA_WORKERS",
             "WEDATA_FULL_FIELDS_REQUEST_INTERVAL",
             "WEDATA_FULL_FIELDS_MAX_RETRIES",
+            "DLC_MCP_FULL_SYNC_TASKS",
+            "DLC_MCP_FULL_SYNC_TASK_DETAILS",
+            "DLC_MCP_FULL_SYNC_LINEAGE",
+            "DLC_MCP_FULL_SYNC_QUALITY",
             "WEDATA_SYNC_DATA_SOURCES",
             "WEDATA_SYNC_PARTITIONS",
             "WEDATA_PARTITION_ACTION",
             "WEDATA_INSTANCE_TIMEZONE",
+            "DLC_MCP_DAILY_SYNC_TASKS",
+            "DLC_MCP_DAILY_SYNC_TASK_DETAILS",
+            "DLC_MCP_DAILY_SYNC_FIELDS",
+            "DLC_MCP_DAILY_SYNC_LINEAGE",
+            "DLC_MCP_DAILY_SYNC_QUALITY",
             "DLC_MCP_SYNC_HEALTH_CHECK",
             "DLC_MCP_SYNC_GAP_TYPES",
             "DLC_MCP_SYNC_GAP_LIMIT",
@@ -38,7 +50,8 @@ class DeployScriptsTest(unittest.TestCase):
         ]:
             self.assertIn(key, env)
 
-        self.assertIn("WEDATA_FULL_FACTS_INSTANCE_LOOKBACK_DAYS=7", env)
+        self.assertNotIn("WEDATA_SYNC_INSTANCES", env)
+        self.assertNotIn("DLC_MCP_DAILY_SYNC_METADATA", env)
         self.assertNotIn("DLC_MCP_MONTHLY_", env)
 
     def test_incremental_sync_uses_yesterday_window(self):
@@ -49,7 +62,12 @@ class DeployScriptsTest(unittest.TestCase):
         self.assertIn("WEDATA_NEW_ASSET_END", script)
         self.assertIn("WEDATA_SYNC_PARTITIONS", script)
         self.assertIn("DLC_MCP_DAILY_SYNC_PARTITIONS:-0", script)
-        self.assertIn("DLC_MCP_DAILY_SYNC_INSTANCES:-0", script)
+        self.assertIn("DLC_MCP_DAILY_SYNC_TASKS:-1", script)
+        self.assertIn("DLC_MCP_DAILY_SYNC_TASK_DETAILS:-1", script)
+        self.assertIn("DLC_MCP_DAILY_SYNC_FIELDS:-1", script)
+        self.assertIn("DLC_MCP_DAILY_SYNC_LINEAGE:-1", script)
+        self.assertIn("DLC_MCP_DAILY_SYNC_QUALITY:-1", script)
+        self.assertNotIn("DLC_MCP_DAILY_SYNC_INSTANCES", script)
         self.assertIn("WEDATA_PARTITION_DATE", script)
         self.assertIn("WEDATA_NEW_ASSET_DATE_FIELDS", script)
         self.assertIn("metadata_date_fields", script)
@@ -66,6 +84,11 @@ class DeployScriptsTest(unittest.TestCase):
 
         self.assertIn("dlc_mcp.sync_asset_facts", script)
         self.assertIn("dlc_mcp.sync_table_fields", script)
+        self.assertIn("DLC_MCP_FULL_SYNC_TASKS:-0", script)
+        self.assertIn("DLC_MCP_FULL_SYNC_TASK_DETAILS:-0", script)
+        self.assertIn("DLC_MCP_FULL_SYNC_LINEAGE:-0", script)
+        self.assertIn("DLC_MCP_FULL_SYNC_QUALITY:-0", script)
+        self.assertNotIn("WEDATA_FULL_FACTS_SYNC_INSTANCES", script)
         self.assertIn("elapsed_seconds", script)
         self.assertIn("finished_at", script)
         self.assertIn("sync_status", script)

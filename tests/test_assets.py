@@ -517,7 +517,7 @@ class AssetStoreTest(unittest.TestCase):
         self.assertEqual(health["counts"]["tables"], 2)
         self.assertEqual(health["counts"]["tasks"], 1)
         self.assertEqual(health["latest_signals"]["latest_task_run_start"], "2026-07-07 08:00:00")
-        self.assertNotIn("未同步任务运行实例", health["gaps"])
+        self.assertNotIn("任务运行实例未缓存（可用 get_task_runs 实时查询）", health["gaps"])
         self.assertEqual(health["status"], "partial")
         self.assertIn("coverage_ratios", health)
         layers = {row["layer"]: row for row in coverage["layers"]}
@@ -529,10 +529,7 @@ class AssetStoreTest(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "WEDATA_INSTANCE_START": "2026-07-13 00:00:00",
-                "WEDATA_INSTANCE_END": "2026-07-13 23:59:59",
                 "WEDATA_INSTANCE_TIMEZONE": "UTC+8",
-                "WEDATA_INSTANCE_KEYWORDS": "daily",
                 "DLC_MCP_TASK_RUN_RETENTION_DAYS": "7",
             },
         ):
@@ -541,10 +538,7 @@ class AssetStoreTest(unittest.TestCase):
         self.assertEqual(
             health["task_run_window"],
             {
-                "start": "2026-07-13 00:00:00",
-                "end": "2026-07-13 23:59:59",
                 "timezone": "UTC+8",
-                "keywords": "daily",
                 "retention_days": 7,
             },
         )
@@ -841,7 +835,7 @@ class AssetStoreTest(unittest.TestCase):
         self.assertGreater(readiness["score"], 0)
         self.assertEqual(readiness["summary"]["layer"], "ads")
         self.assertIn("缺最近运行实例", readiness["gaps"])
-        self.assertTrue(any("WEDATA_INSTANCE" in action for action in readiness["next_actions"]))
+        self.assertTrue(any("get_task_runs" in action for action in readiness["next_actions"]))
         self.assertEqual(readiness["related_tasks"][0]["task_name"], "ads_customer_revenue_daily")
         self.assertEqual(readiness["related_tasks"][0]["owner"], "data-finance")
         self.assertEqual(readiness["related_tasks"][0]["cycle"], "DAY")

@@ -2,7 +2,7 @@ import json
 import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from .assets import AssetStore
 from .partitioning import partition_matches_date, partition_metadata_for_table, partition_sync_target_date
@@ -15,6 +15,11 @@ def main():
     db_path = os.environ.get("DLC_MCP_DB", "/data/dlc-mcp/assets.db")
     work_dir = os.environ.get("DLC_MCP_SYNC_DIR", "/data/dlc-mcp/sync")
     page_size = int(os.environ.get("WEDATA_PAGE_SIZE", "100"))
+    sync_tasks = os.environ.get("WEDATA_SYNC_TASKS", "1") == "1"
+    sync_task_details = os.environ.get("WEDATA_SYNC_TASK_DETAILS", "1") == "1"
+    sync_fields = os.environ.get("WEDATA_SYNC_FIELDS", "1") == "1"
+    sync_lineage = os.environ.get("WEDATA_SYNC_LINEAGE", "1") == "1"
+    sync_quality = os.environ.get("WEDATA_SYNC_QUALITY", "1") == "1"
 
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
     os.makedirs(work_dir, exist_ok=True)
@@ -22,16 +27,21 @@ def main():
     client = TencentCloudClient.wedata_from_env()
     store = AssetStore(sqlite3.connect(db_path))
     store.init_schema()
-    tasks_response = _list_all(client, "ListTasks", {"ProjectId": project_id}, page_size)
-    tasks_path = os.path.join(work_dir, "wedata_tasks.json")
-    with open(tasks_path, "w", encoding="utf-8") as f:
-        json.dump(tasks_response, f, ensure_ascii=False, indent=2)
 
-    dump = {"tasks": tasks_response}
+    dump = {}
+    metadata_dump = {}
+    tasks_response = {}
+    tasks_path = os.path.join(work_dir, "wedata_tasks.json")
+    if sync_tasks:
+        tasks_response = _list_all(client, "ListTasks", {"ProjectId": project_id}, page_size)
+        with open(tasks_path, "w", encoding="utf-8") as f:
+            json.dump(tasks_response, f, ensure_ascii=False, indent=2)
+        dump["tasks"] = tasks_response
+
     changed_tasks = []
     task_change_start = os.environ.get("WEDATA_TASK_CHANGE_START", "")
     task_change_end = os.environ.get("WEDATA_TASK_CHANGE_END", "")
-    if task_change_start and task_change_end:
+    if sync_tasks and sync_task_details and task_change_start and task_change_end:
         changed_tasks = _filter_changed_tasks(tasks_response, task_change_start, task_change_end)
         print(f"found {len(changed_tasks)} changed WeData tasks", flush=True)
         if changed_tasks:
@@ -59,12 +69,22 @@ def main():
         table_names = sorted(set(table_names) | set(catalog_tables))
         print(f"saved raw table catalog dump to {tables_path}", flush=True)
 
-    if os.environ.get("WEDATA_SYNC_METADATA") == "1":
+    if sync_fields or sync_lineage or sync_quality:
         table_change_start = _table_change_start()
         table_change_end = _table_change_end()
         if table_change_start and table_change_end:
             table_names = _filter_new_asset_tables(table_names, catalog_tables, table_change_start, table_change_end)
-        metadata_dump = _sync_metadata(client, project_id, table_names, page_size, work_dir, catalog_tables)
+        metadata_dump = _sync_metadata(
+            client,
+            project_id,
+            table_names,
+            page_size,
+            work_dir,
+            catalog_tables,
+            sync_fields=sync_fields,
+            sync_lineage=sync_lineage,
+            sync_quality=sync_quality,
+        )
         dump.update(_merge_metadata_dump(dump, metadata_dump))
 
     if os.environ.get("WEDATA_SYNC_PARTITIONS") == "1":
@@ -102,21 +122,6 @@ def main():
                 json.dump(related_task_definitions, f, ensure_ascii=False, indent=2)
             dump["tasks"] = _merge_task_responses(dump.get("tasks", {}), related_task_definitions)
 
-    if os.environ.get("WEDATA_SYNC_INSTANCES") == "1":
-        instance_payload = {"ProjectId": project_id}
-        start_time, end_time = _instance_window()
-        instance_payload["ScheduleTimeFrom"] = start_time
-        instance_payload["ScheduleTimeTo"] = end_time
-        instance_payload["TimeZone"] = os.environ.get("WEDATA_INSTANCE_TIMEZONE", "UTC+8")
-        if os.environ.get("WEDATA_INSTANCE_KEYWORDS"):
-            instance_payload["Keyword"] = os.environ["WEDATA_INSTANCE_KEYWORDS"]
-        max_pages = int(os.environ.get("WEDATA_INSTANCE_MAX_PAGES", "50"))
-        instances_response = _list_all(client, "ListTaskInstances", instance_payload, page_size, max_pages=max_pages)
-        instances_path = os.path.join(work_dir, "wedata_task_instances.json")
-        with open(instances_path, "w", encoding="utf-8") as f:
-            json.dump(instances_response, f, ensure_ascii=False, indent=2)
-        dump["task_instances"] = instances_response
-
     repair_tasks = _repair_task_targets_from_env(store)
     if repair_tasks:
         print(f"repairing {len(repair_tasks)} WeData task targets", flush=True)
@@ -124,39 +129,36 @@ def main():
         dump["tasks"] = _merge_task_responses(dump.get("tasks", {}), repair_definitions)
         repair_codes, repair_code_failures = _sync_changed_task_codes(client, project_id, repair_tasks)
         repair_relations, repair_relation_failures = _sync_changed_task_relations(client, project_id, repair_tasks, page_size)
-        repair_runs, repair_run_failures = _sync_repair_task_runs(client, project_id, repair_tasks, page_size)
         dump["repair_task_codes"] = repair_codes
         dump["repair_task_relations"] = repair_relations
-        dump["repair_task_runs"] = repair_runs
         _merge_task_relation_maps_into_dump(dump, project_id, repair_relations)
-        _merge_task_run_maps_into_dump(dump, repair_runs)
         dump["task_enrichment_failures"] = [
             *dump.get("task_enrichment_failures", []),
             *repair_code_failures,
             *repair_relation_failures,
-            *repair_run_failures,
         ]
     imported_snapshot = snapshot_from_api_dump(dump)
     import_wedata_snapshot(store, imported_snapshot)
-    task_reconcile = store.reconcile_active_tasks([task.get("id", "") for task in task_snapshot["tasks"]])
+    task_reconcile = None
+    if sync_tasks:
+        task_reconcile = store.reconcile_active_tasks([task.get("id", "") for task in task_snapshot["tasks"]])
     table_reconcile = None
     if "tables" in dump:
         table_reconcile = store.reconcile_active_tables(_catalog_table_names(dump["tables"]))
     retention = store.prune_task_runs(int(os.environ.get("DLC_MCP_TASK_RUN_RETENTION_DAYS", "7")))
 
-    total = len(tasks_response["Response"]["Data"]["Items"])
-    print(f"synced {total} WeData tasks into {db_path}", flush=True)
-    print(f"saved raw task dump to {tasks_path}", flush=True)
-    print(f"marked {task_reconcile['deactivated_count']} tasks inactive after task catalog reconciliation", flush=True)
-    if "task_instances" in dump:
-        run_total = len(dump["task_instances"]["Response"]["Data"]["Items"])
-        print(f"synced {run_total} WeData task instances", flush=True)
-        print(f"pruned {retention['deleted_count']} task instances older than {retention['cutoff_date']}", flush=True)
+    if sync_tasks:
+        total = len(tasks_response["Response"]["Data"]["Items"])
+        print(f"synced {total} WeData tasks into {db_path}", flush=True)
+        print(f"saved raw task dump to {tasks_path}", flush=True)
+        if task_reconcile:
+            print(f"marked {task_reconcile['deactivated_count']} tasks inactive after task catalog reconciliation", flush=True)
+    print(f"pruned {retention['deleted_count']} task runs older than {retention['cutoff_date']}", flush=True)
     if "tables" in dump:
         print(f"synced table catalog for {_response_item_count(dump['tables'])} tables", flush=True)
         if table_reconcile:
             print(f"marked {table_reconcile['deactivated_count']} tables inactive after catalog reconciliation", flush=True)
-    if os.environ.get("WEDATA_SYNC_METADATA") == "1":
+    if sync_fields or sync_lineage or sync_quality:
         print(f"synced metadata details for {_metadata_table_count(metadata_dump)} tables", flush=True)
     if "data_sources" in dump:
         print(f"synced {len(dump['data_sources']['Response']['Data']['Items'])} WeData data sources", flush=True)
@@ -501,39 +503,6 @@ def _merge_task_relation_maps_into_dump(dump, project_id, relation_maps):
             existing[f"{project_id}:{task_id}:{direction}"] = response
     if existing:
         dump["task_relations"] = existing
-
-
-def _merge_task_run_maps_into_dump(dump, run_maps):
-    items = []
-    current = dump.get("task_instances")
-    if isinstance(current, dict):
-        items.extend(current.get("Response", {}).get("Data", {}).get("Items") or [])
-    for response in (run_maps or {}).values():
-        items.extend(response.get("Response", {}).get("Data", {}).get("Items") or [])
-    if items:
-        dump["task_instances"] = {"Response": {"Data": {"Items": items}}}
-
-
-def _sync_repair_task_runs(client, project_id, repair_tasks, page_size):
-    responses = {}
-    failures = []
-    start_time, end_time = _instance_window()
-    for item in repair_tasks:
-        task_id, task_name = _task_identity(item)
-        if not task_id:
-            continue
-        payload = {
-            "ProjectId": project_id,
-            "TaskId": task_id,
-            "ScheduleTimeFrom": start_time,
-            "ScheduleTimeTo": end_time,
-            "TimeZone": os.environ.get("WEDATA_INSTANCE_TIMEZONE", "UTC+8"),
-        }
-        try:
-            responses[task_id] = _list_all(client, "ListTaskInstances", payload, page_size)
-        except Exception as exc:
-            failures.append({"task_id": task_id, "task_name": task_name, "action": "ListTaskInstances", "error": str(exc)})
-    return responses, failures
 
 
 def _partition_sync_mode():
@@ -958,16 +927,17 @@ def _date_in_window(value, start, end):
     return bool(value and start and end and start <= value <= end)
 
 
-def _instance_window():
-    if os.environ.get("WEDATA_INSTANCE_START") and os.environ.get("WEDATA_INSTANCE_END"):
-        return os.environ["WEDATA_INSTANCE_START"], os.environ["WEDATA_INSTANCE_END"]
-    days = int(os.environ.get("WEDATA_INSTANCE_LOOKBACK_DAYS", "2"))
-    today = datetime.now().date()
-    start = today - timedelta(days=max(days, 1) - 1)
-    return f"{start:%Y-%m-%d} 00:00:00", f"{today:%Y-%m-%d} 23:59:59"
-
-
-def _sync_metadata(client, project_id, table_names, page_size, work_dir, catalog_tables=None):
+def _sync_metadata(
+    client,
+    project_id,
+    table_names,
+    page_size,
+    work_dir,
+    catalog_tables=None,
+    sync_fields=True,
+    sync_lineage=True,
+    sync_quality=True,
+):
     if os.environ.get("WEDATA_METADATA_TABLES"):
         table_names = [name.strip() for name in os.environ["WEDATA_METADATA_TABLES"].split(",") if name.strip()]
     limit = int(os.environ.get("WEDATA_METADATA_TABLE_LIMIT", "50"))
@@ -983,7 +953,17 @@ def _sync_metadata(client, project_id, table_names, page_size, work_dir, catalog
     total = len(table_names)
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(_sync_one_metadata_table, client, project_id, table_name, page_size, (catalog_tables or {}).get(table_name)): table_name
+            executor.submit(
+                _sync_one_metadata_table,
+                client,
+                project_id,
+                table_name,
+                page_size,
+                (catalog_tables or {}).get(table_name),
+                sync_fields,
+                sync_lineage,
+                sync_quality,
+            ): table_name
             for table_name in table_names
         }
         for index, future in enumerate(as_completed(futures), start=1):
@@ -1018,7 +998,16 @@ def _sync_metadata(client, project_id, table_names, page_size, work_dir, catalog
     return payload
 
 
-def _sync_one_metadata_table(client, project_id, table_name, page_size, catalog_table=None):
+def _sync_one_metadata_table(
+    client,
+    project_id,
+    table_name,
+    page_size,
+    catalog_table=None,
+    sync_fields=True,
+    sync_lineage=True,
+    sync_quality=True,
+):
     table = dict(catalog_table or {})
     if not table:
         table_response = client.call("ListTable", {"PageNumber": 1, "PageSize": 20, "Keyword": table_name})
@@ -1031,9 +1020,10 @@ def _sync_one_metadata_table(client, project_id, table_name, page_size, catalog_
     table_lineage = []
     failures = []
     guid = table.get("Guid")
-    if guid:
+    if guid and sync_fields:
         column_response = client.call("GetTableColumns", {"TableGuid": guid})
         table["Columns"] = column_response.get("Response", {}).get("Data") or []
+    if guid and sync_lineage:
         try:
             lineage_response = _list_all(
                 client,
@@ -1047,17 +1037,18 @@ def _sync_one_metadata_table(client, project_id, table_name, page_size, catalog_
         except Exception as exc:
             failures.append({"table": table_name, "guid": guid, "action": "ListLineage", "error": str(exc)})
 
-    try:
-        quality_response = _list_all(
-            client,
-            "ListQualityRules",
-            {"ProjectId": project_id, "Filters": [{"Name": "TableName", "Values": [table_name]}]},
-            page_size,
-        )
-        table_quality_rules = quality_response.get("Response", {}).get("Data", {}).get("Items", []) or []
-    except Exception as exc:
-        failures.append({"table": table_name, "guid": guid, "action": "ListQualityRules", "error": str(exc)})
-        table_quality_rules = []
+    table_quality_rules = []
+    if sync_quality:
+        try:
+            quality_response = _list_all(
+                client,
+                "ListQualityRules",
+                {"ProjectId": project_id, "Filters": [{"Name": "TableName", "Values": [table_name]}]},
+                page_size,
+            )
+            table_quality_rules = quality_response.get("Response", {}).get("Data", {}).get("Items", []) or []
+        except Exception as exc:
+            failures.append({"table": table_name, "guid": guid, "action": "ListQualityRules", "error": str(exc)})
     return table_name, table, column_response, table_lineage, table_quality_rules, failures
 
 

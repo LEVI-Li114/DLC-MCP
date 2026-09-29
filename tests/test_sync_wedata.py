@@ -2,7 +2,7 @@ import os
 import sqlite3
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime, timedelta
+from datetime import datetime
 from io import StringIO
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -14,7 +14,6 @@ from dlc_mcp.sync_wedata import (
     _filter_changed_tasks,
     _filter_new_asset_tables,
     _filter_partition_table_names,
-    _instance_window,
     _item_dates,
     _list_all,
     _merge_task_responses,
@@ -27,7 +26,6 @@ from dlc_mcp.sync_wedata import (
     _sync_changed_task_relations,
     _sync_data_source_tasks,
     _sync_metadata,
-    _sync_repair_task_runs,
     _sync_partitions,
     _table_change_date_fields,
     _table_change_end,
@@ -249,22 +247,6 @@ class FakeChangedTaskClient:
 
 
 class SyncWeDataTest(unittest.TestCase):
-    def test_instance_window_uses_explicit_dates(self):
-        with patch.dict(
-            os.environ,
-            {"WEDATA_INSTANCE_START": "2026-07-01 00:00:00", "WEDATA_INSTANCE_END": "2026-07-01 23:59:59"},
-        ):
-            self.assertEqual(_instance_window(), ("2026-07-01 00:00:00", "2026-07-01 23:59:59"))
-
-    def test_instance_window_defaults_to_two_day_rolling_window(self):
-        with patch.dict(os.environ, {}, clear=True):
-            start, end = _instance_window()
-
-        today = datetime.now().date()
-        yesterday = today - timedelta(days=1)
-        self.assertEqual(start, f"{yesterday:%Y-%m-%d} 00:00:00")
-        self.assertEqual(end, f"{today:%Y-%m-%d} 23:59:59")
-
     def test_data_source_task_sync_prints_progress(self):
         data_sources = {"Response": {"Data": {"Items": [{"Id": 1}, {"Id": 2}]}}}
         output = StringIO()
@@ -288,9 +270,10 @@ class SyncWeDataTest(unittest.TestCase):
                     "DLC_MCP_SYNC_DIR": tmpdir,
                     "WEDATA_SYNC_TABLE_CATALOG": "0",
                     "WEDATA_SYNC_DATA_SOURCES": "1",
-                    "WEDATA_SYNC_METADATA": "0",
+                    "WEDATA_SYNC_FIELDS": "0",
+                    "WEDATA_SYNC_LINEAGE": "0",
+                    "WEDATA_SYNC_QUALITY": "0",
                     "WEDATA_SYNC_PARTITIONS": "0",
-                    "WEDATA_SYNC_INSTANCES": "0",
                 },
             ), patch("dlc_mcp.sync_wedata.TencentCloudClient.wedata_from_env", return_value=client), redirect_stdout(StringIO()):
                 main()
@@ -514,17 +497,6 @@ class SyncWeDataTest(unittest.TestCase):
             targets = _repair_task_targets_from_env(store)
 
         self.assertEqual([item["TaskId"] for item in targets], ["task_1", "task_2"])
-
-    def test_sync_repair_task_runs_fetches_runs_for_repair_tasks(self):
-        client = FakeChangedTaskClient()
-        with patch.dict(os.environ, {"WEDATA_INSTANCE_START": "2026-07-14 00:00:00", "WEDATA_INSTANCE_END": "2026-07-14 23:59:59"}, clear=False):
-            runs, failures = _sync_repair_task_runs(client, "project", [{"TaskId": "task_1", "TaskName": "one"}], 100)
-
-        self.assertEqual(failures, [])
-        self.assertIn("task_1", runs)
-        payloads = [payload for action, payload in client.calls if action == "ListTaskInstances"]
-        self.assertEqual(payloads[0]["TaskId"], "task_1")
-        self.assertEqual(payloads[0]["ScheduleTimeFrom"], "2026-07-14 00:00:00")
 
     def test_metadata_sync_prints_progress(self):
         output = StringIO()

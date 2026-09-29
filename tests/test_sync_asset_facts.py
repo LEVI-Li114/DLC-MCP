@@ -25,13 +25,11 @@ class FakeClient:
             return {"Response": {"Data": {"Items": [{"Resource": {"ResourceProperties": [{"Name": "TableName", "Value": "ads_downstream"}]}}]}}}
         if action == "ListQualityRules":
             return {"Response": {"Data": {"Items": [{"TableName": "ads_bill_company_1d_di", "Name": "not_null", "Target": "id"}]}}}
-        if action == "ListTaskInstances":
-            return {"Response": {"Data": {"Items": [{"TaskId": "task_1", "InstanceId": "inst_1", "Status": "COMPLETED"}]}}}
         return {"Response": {"Data": {"Items": []}}}
 
 
 class SyncAssetFactsTest(unittest.TestCase):
-    def test_full_asset_facts_imports_tasks_lineage_quality_and_runs(self):
+    def test_full_asset_facts_imports_tasks_lineage_and_quality(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "assets.db")
             client = FakeClient()
@@ -42,7 +40,6 @@ class SyncAssetFactsTest(unittest.TestCase):
             self.assertEqual(store.get_task("task_1")["outputs"], ["ads_bill_company_1d_di"])
             self.assertEqual(store.get_task("task_1")["inputs"], ["ods_bill_company_di"])
             self.assertEqual(store.get_quality_status("ads_bill_company_1d_di")["rule_count"], 1)
-            self.assertEqual(store.get_task_runs("task_1")["runs"][0]["status"], "COMPLETED")
             report = json.loads((Path(tmp) / "wedata_asset_facts_full_report.json").read_text())
             self.assertEqual(report["failed_count"], 0)
             quality_calls = [payload for action, payload in client.calls if action == "ListQualityRules"]
