@@ -1132,6 +1132,34 @@ class AssetStore:
             )
         self.conn.commit()
 
+    def upsert_task_table_mappings(self, task_id, table_names, direction):
+        """Insert parsed task-table mappings without clearing existing rows."""
+        if not task_id or direction not in ("input", "output"):
+            return 0
+        relation_type = "reads_table" if direction == "input" else "writes_table"
+        task = self._one("select name from tasks where id = ?", (task_id,))
+        task_name = task["name"] if task else ""
+        inserted = 0
+        for table_name in table_names or []:
+            cursor = self.conn.execute(
+                "insert or ignore into task_tables (task_id, table_name, direction) values (?, ?, ?)",
+                (task_id, table_name, direction),
+            )
+            inserted += cursor.rowcount
+            self.upsert_asset_edge(
+                "task",
+                task_id,
+                "table",
+                table_name,
+                relation_type,
+                "wedata_task_code",
+                "medium",
+                {"task_name": task_name, "direction": direction},
+                commit=False,
+            )
+        self.conn.commit()
+        return inserted
+
     def reconcile_task_tables_from_lineage(self, limit=100, apply=False, table=""):
         rows = self._all(
             """

@@ -14,7 +14,6 @@ DYNAMIC_TOOLS = {
     "get_task_runs",
     "get_quality_status",
     "get_table_lineage",
-    "get_table_tasks",
     "get_task_code",
     "get_table_risk_profile",
     "get_table_readiness",
@@ -29,7 +28,6 @@ REGISTRY_TOOLS = {
     "list_table_columns",
     "list_data_sources",
     "get_data_source",
-    "list_data_source_tasks",
     "get_data_source_inventory",
     "list_projects",
     "get_project",
@@ -43,9 +41,7 @@ PATROL_TOOLS = {
     "get_asset_governance_daily_report",
     "get_asset_governance_issue_inventory",
     "list_table_production_risks",
-    "list_quality_gaps",
-    "list_asset_coverage_gaps",
-    "list_expert_review_queue",
+    "list_asset_gaps",
 }
 
 VALID_SOURCES = {

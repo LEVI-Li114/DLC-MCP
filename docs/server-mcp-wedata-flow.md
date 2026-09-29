@@ -124,13 +124,13 @@ The MCP server also supports cache-first, on-demand refresh for project and task
 | `list_projects(live=true)` | `ListProjects` | `projects` |
 | `get_project(live=true)` | `GetProject` | `projects` |
 | `list_project_members(live=true)` | `ListProjectMembers` | `project_members` |
-| `list_downstream_tasks(live=true)` | `ListDownstreamTasks` | `task_relations` |
-| `list_upstream_tasks(live=true)` | `ListUpstreamTasks` | `task_relations` |
+| `list_task_relations(direction="downstream", live=true)` | `ListDownstreamTasks` | `task_relations` |
+| `list_task_relations(direction="upstream", live=true)` | `ListUpstreamTasks` | `task_relations` |
 | `get_table(live=true)` | `GetTable` | `tables` |
 
 `GetTable` accepts only `TableGuid` in this integration. Resolve and cache the GUID through the table catalog first. Do not derive output tables from task-name prefixes.
 
-After a backfill, do not use row counts alone as the acceptance check. Query `get_sync_health`, `get_asset_coverage`, and `list_asset_coverage_gaps`, then sample tables across ODS/DIM/DWD/DWS/ADS to verify fields, lineage, tasks, runs, quality rules, and data-source links.
+After a backfill, do not use row counts alone as the acceptance check. Query `get_sync_health`, `get_asset_coverage`, and `list_asset_gaps(view="coverage")`, then sample tables across ODS/DIM/DWD/DWS/ADS to verify fields, lineage, tasks, runs, quality rules, and data-source links.
 
 Full fact sync also calls `GetTask` for each task to rebuild real input/output mappings. Data-integration task node JSON is decoded from `TaskConfiguration.CodeContent`; no task-name fallback is allowed. The same mapping connects existing task instances and `data_source_tasks` to tables.
 

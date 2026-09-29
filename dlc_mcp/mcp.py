@@ -1,10 +1,12 @@
 import json
 import os
+from datetime import datetime
 
 from .cleanup_derived_tables import cleanup_task_name_pseudo_tables
 from .dlc_query import QueryValidationError
 from .live_assets import LiveAssetService
 from .source import Source, resolve_source
+from .wedata import task_output_tables
 
 
 def _with_source_schema(schema):
@@ -45,6 +47,29 @@ TOOLS = {
                 "max_results": {"type": "integer", "minimum": 1, "maximum": 1000},
             },
             "required": ["task_id"],
+        },
+    },
+    "get_dlc_task_resource_usage": {
+        "description": (
+            "Return the DLC engine resource profile for one task instance. "
+            "task_instance_id must be the DLC TaskInstanceId (the engine-side task instance id, "
+            "e.g. from WeData setEngineTaskInfo.engineJobId), not a WeData instance_id; "
+            "no implicit mapping is performed. The Core usage curve always comes from "
+            "DescribeTaskResourceUsage. Optionally set include_cost=true and pass cost_task_id "
+            "(the DLC task-id used by DescribeTasksAnalysis) to add CU consumption analysis; "
+            "cost_task_id is never derived from task_instance_id."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "task_instance_id": {"type": "string", "description": "DLC TaskInstanceId, not a WeData instance_id."},
+                "include_cost": {"type": "boolean", "description": "Also query CU consumption analysis."},
+                "cost_task_id": {"type": "string", "description": "DLC task-id filter for cost analysis; not derived from task_instance_id."},
+                "cost_start_time": {"type": "string", "description": "Cost analysis window start, format yyyy-mm-dd HH:MM:SS."},
+                "cost_end_time": {"type": "string", "description": "Cost analysis window end, format yyyy-mm-dd HH:MM:SS."},
+                "cost_limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+            "required": ["task_instance_id"],
         },
     },
     "search_assets": {
@@ -108,10 +133,6 @@ TOOLS = {
         "description": "Return upstream and downstream assets for a table.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
     },
-    "get_table_tasks": {
-        "description": "Return ETL tasks that read from or produce a table.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]},
-    },
     "get_task_runs": {
         "description": "Return task instances by task id or exact task name, with optional instance date filter.",
         "schema": {
@@ -126,7 +147,7 @@ TOOLS = {
         },
     },
     "get_task_code": {
-        "description": "Return SQL/code content for a WeData task from cache or live GetTaskCode refresh.",
+        "description": "Return SQL/code content for a WeData task from cache or live GetTaskCode refresh, plus output tables parsed from SQL task code.",
         "schema": {
             "type": "object",
             "properties": {
@@ -144,17 +165,14 @@ TOOLS = {
         "description": "Return one data source by id, including configuration details stored in the fact database.",
         "schema": {"type": "object", "properties": {"data_source_id": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["data_source_id"]},
     },
-    "list_data_source_tasks": {
-        "description": "List WeData tasks related to one data source.",
-        "schema": {"type": "object", "properties": {"data_source_id": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["data_source_id"]},
-    },
     "get_data_source_inventory": {
-        "description": "Return one data source's related tasks, parsed tables, SQL DDL, and unresolved/missing-field gaps.",
+        "description": "Return one data source's related tasks, parsed tables, SQL DDL, and unresolved/missing-field gaps. view=tasks returns only the related task list.",
         "schema": {
             "type": "object",
             "properties": {
                 "data_source_id": {"type": "string"},
                 "data_source_name": {"type": "string"},
+                "view": {"type": "string", "enum": ["full", "tasks"]},
                 "live": {"type": "boolean"},
             },
         },
@@ -187,17 +205,27 @@ TOOLS = {
         "description": "Explain metric definition for ads/dws tables from fields, lineage, and tasks.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
     },
-    "list_quality_gaps": {
-        "description": "List tables with downstream dependencies but no quality rules.",
-        "schema": {"type": "object", "properties": {"layer": {"type": "string"}, "domain": {"type": "string"}, "limit": {"type": "integer"}}},
+    "list_asset_gaps": {
+        "description": (
+            "List table assets with governance gaps. view=quality lists high-impact tables without quality rules; "
+            "view=expert_review lists high-impact unlabelled tables; view=coverage lists tables with missing asset "
+            "profile coverage (optionally filtered by gap_type)."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "view": {"type": "string", "enum": ["quality", "expert_review", "coverage"]},
+                "gap_type": {"type": "string", "description": "Only used when view=coverage."},
+                "layer": {"type": "string"},
+                "domain": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+            "required": ["view"],
+        },
     },
     "get_expert_label": {
         "description": "Return expert label for one asset.",
         "schema": {"type": "object", "properties": {"asset_type": {"type": "string"}, "asset_name": {"type": "string"}}, "required": ["asset_name"]},
-    },
-    "list_expert_review_queue": {
-        "description": "List high-impact tables that need expert labeling.",
-        "schema": {"type": "object", "properties": {"layer": {"type": "string"}, "limit": {"type": "integer"}}},
     },
     "list_projects": {
         "description": "List WeData projects cached from Tencent Cloud ListProjects.",
@@ -211,13 +239,18 @@ TOOLS = {
         "description": "List members and roles for a WeData project, defaulting to WEDATA_PROJECT_ID.",
         "schema": {"type": "object", "properties": {"project_id": {"type": "string"}, "live": {"type": "boolean"}}},
     },
-    "list_downstream_tasks": {
-        "description": "List downstream WeData tasks for a task id.",
-        "schema": {"type": "object", "properties": {"task_id": {"type": "string"}, "project_id": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["task_id"]},
-    },
-    "list_upstream_tasks": {
-        "description": "List upstream WeData tasks for a task id.",
-        "schema": {"type": "object", "properties": {"task_id": {"type": "string"}, "project_id": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["task_id"]},
+    "list_task_relations": {
+        "description": "List upstream or downstream WeData tasks for a task id.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "direction": {"type": "string", "enum": ["upstream", "downstream"]},
+                "project_id": {"type": "string"},
+                "live": {"type": "boolean"},
+            },
+            "required": ["task_id", "direction"],
+        },
     },
     "get_table": {
         "description": "Return Tencent Cloud WeData table metadata detail by table_name or table_guid.",
@@ -234,17 +267,6 @@ TOOLS = {
     "get_asset_coverage": {
         "description": "Return asset coverage by layer for tables, fields, lineage, quality rules, tasks, data sources, and runs.",
         "schema": {"type": "object", "properties": {}},
-    },
-    "list_asset_coverage_gaps": {
-        "description": "List tables with missing asset profile coverage, filtered by gap type or layer.",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "gap_type": {"type": "string"},
-                "layer": {"type": "string"},
-                "limit": {"type": "integer"},
-            },
-        },
     },
     "get_asset_governance_issue_inventory": {
         "description": "Return deterministic governance issue inventory for real asset gaps, grouped by issue type, layer, core level, and evidence.",
@@ -270,10 +292,6 @@ TOOLS = {
             },
         },
     },
-    "is_core_table": {
-        "description": "Decide whether a table is core and return explainable scoring reasons.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]},
-    },
     "cleanup_task_name_pseudo_tables": {
         "description": "Delete task-name pseudo-table rows from the asset fact database after a dry run, using strict safeguards.",
         "schema": {
@@ -289,7 +307,7 @@ TOOLS = {
 
 
 for _tool_name, _tool_spec in TOOLS.items():
-    if _tool_name not in {"submit_dlc_sql_query", "get_dlc_sql_query_result"}:
+    if _tool_name not in {"submit_dlc_sql_query", "get_dlc_sql_query_result", "get_dlc_task_resource_usage"}:
         _tool_spec["schema"] = _with_source_schema(_tool_spec["schema"])
 
 
@@ -317,6 +335,16 @@ def handle_request(store, request, live=None, query_service=None):
 
 def _live_fallback(args, data, predicate):
     return args.get("live") or predicate(data)
+
+
+def _sync_task_output_tables(store, data):
+    """Parse output tables from task code and persist the mapping; return the parsed names."""
+    task_id = data.get("task_id", "")
+    task = store.resolve_task(task_id) or {}
+    tables = task_output_tables(task.get("task_type", ""), data.get("code_text", ""))
+    if tables:
+        store.upsert_task_table_mappings(task_id, tables, "output")
+    return tables
 
 
 def _has_error(data):
@@ -430,6 +458,22 @@ def _call_tool(store, request, live=None, query_service=None):
                     )
             except (QueryValidationError, RuntimeError, ValueError, OSError) as exc:
                 data = _error_data(str(exc))
+    elif name == "get_dlc_task_resource_usage":
+        meta["source"] = "dlc_live"
+        if query_service is None:
+            data = _error_data("dlc_query_service_unavailable")
+        else:
+            try:
+                data = query_service.resource_usage(
+                    args.get("task_instance_id", ""),
+                    include_cost=bool(args.get("include_cost")),
+                    cost_task_id=args.get("cost_task_id", ""),
+                    cost_start_time=args.get("cost_start_time", ""),
+                    cost_end_time=args.get("cost_end_time", ""),
+                    cost_limit=args.get("cost_limit", 10),
+                )
+            except (QueryValidationError, RuntimeError, ValueError, OSError) as exc:
+                data = _error_data(str(exc))
     elif name == "search_assets":
         data = store.search_assets(args["query"])
     elif name == "search_tasks":
@@ -506,12 +550,6 @@ def _call_tool(store, request, live=None, query_service=None):
             refreshed = _maybe_live_refresh(meta, args, data, lambda item: not item.get("downstream"), lambda: live.sync_table(args["table_name"]), reason="incomplete" if not data.get("downstream") else "")
             if refreshed:
                 data = store.get_table_lineage(args["table_name"])
-    elif name == "get_table_tasks":
-        data = store.get_table_tasks(args["table_name"])
-        if live:
-            refreshed = _maybe_live_refresh(meta, args, data, _empty_list("tasks"), lambda: live.sync_table(args["table_name"]))
-            if refreshed:
-                data = store.get_table_tasks(args["table_name"])
     elif name == "get_task_runs":
         if not args.get("task_id") and not args.get("task_name"):
             data = _error_data("missing_task_identity")
@@ -551,6 +589,8 @@ def _call_tool(store, request, live=None, query_service=None):
                 )
                 if refreshed:
                     data = store.get_task_code(project_id, args.get("task_id", ""), args.get("task_name", ""))
+            if not _has_error(data):
+                data["output_tables"] = _sync_task_output_tables(store, data)
     elif name == "list_data_sources":
         data = store.list_data_sources(args.get("query", ""))
         if live and _live_fallback(args, data, _empty_list("results")):
@@ -562,17 +602,22 @@ def _call_tool(store, request, live=None, query_service=None):
             refreshed = _maybe_live_refresh(meta, args, data, _has_error, lambda: live.sync_data_sources(args["data_source_id"]))
             if refreshed:
                 data = store.get_data_source(args["data_source_id"])
-    elif name == "list_data_source_tasks":
-        data = store.list_data_source_tasks(args["data_source_id"])
-        if live:
-            refreshed = _maybe_live_refresh(meta, args, data, _empty_list("tasks"), lambda: live.sync_data_sources(args["data_source_id"]))
-            if refreshed:
-                data = store.list_data_source_tasks(args["data_source_id"])
     elif name == "get_data_source_inventory":
-        data = store.get_data_source_inventory(args.get("data_source_id", ""), args.get("data_source_name", ""))
-        if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("gaps", {}).get("unresolved_task_count")):
-            live.sync_data_sources(args.get("data_source_id") or args.get("data_source_name", ""))
-            data = store.get_data_source_inventory(args.get("data_source_id", ""), args.get("data_source_name", ""))
+        view = args.get("view", "full")
+        if view not in {"full", "tasks"}:
+            data = _error_data("invalid_view", view=view, supported_views=["full", "tasks"])
+        else:
+            data_source_id = args.get("data_source_id", "")
+            data_source_name = args.get("data_source_name", "")
+            if not data_source_id and not data_source_name:
+                data = _error_data("missing_data_source_identity")
+            else:
+                data = store.get_data_source_inventory(data_source_id, data_source_name)
+                if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("gaps", {}).get("unresolved_task_count")):
+                    live.sync_data_sources(data_source_id or data_source_name)
+                    data = store.get_data_source_inventory(data_source_id, data_source_name)
+            if not _has_error(data):
+                data["view"] = view
     elif name == "get_table_risk_profile":
         data = store.get_table_risk_profile(args["table_name"])
         if live and _live_fallback(args, data, _has_error):
@@ -614,12 +659,22 @@ def _call_tool(store, request, live=None, query_service=None):
         if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("metric_fields")):
             live.sync_table(args["table_name"])
             data = store.get_metric_definition(args["table_name"])
-    elif name == "list_quality_gaps":
-        data = store.list_quality_gaps(args.get("layer", ""), args.get("domain", ""), args.get("limit", 50))
+    elif name == "list_asset_gaps":
+        view = args.get("view", "")
+        layer = args.get("layer", "")
+        limit = args.get("limit", 50)
+        if view == "quality":
+            data = store.list_quality_gaps(layer, args.get("domain", ""), limit)
+        elif view == "expert_review":
+            data = store.list_expert_review_queue(layer, limit)
+        elif view == "coverage":
+            data = store.list_asset_coverage_gaps(args.get("gap_type", ""), layer, limit)
+        else:
+            data = _error_data("invalid_view", view=view, supported_views=["quality", "expert_review", "coverage"])
+        if not _has_error(data):
+            data["view"] = view
     elif name == "get_expert_label":
         data = store.get_expert_label(args.get("asset_type", "table"), args["asset_name"])
-    elif name == "list_expert_review_queue":
-        data = store.list_expert_review_queue(args.get("layer", ""), args.get("limit", 50))
     elif name == "list_projects":
         data = store.list_projects(args.get("query", ""))
         if live and _live_fallback(args, data, _empty_list("results")):
@@ -643,24 +698,19 @@ def _call_tool(store, request, live=None, query_service=None):
             if live and _live_fallback(args, data, _empty_list("members")):
                 live.sync_project_members(project_id)
                 data = store.list_project_members(project_id)
-    elif name == "list_downstream_tasks":
-        project_id = _project_id_arg(args)
-        if not project_id:
-            data = _error_data("missing_project_id")
+    elif name == "list_task_relations":
+        direction = args.get("direction", "")
+        if direction not in {"upstream", "downstream"}:
+            data = _error_data("invalid_direction", direction=direction)
         else:
-            data = store.list_task_relations(project_id, args["task_id"], "downstream")
-            if live and _live_fallback(args, data, _empty_list("relations")):
-                live.sync_task_relations(args["task_id"], "downstream", project_id)
-                data = store.list_task_relations(project_id, args["task_id"], "downstream")
-    elif name == "list_upstream_tasks":
-        project_id = _project_id_arg(args)
-        if not project_id:
-            data = _error_data("missing_project_id")
-        else:
-            data = store.list_task_relations(project_id, args["task_id"], "upstream")
-            if live and _live_fallback(args, data, _empty_list("relations")):
-                live.sync_task_relations(args["task_id"], "upstream", project_id)
-                data = store.list_task_relations(project_id, args["task_id"], "upstream")
+            project_id = _project_id_arg(args)
+            if not project_id:
+                data = _error_data("missing_project_id")
+            else:
+                data = store.list_task_relations(project_id, args["task_id"], direction)
+                if live and _live_fallback(args, data, _empty_list("relations")):
+                    live.sync_task_relations(args["task_id"], direction, project_id)
+                    data = store.list_task_relations(project_id, args["task_id"], direction)
     elif name == "get_table":
         table_name = args.get("table_name", "")
         table_guid = args.get("table_guid", "")
@@ -681,8 +731,6 @@ def _call_tool(store, request, live=None, query_service=None):
         data = store.get_sync_health()
     elif name == "get_asset_coverage":
         data = store.get_asset_coverage()
-    elif name == "list_asset_coverage_gaps":
-        data = store.list_asset_coverage_gaps(args.get("gap_type", ""), args.get("layer", ""), args.get("limit", 50))
     elif name == "get_asset_governance_issue_inventory":
         if source == Source.LEGACY_CACHE:
             meta["source"] = Source.LEGACY_CACHE
@@ -719,7 +767,7 @@ def _call_tool(store, request, live=None, query_service=None):
     elif name == "cleanup_task_name_pseudo_tables":
         data = cleanup_task_name_pseudo_tables(store.conn, args.get("data_source_id", ""), bool(args.get("apply", False)))
     else:
-        data = store.is_core_table(args["table_name"])
+        return _error(request, -32602, "unknown_tool")
 
     return _result(request, {"content": [{"type": "text", "text": _format_with_meta(name, data, meta)}]})
 
@@ -827,6 +875,47 @@ def _format_markdown(tool_name, data):
         elif rows not in (None, [], ""):
             result += "\n\n```json\n" + json.dumps(rows, ensure_ascii=False, indent=2) + "\n```"
         return result
+    if tool_name == "get_dlc_task_resource_usage":
+        series = data.get("series") or []
+        lines = [
+            f"DLC 任务实例 ID：`{_cell(data.get('task_instance_id'))}`",
+            f"采样点数：{len(series)}",
+        ]
+        if not series:
+            lines.append("_未返回 Core 用量曲线；请确认该 TaskInstanceId 属于 DLC 引擎侧实例。_")
+        result = _section("DLC 引擎 Core 用量曲线", lines)
+        if series:
+            result += "\n\n" + _table(
+                ["时间戳(毫秒)", "时间", "Core 用量"],
+                [[point.get("timestamp"), _format_epoch_millis(point.get("timestamp")), point.get("core_usage")] for point in series],
+            )
+        cost = data.get("cost_analysis")
+        if cost:
+            cost_lines = [
+                f"任务 ID：`{_cell(cost.get('task_id'))}`",
+                f"统计窗口：`{_cell(cost.get('start_time'))}` ~ `{_cell(cost.get('end_time'))}`",
+                f"匹配实例数：{_cell(cost.get('total_count'))}",
+            ]
+            if cost.get("error"):
+                cost_lines.append(f"错误：`{_cell(cost.get('error'))}`")
+            result += "\n\n" + _section("DLC CU 消耗分析", cost_lines)
+            tasks = cost.get("tasks") or []
+            if tasks:
+                result += "\n\n" + _table(
+                    ["实例 ID", "状态", "引擎", "开始时间", "执行耗时(毫秒)", "CU 资源消耗(秒)"],
+                    [
+                        [
+                            task.get("id"),
+                            task.get("state"),
+                            task.get("data_engine_name"),
+                            _format_epoch_millis(task.get("instance_start_time")),
+                            task.get("job_time_sum_ms"),
+                            task.get("task_time_sum_seconds"),
+                        ]
+                        for task in tasks
+                    ],
+                )
+        return result
     if tool_name == "get_asset_governance_issue_inventory" and data.get("source") == "patrol_snapshot":
         if data.get("error"):
             return _section("治理问题清单", [f"错误：`{_cell(data.get('error'))}`", "没有可用巡检快照，请先运行每日巡检。"])
@@ -866,9 +955,9 @@ def _format_markdown(tool_name, data):
             ["成员ID", "账号", "展示名", "角色", "角色ID", "类型", "加入时间"],
             [[r.get("member_id"), r.get("member_name"), r.get("display_name"), r.get("role_name"), r.get("role_id"), r.get("member_type"), r.get("join_time")] for r in rows],
         )
-    if tool_name in {"list_downstream_tasks", "list_upstream_tasks"}:
+    if tool_name == "list_task_relations":
         rows = data.get("relations", [])
-        title = "下游任务" if tool_name == "list_downstream_tasks" else "上游任务"
+        title = "下游任务" if data.get("direction") == "downstream" else "上游任务"
         return _section(title, [f"项目ID：`{_cell(data.get('project_id'))}`", f"TaskId：`{_cell(data.get('task_id'))}`", f"任务数：{len(rows)}"]) + "\n\n" + _table(
             ["相关TaskId", "任务名", "依赖类型", "负责人", "状态"],
             [[r.get("related_task_id"), r.get("related_task_name"), r.get("dependency_type"), r.get("owner"), r.get("status")] for r in rows],
@@ -904,13 +993,13 @@ def _format_markdown(tool_name, data):
             ["配置项", "值"],
             [[k, v] for k, v in config.items()],
         )
-    if tool_name == "list_data_source_tasks":
-        rows = data.get("tasks", [])
-        return _section("数据源关联任务", [f"数据源ID：`{_cell(data.get('data_source_id'))}`", f"任务数：{len(rows)}"]) + "\n\n" + _table(
-            ["TaskId", "任务名", "类型", "项目", "创建时间", "负责人"],
-            [[r.get("task_id"), r.get("task_name"), r.get("task_type"), r.get("project_name"), r.get("create_time"), r.get("owner")] for r in rows],
-        )
     if tool_name == "get_data_source_inventory":
+        if data.get("view") == "tasks":
+            rows = data.get("tasks") or []
+            return _section("数据源关联任务", [f"数据源ID：`{_cell((data.get('data_source') or {}).get('id'))}`", f"任务数：{len(rows)}"]) + "\n\n" + _table(
+                ["TaskId", "任务名", "类型", "项目", "创建时间", "负责人"],
+                [[r.get("task_id"), r.get("task_name"), _task_type_display(r.get("task_type")), r.get("project_name"), r.get("create_time"), r.get("owner")] for r in rows],
+            )
         return _format_data_source_inventory(data)
     if tool_name == "get_table_risk_profile":
         return "\n\n".join(
@@ -945,29 +1034,32 @@ def _format_markdown(tool_name, data):
         return _format_asset_change_impact(data)
     if tool_name == "get_metric_definition":
         return _format_metric_definition(data)
-    if tool_name == "list_quality_gaps":
+    if tool_name == "list_asset_gaps":
+        view = data.get("view") or ""
         rows = data.get("results", [])
-        return _section("质量监控缺口", [f"层级：`{_cell(data.get('layer'))}`", f"领域：`{_cell(data.get('domain'))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
+        if view == "coverage":
+            return _format_asset_coverage_gaps(data)
+        title = "质量监控缺口" if view == "quality" else "专家评审队列"
+        header = [f"层级：`{_cell(data.get('layer'))}`"]
+        if view == "quality":
+            header.append(f"领域：`{_cell(data.get('domain'))}`")
+        header.append(f"数量：{len(rows)}")
+        return _section(title, header) + "\n\n" + _table(
             ["表名", "层级", "领域", "负责人", "下游依赖数", "质量规则数"],
             [[r.get("name"), r.get("layer"), r.get("domain"), r.get("owner"), r.get("downstream_count"), r.get("quality_rule_count")] for r in rows],
         )
     if tool_name == "get_expert_label":
         return _format_expert_label(data)
-    if tool_name == "list_expert_review_queue":
-        rows = data.get("results", [])
-        return _section("专家评审队列", [f"层级：`{_cell(data.get('layer'))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
-            ["表名", "层级", "领域", "负责人", "下游依赖数", "质量规则数"],
-            [[r.get("name"), r.get("layer"), r.get("domain"), r.get("owner"), r.get("downstream_count"), r.get("quality_rule_count")] for r in rows],
-        )
     if tool_name == "search_tasks":
         rows = data.get("results", [])
         return _section("任务搜索结果", [f"查询：`{_cell(data.get('query'))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
             ["TaskId", "任务名", "类型", "负责人", "状态", "产出表"],
-            [[r.get("id"), r.get("name"), r.get("task_type"), _owner_display(r), r.get("status"), ", ".join(r.get("outputs") or [])] for r in rows],
+            [[r.get("id"), r.get("name"), _task_type_display(r.get("task_type")), _owner_display(r), r.get("status"), ", ".join(r.get("outputs") or [])] for r in rows],
         )
     if tool_name == "get_task_code":
         code_text = data.get("code_text", "")
         language = _code_fence_language(code_text)
+        output_tables = data.get("output_tables") or []
         return _section(
             "任务代码",
             [
@@ -977,6 +1069,7 @@ def _format_markdown(tool_name, data):
                 f"代码大小：{data.get('code_file_size', 0)}",
                 f"编码：`{_cell(data.get('encoding'))}`",
                 f"更新时间：{_cell(data.get('updated_at'))}",
+                f"输出表：{', '.join(f'`{name}`' for name in output_tables) if output_tables else '（无，仅支持 SQL 类任务解析）'}",
             ],
         ) + f"\n\n```{language}\n{code_text}\n```"
     if tool_name == "get_task_runs":
@@ -1120,49 +1213,49 @@ def _format_markdown(tool_name, data):
                 _section("说明", data.get("coverage_notes") or []),
             ]
         )
-    if tool_name == "list_asset_coverage_gaps":
-        rows = data.get("results", [])
-        return "\n\n".join(
-            [
-                _section(
-                    "资产画像缺口清单",
-                    [
-                        f"缺口类型：`{_cell(data.get('gap_type'))}`",
-                        f"层级：`{_cell(data.get('layer'))}`",
-                        f"数量：{len(rows)}",
-                        f"支持类型：{', '.join(data.get('supported_gap_types') or [])}",
-                    ],
-                ),
-                _table(
-                    ["表名", "层级", "负责人", "字段", "质量规则", "上游", "下游", "任务", "产出任务", "运行实例", "运行实例缺口原因", "数据源", "缺口", "疑似原因", "下一步检查"],
-                    [
-                        [
-                            r.get("name"),
-                            r.get("layer"),
-                            r.get("owner"),
-                            r.get("column_count"),
-                            r.get("quality_rule_count"),
-                            r.get("upstream_count"),
-                            r.get("downstream_count"),
-                            r.get("task_count"),
-                            r.get("producer_task_count"),
-                            r.get("run_count"),
-                            _run_gap_reason_label(r.get("run_gap_reason")),
-                            r.get("data_source_id"),
-                            "、".join(r.get("gaps") or []),
-                            r.get("suspected_root_cause", ""),
-                            r.get("recommended_next_check", ""),
-                        ]
-                        for r in rows
-                    ],
-                ),
-            ]
-        )
     if tool_name == "get_asset_governance_daily_report":
         return _format_asset_governance_daily_report(data)
-    if tool_name == "is_core_table":
-        return _format_core_decision(data)
     return "```json\n" + json.dumps(data, ensure_ascii=False, indent=2) + "\n```"
+
+
+def _format_asset_coverage_gaps(data):
+    rows = data.get("results", [])
+    return "\n\n".join(
+        [
+            _section(
+                "资产画像缺口清单",
+                [
+                    f"缺口类型：`{_cell(data.get('gap_type'))}`",
+                    f"层级：`{_cell(data.get('layer'))}`",
+                    f"数量：{len(rows)}",
+                    f"支持类型：{', '.join(data.get('supported_gap_types') or [])}",
+                ],
+            ),
+            _table(
+                ["表名", "层级", "负责人", "字段", "质量规则", "上游", "下游", "任务", "产出任务", "运行实例", "运行实例缺口原因", "数据源", "缺口", "疑似原因", "下一步检查"],
+                [
+                    [
+                        r.get("name"),
+                        r.get("layer"),
+                        r.get("owner"),
+                        r.get("column_count"),
+                        r.get("quality_rule_count"),
+                        r.get("upstream_count"),
+                        r.get("downstream_count"),
+                        r.get("task_count"),
+                        r.get("producer_task_count"),
+                        r.get("run_count"),
+                        _run_gap_reason_label(r.get("run_gap_reason")),
+                        r.get("data_source_id"),
+                        "、".join(r.get("gaps") or []),
+                        r.get("suspected_root_cause", ""),
+                        r.get("recommended_next_check", ""),
+                    ]
+                    for r in rows
+                ],
+            ),
+        ]
+    )
 
 
 def _run_gap_reason_label(reason):
@@ -1173,16 +1266,68 @@ def _run_gap_reason_label(reason):
     return labels.get(reason or "", "")
 
 
+TASK_TYPE_LABELS = {
+    "21": "JDBC SQL",
+    "23": "TDSQL-PostgreSQL",
+    "26": "离线同步",
+    "30": "Python",
+    "31": "PySpark",
+    "32": "DLC SQL",
+    "33": "Impala",
+    "34": "Hive SQL",
+    "35": "Shell",
+    "36": "Spark SQL",
+    "38": "Shell 表单",
+    "39": "Spark",
+    "40": "TCHouse-P",
+    "41": "Kettle",
+    "42": "TCHouse-X",
+    "43": "TCHouse-X SQL",
+    "46": "DLC Spark",
+    "47": "TiOne",
+    "48": "Trino",
+    "50": "DLC PySpark",
+    "92": "MapReduce",
+    "130": "分支节点",
+    "131": "归并节点",
+    "132": "Notebook",
+    "133": "SSH",
+    "134": "StarRocks",
+    "137": "For-each",
+    "138": "Setats SQL",
+}
+
+
+def _task_type_display(value):
+    """Render a WeData TaskTypeId code as `名称 (码值)`; unknown values pass through."""
+    text = "" if value is None else str(value).strip()
+    label = TASK_TYPE_LABELS.get(text)
+    return f"{label} ({text})" if label else text
+
+
 def _code_fence_language(code_text):
     lowered = (code_text or "").lower()
+    if any(token in lowered for token in ("pyspark", "sparksession", "spark.read", "spark.sql", "import spark")):
+        return "python"
+    if any(token in lowered for token in ("#!/bin/bash", "set -e", "echo $")):
+        return "shell"
     if any(token in lowered for token in ("select ", "insert ", "update ", "delete ", "create ", "with ")):
         return "sql"
+    if lowered.startswith("#!") or any(token in lowered for token in ("def ", "import ", "print(", "__name__")):
+        return "python"
     return ""
 
 
 def _section(title, lines):
     body = "\n".join(f"- {line}" for line in lines if line)
     return f"**{title}**" + (f"\n\n{body}" if body else "")
+
+
+def _format_epoch_millis(value):
+    try:
+        return datetime.fromtimestamp(int(value) / 1000).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return ""
 
 
 def _format_expert_label(label):
@@ -1236,7 +1381,7 @@ def _format_data_source_inventory(data):
                         task.get("task_id"),
                         task.get("task_name"),
                         task.get("parse_status"),
-                        task.get("task_type"),
+                        _task_type_display(task.get("task_type")),
                         task.get("project_name"),
                         task.get("owner"),
                         ", ".join(_task_table_names(task)),
@@ -1522,55 +1667,6 @@ def _format_daily_acceptance_criteria(data):
     return _section("验收标准", data.get("acceptance_criteria") or [])
 
 
-def _format_core_decision(data):
-    machine = data.get("machine") or {}
-    final = data.get("final") or {}
-    manual = data.get("manual") or {}
-    dimensions = machine.get("dimensions") or {}
-    return "\n\n".join(
-        [
-            _section(
-                f"核心资产判断：{data.get('table_name')}",
-                [
-                    f"最终结论：**{'核心资产' if data.get('is_core') else '非核心/待观察'}**",
-                    f"核心等级：**{_cell(data.get('core_level'))}**",
-                    f"价值分层：**{_cell(data.get('value_tier'))}**",
-                    f"判断来源：`{_cell(data.get('source'))}`",
-                    f"最终分数：**{data.get('score')}**",
-                    f"置信度：`{_cell(data.get('confidence'))}`",
-                ],
-            ),
-            _section(
-                "机器初判",
-                [
-                    f"机器分数：**{machine.get('score')}**",
-                    f"机器等级：`{_cell(machine.get('core_level'))}` / `{_cell(machine.get('value_tier'))}`",
-                    f"任务依赖：{_cell(machine.get('task_dependency'))}",
-                    f"依据：{', '.join(machine.get('evidence') or data.get('reasons') or [])}",
-                ],
-            ),
-            _table(["维度", "分数"], [[key, value] for key, value in dimensions.items()]),
-            _section(
-                "人工标注",
-                [
-                    f"等级：`{_cell(manual.get('core_level'))}`",
-                    f"分层：`{_cell(manual.get('value_tier'))}`",
-                    f"Reviewer：`{_cell(manual.get('reviewer'))}`",
-                    f"原因：{_cell(manual.get('reason'))}",
-                ] if manual else ["暂无人工标注"],
-            ),
-            _section(
-                "最终判断",
-                [
-                    f"等级：`{_cell(final.get('core_level'))}`",
-                    f"分层：`{_cell(final.get('value_tier'))}`",
-                    f"来源：`{_cell(final.get('source'))}`",
-                ],
-            ),
-            _section("当前缺口", data.get("gaps") or ["暂无明显缺口"]),
-            _section("复核建议", [data.get("review_suggestion", "")]),
-        ]
-    )
 
 
 def _format_metric_definition(data):

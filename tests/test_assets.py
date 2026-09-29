@@ -1207,5 +1207,45 @@ class LineageTaskTableReconciliationTest(unittest.TestCase):
             self.assertEqual(verify.get_table_tasks("ads_b")["tasks"][0]["direction"], "output")
 
 
+class UpsertTaskTableMappingsTest(unittest.TestCase):
+    def _store(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        return store
+
+    def test_inserts_output_mapping_and_edge_without_clearing_existing_rows(self):
+        store = self._store()
+        store.upsert_task({"id": "task_001", "name": "build_ads_b", "task_type": "32", "inputs": ["ods_a"], "outputs": ["ads_b"]})
+
+        inserted = store.upsert_task_table_mappings("task_001", ["ads_b", "ads_c"], "output")
+
+        self.assertEqual(inserted, 1)
+        tasks = store.get_table_tasks("ads_b")["tasks"]
+        self.assertEqual([(task["id"], task["direction"]) for task in tasks], [("task_001", "output")])
+        self.assertEqual(store.get_table_tasks("ods_a")["tasks"][0]["direction"], "input")
+        edges = [
+            dict(row)
+            for row in store._all(
+                "select target_id, relation_type, evidence_source from asset_edges where evidence_source = 'wedata_task_code' order by target_id"
+            )
+        ]
+        self.assertEqual(
+            edges,
+            [
+                {"target_id": "ads_b", "relation_type": "writes_table", "evidence_source": "wedata_task_code"},
+                {"target_id": "ads_c", "relation_type": "writes_table", "evidence_source": "wedata_task_code"},
+            ],
+        )
+
+    def test_skips_duplicate_mapping_and_invalid_arguments(self):
+        store = self._store()
+        store.upsert_task({"id": "task_001", "name": "build_ads_b"})
+
+        self.assertEqual(store.upsert_task_table_mappings("task_001", ["ads_b"], "output"), 1)
+        self.assertEqual(store.upsert_task_table_mappings("task_001", ["ads_b"], "output"), 0)
+        self.assertEqual(store.upsert_task_table_mappings("", ["ads_b"], "output"), 0)
+        self.assertEqual(store.upsert_task_table_mappings("task_001", ["ads_b"], "sideways"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

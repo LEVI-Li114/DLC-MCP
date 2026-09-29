@@ -5,7 +5,27 @@ import unittest
 
 from dlc_mcp.assets import AssetStore
 from dlc_mcp.cleanup_derived_tables import cleanup_derived_tables
-from dlc_mcp.wedata import import_wedata_snapshot, snapshot_from_api_dump
+from dlc_mcp.wedata import import_wedata_snapshot, snapshot_from_api_dump, task_output_tables
+
+
+class TaskOutputTablesTest(unittest.TestCase):
+    def test_parses_output_tables_for_sql_task_types(self):
+        sql = "insert overwrite table ads_revenue_di select * from dws_revenue_di"
+
+        self.assertEqual(task_output_tables("32", sql), ["ads_revenue_di"])
+        self.assertEqual(task_output_tables(34, "create table dws_b as select * from ods_a"), ["dws_b"])
+
+    def test_returns_empty_for_unsupported_task_types(self):
+        sql = "insert overwrite table ads_revenue_di select * from dws_revenue_di"
+
+        self.assertEqual(task_output_tables("31", sql), [])
+        self.assertEqual(task_output_tables("26", sql), [])
+        self.assertEqual(task_output_tables("", sql), [])
+        self.assertEqual(task_output_tables(None, sql), [])
+
+    def test_returns_empty_without_code_text(self):
+        self.assertEqual(task_output_tables("32", ""), [])
+        self.assertEqual(task_output_tables("32", None), [])
 
 
 class WeDataImportTest(unittest.TestCase):

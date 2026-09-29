@@ -422,6 +422,32 @@ def _sql_table_names(sql, direction):
     return _dedupe_table_names(names)
 
 
+SQL_TASK_TYPES = frozenset(
+    {
+        "21",  # JDBC SQL
+        "32",  # DLC SQL
+        "33",  # Impala
+        "34",  # Hive SQL
+        "36",  # Spark SQL
+        "40",  # TCHouse-P
+        "43",  # TCHouse-X SQL
+        "48",  # Trino
+        "138",  # Setats SQL
+    }
+)
+
+
+def task_output_tables(task_type, code_text):
+    """Parse output tables from task code for supported task types.
+
+    Only SQL-style tasks are supported; other task types (for example PySpark)
+    have no parser yet and return an empty list.
+    """
+    if str(task_type or "").strip() not in SQL_TASK_TYPES:
+        return []
+    return _sql_table_names(code_text or "", "output")
+
+
 def _cte_names(sql):
     names = set()
     for match in re.finditer(r"\bwith\s+([`\w.]+)\s+as\s*\(", sql, flags=re.IGNORECASE):

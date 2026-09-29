@@ -43,9 +43,8 @@ When the user asks about one table:
 
 1. Use `get_table_profile(table_name=..., live=true)`.
 2. Use `list_table_columns(table_name=..., live=true)` when fields or DDL matter.
-3. Use `get_table_tasks(table_name=...)` for producer/consumer tasks.
-4. Use `get_table_lineage(table_name=..., live=true)` for upstream/downstream impact.
-5. Use `get_table_production_status(table_name=..., instance_date=..., live=true)` or `get_table_production_risk_detail(...)` when execution status matters.
+3. Use `get_table_lineage(table_name=..., live=true)` for upstream/downstream impact; use `get_task_code(task_id=..., live=true)` to see a SQL task's parsed output tables.
+4. Use `get_table_production_status(table_name=..., instance_date=..., live=true)` or `get_table_production_risk_detail(...)` when execution status matters.
 
 ### Coverage and Governance Gaps
 
@@ -53,7 +52,7 @@ When the user asks why data is incomplete or asks for an asset patrol:
 
 1. Use `get_sync_health()`.
 2. Use `get_asset_coverage()`.
-3. Use `list_asset_coverage_gaps(gap_type=..., layer=..., limit=...)`.
+3. Use `list_asset_gaps(view="coverage", gap_type=..., layer=..., limit=...)`.
 4. Use `get_asset_governance_issue_inventory(...)` for deterministic issue grouping.
 5. Distinguish missing source API data, parser loss, stale cache, missing task/run coverage, and intentionally unsupported API actions.
 

@@ -26,7 +26,7 @@ Follow this order without skipping steps:
 ## Evidence Rules
 
 - Accept task-table mappings only when the relation includes task definition, synchronization configuration, ProcessLineage, or a stored mapping produced from one of those sources.
-- Use `list_downstream_tasks` or equivalent dependency evidence for first-level downstream tasks. Do not substitute downstream table lineage.
+- Use `list_task_relations(direction="downstream")` or equivalent dependency evidence for first-level downstream tasks. Do not substitute downstream table lineage.
 - Treat a task search result without output-table fields as incomplete evidence.
 - Do not apply naming rules such as `m2c_ods_xxx -> ods_xxx`, `task_name == table_name`, prefix removal, suffix removal, or fuzzy matching.
 - Do not combine facts from incompatible refreshes when a snapshot or observation time is available.

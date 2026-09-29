@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from dlc_mcp.assets import AssetStore
 from dlc_mcp.live import LiveWeData
-from dlc_mcp.mcp import _call_tool, handle_request
+from dlc_mcp.mcp import _call_tool, _code_fence_language, _task_type_display, handle_request
 
 
 class FakeWeDataClient:
@@ -601,6 +601,169 @@ class McpTest(unittest.TestCase):
         self.assertIn("succeeded", fetched["result"]["content"][0]["text"])
         self.assertIn("count", fetched["result"]["content"][0]["text"])
 
+    def test_dlc_task_resource_usage_tool_requires_explicit_task_instance_id(self):
+        response = handle_request(self.store, {"jsonrpc": "2.0", "id": 143, "method": "tools/list"})
+        tools = {tool["name"]: tool for tool in response["result"]["tools"]}
+
+        self.assertIn("get_dlc_task_resource_usage", tools)
+        self.assertEqual(tools["get_dlc_task_resource_usage"]["annotations"], {"readOnlyHint": True})
+        self.assertEqual(tools["get_dlc_task_resource_usage"]["inputSchema"]["required"], ["task_instance_id"])
+        self.assertNotIn("source", tools["get_dlc_task_resource_usage"]["inputSchema"]["properties"])
+
+    def test_dlc_task_resource_usage_tool_delegates_to_query_service(self):
+        class FakeQueryService:
+            def __init__(self):
+                self.calls = []
+
+            def resource_usage(self, task_instance_id, **options):
+                self.calls.append((task_instance_id, options))
+                return {
+                    "task_instance_id": task_instance_id,
+                    "timestamps": [1750238853000],
+                    "core_usage": [2],
+                    "series": [{"timestamp": 1750238853000, "core_usage": 2}],
+                    "request_id": "request-3",
+                }
+
+        service = FakeQueryService()
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 144,
+                "method": "tools/call",
+                "params": {"name": "get_dlc_task_resource_usage", "arguments": {"task_instance_id": "15eb48854c1c11f083e8525400e26adf"}},
+            },
+            query_service=service,
+        )
+
+        self.assertEqual(
+            service.calls,
+            [
+                (
+                    "15eb48854c1c11f083e8525400e26adf",
+                    {"include_cost": False, "cost_task_id": "", "cost_start_time": "", "cost_end_time": "", "cost_limit": 10},
+                )
+            ],
+        )
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("15eb48854c1c11f083e8525400e26adf", text)
+        self.assertIn("Core 用量曲线", text)
+        self.assertIn("dlc_live", text)
+
+    def test_dlc_task_resource_usage_tool_passes_cost_options_without_mapping_ids(self):
+        class FakeQueryService:
+            def __init__(self):
+                self.calls = []
+
+            def resource_usage(self, task_instance_id, **options):
+                self.calls.append((task_instance_id, options))
+                return {
+                    "task_instance_id": task_instance_id,
+                    "timestamps": [],
+                    "core_usage": [],
+                    "series": [],
+                    "request_id": "request-3",
+                    "cost_analysis": {
+                        "task_id": options.get("cost_task_id"),
+                        "start_time": "2025-06-18 00:00:00",
+                        "end_time": "2025-06-18 12:00:00",
+                        "total_count": 1,
+                        "tasks": [
+                            {
+                                "id": "67ea3d234006dc901",
+                                "state": 2,
+                                "data_engine_name": "super_spark_270",
+                                "instance_start_time": 1733842361290,
+                                "job_time_sum_ms": 35589,
+                                "task_time_sum_seconds": 403,
+                            }
+                        ],
+                    },
+                }
+
+        service = FakeQueryService()
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 146,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_dlc_task_resource_usage",
+                    "arguments": {
+                        "task_instance_id": "15eb48854c1c11f083e8525400e26adf",
+                        "include_cost": True,
+                        "cost_task_id": "e386471f-139a-4e59-877f-50ece8135b99",
+                        "cost_start_time": "2025-06-18 00:00:00",
+                        "cost_end_time": "2025-06-18 12:00:00",
+                        "cost_limit": 5,
+                    },
+                },
+            },
+            query_service=service,
+        )
+
+        task_instance_id, options = service.calls[0]
+        self.assertEqual(task_instance_id, "15eb48854c1c11f083e8525400e26adf")
+        self.assertTrue(options["include_cost"])
+        self.assertEqual(options["cost_task_id"], "e386471f-139a-4e59-877f-50ece8135b99")
+        self.assertEqual(options["cost_limit"], 5)
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("DLC CU 消耗分析", text)
+        self.assertIn("e386471f-139a-4e59-877f-50ece8135b99", text)
+        self.assertIn("403", text)
+
+    def test_dlc_task_resource_usage_tool_does_not_map_wedata_instance_id(self):
+        self.store.upsert_task_run(
+            {
+                "project_id": "project",
+                "task_id": "20250808121806623",
+                "task_name": "dwd_fin_other_cost_data_df",
+                "instance_id": "20250808121806623_2026-09-29 00:00:00",
+                "instance_date": "2026-09-29",
+                "status": "COMPLETED",
+            }
+        )
+
+        class RecordingQueryService:
+            def __init__(self):
+                self.calls = []
+
+            def resource_usage(self, task_instance_id, **options):
+                self.calls.append(task_instance_id)
+                return {"task_instance_id": task_instance_id, "timestamps": [], "core_usage": [], "series": [], "request_id": "r"}
+
+        service = RecordingQueryService()
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 145,
+                "method": "tools/call",
+                "params": {"name": "get_dlc_task_resource_usage", "arguments": {"task_instance_id": "20250808121806623_2026-09-29 00:00:00"}},
+            },
+            query_service=service,
+        )
+
+        self.assertEqual(service.calls, ["20250808121806623_2026-09-29 00:00:00"])
+        self.assertIn("未返回 Core 用量曲线", response["result"]["content"][0]["text"])
+
+    def test_dlc_task_resource_usage_tool_reports_missing_id_and_service(self):
+        missing_id = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 146, "method": "tools/call", "params": {"name": "get_dlc_task_resource_usage", "arguments": {}}},
+            query_service=None,
+        )
+        no_service = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 147, "method": "tools/call", "params": {"name": "get_dlc_task_resource_usage", "arguments": {"task_instance_id": "abc"}}},
+            query_service=None,
+        )
+
+        self.assertIn("dlc_query_service_unavailable", missing_id["result"]["content"][0]["text"])
+        self.assertIn("dlc_query_service_unavailable", no_service["result"]["content"][0]["text"])
+
     def test_get_task_code_returns_cached_sql(self):
         self.store.upsert_task_code(
             "project",
@@ -775,6 +938,50 @@ class McpTest(unittest.TestCase):
         self.assertIn("select 1;", text)
         self.assertNotIn("GetTaskCode", [action for action, payload in client.calls])
 
+    def test_get_task_code_parses_output_tables_and_writes_mapping(self):
+        self.store.upsert_task_code(
+            "project",
+            "task_001",
+            "build_dim_customer",
+            "",
+            "insert overwrite table dws_new_output select * from ods_customer;",
+            62,
+            "base64",
+            {"CodeInfo": "", "CodeFileSize": 62},
+        )
+
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 148, "method": "tools/call", "params": {"name": "get_task_code", "arguments": {"task_id": "task_001"}}},
+        )
+        text = response["result"]["content"][0]["text"]
+
+        self.assertIn("输出表：`dws_new_output`", text)
+        self.assertEqual(self.store.get_table_tasks("dws_new_output")["tasks"][0]["id"], "task_001")
+        self.assertEqual(self.store.get_table_tasks("dim_customer")["tasks"][0]["id"], "task_001")
+
+    def test_get_task_code_reports_no_output_tables_for_unsupported_task_type(self):
+        self.store.upsert_task({"id": "task_pyspark", "name": "build_pyspark", "task_type": "31"})
+        self.store.upsert_task_code(
+            "project",
+            "task_pyspark",
+            "build_pyspark",
+            "",
+            "df.write.saveAsTable('ads_pyspark')",
+            33,
+            "base64",
+            {"CodeInfo": "", "CodeFileSize": 33},
+        )
+
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 149, "method": "tools/call", "params": {"name": "get_task_code", "arguments": {"task_id": "task_pyspark"}}},
+        )
+        text = response["result"]["content"][0]["text"]
+
+        self.assertIn("仅支持 SQL 类任务解析", text)
+        self.assertEqual(self.store.get_table_tasks("ads_pyspark")["tasks"], [])
+
     def test_get_task_code_resolves_cached_task_name(self):
         self.store.upsert_task_code(
             "project",
@@ -880,8 +1087,8 @@ class McpTest(unittest.TestCase):
         self.store.replace_task_relations("project", "task_001", "upstream", [{"related_task_id": "task_000", "related_task_name": "build_ods_customer"}])
         self.store.upsert_table({"name": "dim_customer", "guid": "guid_dim_customer", "project_id": "project", "database": "dw", "owner": "data-customer", "table_type": "MANAGED_TABLE"})
 
-        downstream = handle_request(self.store, {"jsonrpc": "2.0", "id": 34, "method": "tools/call", "params": {"name": "list_downstream_tasks", "arguments": {"project_id": "project", "task_id": "task_001"}}})
-        upstream = handle_request(self.store, {"jsonrpc": "2.0", "id": 35, "method": "tools/call", "params": {"name": "list_upstream_tasks", "arguments": {"project_id": "project", "task_id": "task_001"}}})
+        downstream = handle_request(self.store, {"jsonrpc": "2.0", "id": 34, "method": "tools/call", "params": {"name": "list_task_relations", "arguments": {"project_id": "project", "task_id": "task_001", "direction": "downstream"}}})
+        upstream = handle_request(self.store, {"jsonrpc": "2.0", "id": 35, "method": "tools/call", "params": {"name": "list_task_relations", "arguments": {"project_id": "project", "task_id": "task_001", "direction": "upstream"}}})
         table = handle_request(self.store, {"jsonrpc": "2.0", "id": 36, "method": "tools/call", "params": {"name": "get_table", "arguments": {"table_name": "dim_customer", "project_id": "project"}}})
 
         self.assertIn("下游任务", downstream["result"]["content"][0]["text"])
@@ -935,7 +1142,6 @@ class McpTest(unittest.TestCase):
         self.assertIn("list_table_production_risks", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("search_tasks", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_data_sources", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_data_source_tasks", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_data_source_inventory", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_table_risk_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_asset_value_profile", [tool["name"] for tool in response["result"]["tools"]])
@@ -944,19 +1150,16 @@ class McpTest(unittest.TestCase):
         self.assertIn("get_asset_lifecycle_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_asset_change_impact", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_metric_definition", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_quality_gaps", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("list_asset_gaps", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_expert_label", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_expert_review_queue", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_metadata", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_sync_health", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_asset_coverage", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_asset_coverage_gaps", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_asset_governance_daily_report", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_projects", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_project", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_project_members", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_downstream_tasks", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_upstream_tasks", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("list_task_relations", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_table", [tool["name"] for tool in response["result"]["tools"]])
 
     def test_calls_table_profile_tool(self):
@@ -1149,7 +1352,7 @@ class McpTest(unittest.TestCase):
                 "jsonrpc": "2.0",
                 "id": 20,
                 "method": "tools/call",
-                "params": {"name": "list_asset_coverage_gaps", "arguments": {"gap_type": "quality", "layer": "dwd"}},
+                "params": {"name": "list_asset_gaps", "arguments": {"view": "coverage", "gap_type": "quality", "layer": "dwd"}},
             },
         )
 
@@ -1194,6 +1397,22 @@ class McpTest(unittest.TestCase):
         )
 
         self.assertIn("build_dim_customer", response["result"]["content"][0]["text"])
+        self.assertIn("DLC SQL (32)", response["result"]["content"][0]["text"])
+
+    def test_task_type_display_maps_codes_and_passes_through_unknown(self):
+        self.assertEqual(_task_type_display("32"), "DLC SQL (32)")
+        self.assertEqual(_task_type_display("31"), "PySpark (31)")
+        self.assertEqual(_task_type_display("36"), "Spark SQL (36)")
+        self.assertEqual(_task_type_display(26), "离线同步 (26)")
+        self.assertEqual(_task_type_display(""), "")
+        self.assertEqual(_task_type_display(None), "")
+        self.assertEqual(_task_type_display("DataDevelopment"), "DataDevelopment")
+
+    def test_code_fence_language_detects_pyspark_and_sql(self):
+        self.assertEqual(_code_fence_language("select 1;"), "sql")
+        self.assertEqual(_code_fence_language("from pyspark.sql import SparkSession"), "python")
+        self.assertEqual(_code_fence_language("#!/bin/bash\necho $HOME"), "shell")
+        self.assertEqual(_code_fence_language(""), "")
 
     def test_calls_get_task_runs_tool(self):
         response = handle_request(
@@ -1239,14 +1458,14 @@ class McpTest(unittest.TestCase):
 
         self.assertIn("mysql.internal", response["result"]["content"][0]["text"])
 
-    def test_calls_data_source_tasks_tool(self):
+    def test_calls_data_source_tasks_view(self):
         response = handle_request(
             self.store,
             {
                 "jsonrpc": "2.0",
                 "id": 11,
                 "method": "tools/call",
-                "params": {"name": "list_data_source_tasks", "arguments": {"data_source_id": "ds_001"}},
+                "params": {"name": "get_data_source_inventory", "arguments": {"data_source_id": "ds_001", "view": "tasks"}},
             },
         )
 
@@ -1348,19 +1567,19 @@ class McpTest(unittest.TestCase):
             self.assertIn(title, text)
             self.assertIn(section, text)
 
-    def test_calls_core_table_tool_with_machine_manual_final_sections(self):
+    def test_calls_asset_value_profile_core_decision_sections(self):
         response = handle_request(
             self.store,
             {
                 "jsonrpc": "2.0",
                 "id": 18,
                 "method": "tools/call",
-                "params": {"name": "is_core_table", "arguments": {"table_name": "ads_customer_revenue_daily"}},
+                "params": {"name": "get_asset_value_profile", "arguments": {"table_name": "ads_customer_revenue_daily"}},
             },
         )
 
         text = response["result"]["content"][0]["text"]
-        self.assertIn("核心资产判断", text)
+        self.assertIn("资产价值模型", text)
         self.assertIn("机器初判", text)
         self.assertIn("人工标注", text)
         self.assertIn("最终判断", text)
@@ -1392,7 +1611,7 @@ class McpTest(unittest.TestCase):
                 "jsonrpc": "2.0",
                 "id": 13,
                 "method": "tools/call",
-                "params": {"name": "list_quality_gaps", "arguments": {"layer": "dwd"}},
+                "params": {"name": "list_asset_gaps", "arguments": {"view": "quality", "layer": "dwd"}},
             },
         )
 
@@ -1418,7 +1637,7 @@ class McpTest(unittest.TestCase):
                 "jsonrpc": "2.0",
                 "id": 15,
                 "method": "tools/call",
-                "params": {"name": "list_expert_review_queue", "arguments": {"layer": "dwd"}},
+                "params": {"name": "list_asset_gaps", "arguments": {"view": "expert_review", "layer": "dwd"}},
             },
         )
 
@@ -1533,7 +1752,7 @@ class McpTest(unittest.TestCase):
 
         response = handle_request(
             store,
-            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "list_asset_coverage_gaps", "arguments": {"gap_type": "runs", "layer": "ads", "limit": 10}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "list_asset_gaps", "arguments": {"view": "coverage", "gap_type": "runs", "layer": "ads", "limit": 10}}},
         )
         text = response["result"]["content"][0]["text"]
 
@@ -1553,7 +1772,7 @@ class McpTest(unittest.TestCase):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "tools/call",
-                "params": {"name": "list_asset_coverage_gaps", "arguments": {"gap_type": "producer_tasks", "layer": "ads", "limit": 10}},
+                "params": {"name": "list_asset_gaps", "arguments": {"view": "coverage", "gap_type": "producer_tasks", "layer": "ads", "limit": 10}},
             },
         )["result"]["content"][0]["text"]
 

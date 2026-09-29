@@ -142,19 +142,16 @@ Update this list whenever a new MCP tool is added.
 | `list_table_columns(table_name, live)` | List table fields. |
 | `get_quality_status(table_name, live)` | Show quality rules and monitoring status. |
 | `get_table_lineage(table_name, live)` | Return upstream and downstream assets. |
-| `get_table_tasks(table_name)` | Return ETL tasks that read from or produce a table. |
 | `get_task_runs(task_id/task_name, instance_date, live)` | Return task instance start time, end time, duration, and status. |
-| `get_task_code(task_id/task_name, live)` | Return cached or live-refreshed WeData task SQL/code content. |
+| `get_task_code(task_id/task_name, live)` | Return cached or live-refreshed WeData task SQL/code content, plus output tables parsed from SQL task code. |
 | `list_data_sources(query, live)` | List data sources, configuration summaries, and related task counts. |
 | `get_data_source(data_source_id, live)` | Return one data source, including type, owner, related task count, description, and config summary. |
-| `list_data_source_tasks(data_source_id, live)` | List tasks related to one data source. |
 | `list_projects(query, live)` | List WeData projects cached from Tencent Cloud ListProjects. |
 | `get_project(project_id, live)` | Return one WeData project, defaulting to `WEDATA_PROJECT_ID` when omitted. |
 | `list_project_members(project_id, live)` | List members and roles for a WeData project. |
-| `list_downstream_tasks(task_id, project_id, live)` | List downstream WeData task dependencies for a task. |
-| `list_upstream_tasks(task_id, project_id, live)` | List upstream WeData task dependencies for a task. |
+| `list_task_relations(task_id, direction, project_id, live)` | List upstream or downstream WeData task dependencies for a task. |
 | `get_table(table_name/table_guid, live)` | Return Tencent Cloud WeData table metadata detail. |
-| `get_data_source_inventory(data_source_id/data_source_name, live)` | Return one data source's tasks, parsed tables, SQL DDL, and unresolved or missing-field gaps. |
+| `get_data_source_inventory(data_source_id/data_source_name, view, live)` | Return one data source's tasks, parsed tables, SQL DDL, and unresolved or missing-field gaps; `view=tasks` returns only the related task list. |
 | `get_table_risk_profile(table_name, live)` | Explain governance risk from layer, downstream dependencies, quality rules, and task runs. |
 | `get_asset_value_profile(table_name, live)` | Return asset value tier and core-table decision. |
 | `get_asset_owner_profile(table_name, live)` | Return asset ownership chain and responsibility gaps. |
@@ -162,19 +159,17 @@ Update this list whenever a new MCP tool is added.
 | `get_asset_lifecycle_profile(table_name, live)` | Return lifecycle status and governance evidence. |
 | `get_asset_change_impact(table_name, change_type, live)` | Return bounded change impact analysis for a table asset. |
 | `get_metric_definition(table_name, live)` | Explain ads/dws metric definitions from fields, lineage, and related tasks. |
-| `list_quality_gaps(layer, domain, limit)` | List high-impact tables with no quality rules. |
+| `list_asset_gaps(view, gap_type, layer, domain, limit)` | List table assets with governance gaps: `view=quality` (high-impact tables without quality rules), `view=expert_review` (high-impact unlabelled tables), `view=coverage` (missing asset profile coverage, optionally filtered by `gap_type`). |
 | `get_expert_label(asset_type, asset_name)` | Return expert label for one asset. |
-| `list_expert_review_queue(layer, limit)` | List high-impact unlabelled tables for expert review. |
 | `list_metadata()` | List imported databases and table metadata. |
 | `get_sync_health()` | Return sync health, asset counts, latest observed sync signals, and current data gaps. |
 | `get_asset_coverage()` | Return asset coverage by layer for fields, lineage, quality rules, tasks, data sources, and runs. |
-| `list_asset_coverage_gaps(gap_type, layer, limit)` | List tables with missing asset profile coverage, filtered by gap type or layer. |
 | `get_asset_governance_issue_inventory(layer, core_level, issue_type, limit)` | Return deterministic governance issues with evidence, suspected root cause, severity, and recommended next check. |
 | `get_asset_governance_daily_report(instance_date, layer, core_level)` | Return a daily governance patrol report. |
-| `is_core_table(table_name)` | Explain whether a table is core and why. |
 | `cleanup_task_name_pseudo_tables(dry_run, limit)` | Clean up pseudo table assets derived from task names. |
 | `submit_dlc_sql_query(sql, database_name, data_engine_name, datasource_connection_name)` | Submit one read-only `SELECT`/`WITH` statement to DLC; joins including `FULL OUTER JOIN` are allowed. |
 | `get_dlc_sql_query_result(task_id, next_token, max_results)` | Poll a DLC SQL task and return one page of status/results. |
+| `get_dlc_task_resource_usage(task_instance_id, include_cost, cost_task_id, cost_start_time, cost_end_time, cost_limit)` | Return the DLC engine Core usage curve for one DLC `TaskInstanceId` (no WeData `instance_id` mapping); optionally add CU consumption analysis for an explicit `cost_task_id`. |
 
 ### DLC SQL 查询
 
@@ -187,9 +182,21 @@ Update this list whenever a new MCP tool is added.
 `SET`、`USE`、多语句会在提交到 DLC 前被拒绝。可通过
 `DLC_QUERY_TASK_TYPE=presto` 切换到 Presto SQLTask。
 
+### DLC 任务资源查询
+
+`get_dlc_task_resource_usage` 用显式的 DLC `TaskInstanceId` 调用
+`DescribeTaskResourceUsage`，返回引擎侧 Core 用量曲线。它不会把 WeData
+`instance_id` 隐式映射成 DLC 实例 ID。
+
+设置 `include_cost=true` 并传入独立的 `cost_task_id` 时，会额外用
+`DescribeTasksAnalysis`（`task-id` 过滤器、`task-time-sum` 排序）返回 CU 资源消耗
+分析；`cost_task_id` 不会从 `task_instance_id` 推导。统计窗口默认最近 7 天，可用
+`cost_start_time` / `cost_end_time`（格式 `yyyy-mm-dd HH:MM:SS`）指定，跨度不得超过
+30 天。Core 曲线与 CU 消耗是两个不同指标，不可互相换算。
+
 The project, member, task-relation, and table-detail tools use the same query-mode cache-first model as the existing asset tools. By default they read SQLite first and live-refresh only when the cached fact is missing or incomplete. Set `live=true` to force-refresh the requested fact from WeData. `GetTable` requires a real table GUID for live refresh; the service does not infer a table name from a task name.
 
-Asset completeness must be checked with `get_sync_health`, `get_asset_coverage`, and `list_asset_coverage_gaps`. A successful API backfill only proves that the corresponding facts were collected; it does not prove that fields, lineage, quality rules, task mappings, runs, and data-source links are complete for every table.
+Asset completeness must be checked with `get_sync_health`, `get_asset_coverage`, and `list_asset_gaps` (`view=coverage`). A successful API backfill only proves that the corresponding facts were collected; it does not prove that fields, lineage, quality rules, task mappings, runs, and data-source links are complete for every table.
 
 Task input/output mappings come from real `GetTask` definitions. Data-integration node configuration is Base64-decoded and SQL tasks are parsed from returned SQL; task names are never used to infer table names. Task runs retain the latest seven calendar days by default (`DLC_MCP_TASK_RUN_RETENTION_DAYS`). Quality rules are fetched once as an authoritative paginated project list and replace stale cached rules after a successful full sync.
 

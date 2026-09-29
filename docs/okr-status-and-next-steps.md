@@ -118,7 +118,7 @@
 - `get_table_profile(table_name, live)`
 - `list_table_columns(table_name, live)`
 - `get_table_lineage(table_name, live)`
-- `get_table_tasks(table_name)`
+- `get_task_code(task_id/task_name, live)`
 
 覆盖 OKR：
 
@@ -131,7 +131,7 @@
 
 - `list_data_sources(query, live)`
 - `get_data_source(data_source_id, live)`
-- `list_data_source_tasks(data_source_id, live)`
+- `get_data_source_inventory(data_source_id/data_source_name, view, live)`
 
 覆盖 OKR：
 
@@ -143,7 +143,7 @@
 #### 质量与生产状态
 
 - `get_quality_status(table_name, live)`
-- `list_quality_gaps(layer, domain, limit)`
+- `list_asset_gaps(view, gap_type, layer, domain, limit)`
 - `get_task_runs(task_id/task_name, instance_date, live)`
 - `get_table_production_status(table_name, instance_date, live)`
 - `get_table_production_risk_detail(table_name, instance_date, live)`
@@ -160,10 +160,9 @@
 
 #### 核心资产与价值分层
 
-- `is_core_table(table_name)`
 - `get_asset_value_profile(table_name, live)`
 - `get_expert_label(asset_type, asset_name)`
-- `list_expert_review_queue(layer, limit)`
+- `list_asset_gaps(view="expert_review", layer, limit)`
 
 已实现模型：
 
@@ -221,7 +220,7 @@
 
 - `get_sync_health()`：同步健康、资产数量、最新同步信号、当前数据缺口。
 - `get_asset_coverage()`：按层级统计字段、质量规则、血缘、任务、数据源覆盖率。
-- `list_asset_coverage_gaps(gap_type, layer, limit)`：列出缺字段、缺血缘、缺质量规则、缺任务、缺运行实例、缺数据源等表。
+- `list_asset_gaps(view="coverage", gap_type, layer, limit)`：列出缺字段、缺血缘、缺质量规则、缺任务、缺运行实例、缺数据源等表。
 - `get_asset_governance_issue_inventory(layer, core_level, issue_type, limit)`：按治理 issue 类型输出确定性问题清单、证据、严重级别、疑似根因和下一步检查建议。
 - `get_asset_governance_daily_report(instance_date, layer, core_level)`：在巡检日报中汇总治理 issue 数量、严重级别、Owner 和责任方 buckets。
 - `python3 -m dlc_mcp.check_foundation`：服务端/本地可读 Markdown 检查报告。
@@ -257,7 +256,7 @@
 
 | KR | 要求 | 当前状态 | 差距 |
 | --- | --- | --- | --- |
-| KR1 质量规则查询 | 各层级表质量规则数、明细、状态 | `get_quality_status`、`list_quality_gaps`、`get_asset_governance_issue_inventory(issue_type="missing_quality_rules")` 已有 | 质量规则总量 62，覆盖率低；需要字段级覆盖度 |
+| KR1 质量规则查询 | 各层级表质量规则数、明细、状态 | `get_quality_status`、`list_asset_gaps(view="quality")`、`get_asset_governance_issue_inventory(issue_type="missing_quality_rules")` 已有 | 质量规则总量 62，覆盖率低；需要字段级覆盖度 |
 | KR2 任务运行实例查询 | 查询今天/昨天任务运行情况 | `get_task_runs`、表生产状态、`missing_task_mapping` / `missing_task_runs` issue 清单已实现 | 部分真实表缺运行实例，需要扩大/校准同步窗口 |
 | KR3 聚合质量与产出状态 | 按表/任务/数据源聚合风险 | 生产风险、巡检日报、issue summary / severity / owner 汇总已有 | 需要数据源维度风险聚合和 SLA 规则 |
 | KR4 风险解释 | 缺规则、失败、延迟、下游影响 | 已有风险画像、生产风险详情、issue suspected root cause 与 recommended next check | 需要更强的核心表影响解释和可执行处理建议 |
@@ -459,7 +458,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"g
 
 验收标准：
 
-- `is_core_table` 能解释核心判断原因。
+- `get_asset_value_profile` 能解释核心判断原因。
 - `get_asset_value_profile` 能给出分数、证据和缺口。
 - 高分但缺人工标注的表能进入 review queue。
 

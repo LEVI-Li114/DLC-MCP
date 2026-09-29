@@ -14,6 +14,37 @@ class FakeDLCClient:
         self.calls.append((action, payload))
         if action == "CreateTask":
             return {"Response": {"TaskId": "task-123", "RequestId": "request-1"}}
+        if action == "DescribeTaskResourceUsage":
+            return {
+                "Response": {
+                    "RequestId": "request-3",
+                    "CoreInfo": {
+                        "Timestamp": [1750238853000, 1750238854000],
+                        "CoreUsage": [1, 3],
+                    },
+                }
+            }
+        if action == "DescribeTasksAnalysis":
+            return {
+                "Response": {
+                    "RequestId": "request-4",
+                    "TotalCount": 1,
+                    "TaskList": [
+                        {
+                            "Id": "67ea3d234006dc901",
+                            "State": 2,
+                            "DataEngineName": "super_spark_270",
+                            "InstanceStartTime": 1733842361290,
+                            "InstanceCompleteTime": 1733842401892,
+                            "JobTimeSum": 35589,
+                            "TaskTimeSum": 403,
+                            "InputBytesSum": 20648020108,
+                            "ShuffleReadBytesSum": 0,
+                            "AnalysisStatus": "[\"SPARK-OutputSmallFile\"]",
+                        }
+                    ],
+                }
+            }
         return {
             "Response": {
                 "RequestId": "request-2",
@@ -93,6 +124,91 @@ class DLCQueryServiceTest(unittest.TestCase):
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(result["rows"], [{"id": 1}, {"id": 2}])
         self.assertEqual(result["next_token"], "next-page")
+
+    def test_reads_core_usage_curve_for_explicit_dlc_task_instance_id(self):
+        client = FakeDLCClient()
+        result = DLCQueryService(client).resource_usage("15eb48854c1c11f083e8525400e26adf")
+
+        action, payload = client.calls[0]
+        self.assertEqual(action, "DescribeTaskResourceUsage")
+        self.assertEqual(payload["TaskInstanceId"], "15eb48854c1c11f083e8525400e26adf")
+        self.assertEqual(result["timestamps"], [1750238853000, 1750238854000])
+        self.assertEqual(result["core_usage"], [1, 3])
+        self.assertEqual(
+            result["series"],
+            [
+                {"timestamp": 1750238853000, "core_usage": 1},
+                {"timestamp": 1750238854000, "core_usage": 3},
+            ],
+        )
+
+    def test_requires_task_instance_id_without_calling_the_api(self):
+        client = FakeDLCClient()
+        with self.assertRaises(QueryValidationError):
+            DLCQueryService(client).resource_usage("  ")
+        self.assertEqual(client.calls, [])
+
+    def test_reads_cost_analysis_for_explicit_dlc_task_id(self):
+        client = FakeDLCClient()
+        result = DLCQueryService(client).task_cost_analysis(
+            "e386471f-139a-4e59-877f-50ece8135b99",
+            start_time="2025-06-18 00:00:00",
+            end_time="2025-06-18 12:00:00",
+            limit=5,
+        )
+
+        action, payload = client.calls[0]
+        self.assertEqual(action, "DescribeTasksAnalysis")
+        self.assertEqual(payload["Filters"], [{"Name": "task-id", "Values": ["e386471f-139a-4e59-877f-50ece8135b99"]}])
+        self.assertEqual(payload["StartTime"], "2025-06-18 00:00:00")
+        self.assertEqual(payload["EndTime"], "2025-06-18 12:00:00")
+        self.assertEqual(payload["Limit"], 5)
+        self.assertEqual(payload["SortBy"], "task-time-sum")
+        self.assertEqual(result["total_count"], 1)
+        self.assertEqual(result["tasks"][0]["task_time_sum_seconds"], 403)
+        self.assertEqual(result["tasks"][0]["job_time_sum_ms"], 35589)
+
+    def test_unified_resource_usage_appends_cost_analysis(self):
+        client = FakeDLCClient()
+        result = DLCQueryService(client).resource_usage(
+            "15eb48854c1c11f083e8525400e26adf",
+            include_cost=True,
+            cost_task_id="e386471f-139a-4e59-877f-50ece8135b99",
+            cost_start_time="2025-06-18 00:00:00",
+            cost_end_time="2025-06-18 12:00:00",
+        )
+
+        self.assertEqual([action for action, _ in client.calls], ["DescribeTaskResourceUsage", "DescribeTasksAnalysis"])
+        self.assertEqual(result["core_usage"], [1, 3])
+        self.assertEqual(result["cost_analysis"]["task_id"], "e386471f-139a-4e59-877f-50ece8135b99")
+        self.assertEqual(result["cost_analysis"]["tasks"][0]["id"], "67ea3d234006dc901")
+
+    def test_unified_resource_usage_does_not_derive_cost_task_id(self):
+        client = FakeDLCClient()
+        with self.assertRaises(QueryValidationError) as ctx:
+            DLCQueryService(client).resource_usage("15eb48854c1c11f083e8525400e26adf", include_cost=True)
+        self.assertEqual(str(ctx.exception), "cost_task_id_required")
+        self.assertEqual(client.calls, [])
+
+    def test_rejects_cost_window_out_of_range_without_calling_the_api(self):
+        client = FakeDLCClient()
+        with self.assertRaises(QueryValidationError) as ctx:
+            DLCQueryService(client).task_cost_analysis(
+                "task-1",
+                start_time="2025-01-01 00:00:00",
+                end_time="2025-06-01 00:00:00",
+            )
+        self.assertEqual(str(ctx.exception), "analysis_time_range_exceeds_30_days")
+        self.assertEqual(client.calls, [])
+
+    def test_surfaces_dlc_api_error(self):
+        class ErrorClient:
+            def call(self, action, payload):
+                return {"Response": {"Error": {"Code": "InvalidParameter.TaskNotFound", "Message": "not found"}}}
+
+        with self.assertRaises(RuntimeError) as ctx:
+            DLCQueryService(ErrorClient()).resource_usage("missing")
+        self.assertIn("InvalidParameter.TaskNotFound", str(ctx.exception))
 
 
 if __name__ == "__main__":

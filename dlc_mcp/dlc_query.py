@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+from datetime import datetime, timedelta
 
 from .tencentcloud import TencentCloudClient
 
@@ -169,6 +170,107 @@ class DLCQueryService:
             "output_path": info.get("OutputPath", ""),
             "request_id": body.get("RequestId", ""),
         }
+
+    def resource_usage(
+        self,
+        task_instance_id,
+        include_cost=False,
+        cost_task_id="",
+        cost_start_time="",
+        cost_end_time="",
+        cost_limit=10,
+    ):
+        task_instance_id = (task_instance_id or "").strip()
+        if not task_instance_id:
+            raise QueryValidationError("task_instance_id_required")
+        cost_payload = (
+            _cost_analysis_payload(cost_task_id, cost_start_time, cost_end_time, cost_limit)
+            if include_cost
+            else None
+        )
+        body = _response_body(
+            self.client.call("DescribeTaskResourceUsage", {"TaskInstanceId": task_instance_id})
+        )
+        core_info = body.get("CoreInfo") or {}
+        timestamps = [int(value) for value in (core_info.get("Timestamp") or [])]
+        core_usage = [int(value) for value in (core_info.get("CoreUsage") or [])]
+        result = {
+            "task_instance_id": task_instance_id,
+            "timestamps": timestamps,
+            "core_usage": core_usage,
+            "series": [
+                {"timestamp": timestamp, "core_usage": core_usage[index] if index < len(core_usage) else None}
+                for index, timestamp in enumerate(timestamps)
+            ],
+            "request_id": body.get("RequestId", ""),
+        }
+        if cost_payload is not None:
+            result["cost_analysis"] = self._cost_analysis(cost_payload)
+        return result
+
+    def task_cost_analysis(self, task_id, start_time="", end_time="", limit=10):
+        return self._cost_analysis(_cost_analysis_payload(task_id, start_time, end_time, limit))
+
+    def _cost_analysis(self, payload):
+        body = _response_body(self.client.call("DescribeTasksAnalysis", payload))
+        tasks = [_analysis_task(item) for item in (body.get("TaskList") or [])]
+        return {
+            "task_id": payload["Filters"][0]["Values"][0],
+            "start_time": payload["StartTime"],
+            "end_time": payload["EndTime"],
+            "total_count": body.get("TotalCount", 0),
+            "tasks": tasks,
+            "request_id": body.get("RequestId", ""),
+        }
+
+
+def _cost_analysis_payload(task_id, start_time, end_time, limit):
+    task_id = (task_id or "").strip()
+    if not task_id:
+        raise QueryValidationError("cost_task_id_required")
+    limit = int(limit or 10)
+    if not 1 <= limit <= 100:
+        raise QueryValidationError("cost_limit_out_of_range")
+    window_start, window_end = _analysis_time_window(start_time, end_time)
+    return {
+        "Filters": [{"Name": "task-id", "Values": [task_id]}],
+        "Limit": limit,
+        "Offset": 0,
+        "SortBy": "task-time-sum",
+        "Sorting": "desc",
+        "StartTime": window_start,
+        "EndTime": window_end,
+    }
+
+
+def _analysis_time_window(start_time, end_time):
+    now = datetime.now()
+    try:
+        window_end = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S") if end_time else now
+        window_start = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S") if start_time else window_end - timedelta(days=7)
+    except ValueError:
+        raise QueryValidationError("invalid_analysis_time_format")
+    if window_start >= window_end:
+        raise QueryValidationError("invalid_analysis_time_range")
+    if window_end - window_start > timedelta(days=30):
+        raise QueryValidationError("analysis_time_range_exceeds_30_days")
+    return window_start.strftime("%Y-%m-%d %H:%M:%S"), window_end.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _analysis_task(item):
+    item = item or {}
+    return {
+        "id": item.get("Id", ""),
+        "state": item.get("State", 0),
+        "data_engine_name": item.get("DataEngineName", ""),
+        "instance_start_time": item.get("InstanceStartTime", 0),
+        "instance_complete_time": item.get("InstanceCompleteTime", 0),
+        "job_time_sum_ms": item.get("JobTimeSum", 0),
+        "task_time_sum_seconds": item.get("TaskTimeSum", 0),
+        "input_bytes_sum": item.get("InputBytesSum", 0),
+        "shuffle_read_bytes_sum": item.get("ShuffleReadBytesSum", 0),
+        "analysis_status": item.get("AnalysisStatus", ""),
+    }
 
 
 def _response_body(response):

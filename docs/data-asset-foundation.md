@@ -127,8 +127,8 @@ DLC_MCP_GATEWAY_TOKEN=your-token \
 | `list_projects` | `ListProjects` | `projects` |
 | `get_project` | `GetProject` | `projects` |
 | `list_project_members` | `ListProjectMembers` | `project_members` |
-| `list_downstream_tasks` | `ListDownstreamTasks` | `task_relations` |
-| `list_upstream_tasks` | `ListUpstreamTasks` | `task_relations` |
+| `list_task_relations(direction="downstream")` | `ListDownstreamTasks` | `task_relations` |
+| `list_task_relations(direction="upstream")` | `ListUpstreamTasks` | `task_relations` |
 | `get_table` | `GetTable` | `tables` |
 
 接口来源、文档分类和用途统一登记在 `cloud_api_catalog`。后续新增腾讯云接口时，必须同时更新该目录、对应归一化/缓存逻辑和文档。
@@ -139,13 +139,13 @@ DLC_MCP_GATEWAY_TOKEN=your-token \
 
 - `get_sync_health`
 - `get_asset_coverage`
-- `list_asset_coverage_gaps`
+- `list_asset_gaps`
 
 说明：
 
 - `get_sync_health` 用于查看同步健康状态、资产数量、最新同步信号和当前数据缺口。
 - `get_asset_coverage` 用于查看按层级统计的资产覆盖情况。
-- `list_asset_coverage_gaps` 用于列出缺字段、缺血缘、缺质量规则、缺任务、缺运行实例等资产覆盖缺口。
+- `list_asset_gaps(view="coverage")` 用于列出缺字段、缺血缘、缺质量规则、缺任务、缺运行实例等资产覆盖缺口。
 
 这三个工具应成为数据资产底座阶段的主控台。
 
@@ -169,7 +169,7 @@ DLC_MCP_GATEWAY_TOKEN=your-token \
 2. 89 个有 GUID 的目标没有落到规范表名详情记录，需要继续核对重复记录、空名称和名称归一化。
 3. 4 组任务关系请求对应的旧任务 ID 已被 WeData 判定为不存在；此外字段、血缘、质量规则、任务映射、运行实例和数据源关联必须分别通过覆盖度工具验收，不能由 `GetTable` 成功率代替。
 
-因此，“接口调用完成”只代表该类事实已采集；项目验收仍以 `get_sync_health`、`get_asset_coverage`、`list_asset_coverage_gaps` 和抽样核对结果为准。
+因此，“接口调用完成”只代表该类事实已采集；项目验收仍以 `get_sync_health`、`get_asset_coverage`、`list_asset_gaps(view="coverage")` 和抽样核对结果为准。
 
 ### 2.8 任务映射、实例保留与质量规则同步
 
@@ -410,7 +410,7 @@ python3 -m dlc_mcp.check_foundation \
   --gap-limit 20
 ```
 
-MCP 工具仍保留给 Codex/Agent 使用：`get_asset_coverage` 和 `list_asset_coverage_gaps`。
+MCP 工具仍保留给 Codex/Agent 使用：`get_asset_coverage` 和 `list_asset_gaps(view="coverage")`。
 
 ### 7.4 验收标准
 
@@ -428,7 +428,7 @@ MCP 工具仍保留给 Codex/Agent 使用：`get_asset_coverage` 和 `list_asset
 1. **资产底座能力盘点文档**：本文档。
 2. **标准同步配置 V0.1**：固化 `/etc/dlc-mcp/env` 推荐项和 `deploy/env.example`。
 3. **同步健康检查 V0.1**：同步后可直接运行 `get_sync_health`。
-4. **资产覆盖报告 V0.1**：可直接运行 `get_asset_coverage` 和 `list_asset_coverage_gaps`。
+4. **资产覆盖报告 V0.1**：可直接运行 `get_asset_coverage` 和 `list_asset_gaps(view="coverage")`。
 5. **第一批核心资产候选表清单 V0.1**：后续用于表画像和核心表模型验收。
 
 ## 9. 下一步执行顺序
@@ -703,7 +703,7 @@ python3 -m dlc_mcp.call_wedata_api ListTasks '{"ProjectId":"'$WEDATA_PROJECT_ID'
 
 ### 13.4 输出结构
 
-`get_asset_value_profile` 和 `is_core_table` 会保留兼容字段：
+`get_asset_value_profile` 会保留兼容字段：
 
 ```text
 is_core
@@ -738,7 +738,6 @@ review_suggestion 复核建议
 MCP 查询：
 
 ```text
-is_core_table(table_name="ads_bill_company_1d_di")
 get_asset_value_profile(table_name="ads_bill_company_1d_di")
 ```
 
