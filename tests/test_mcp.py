@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from dlc_mcp.assets import AssetStore
+from dlc_mcp.cleanup_derived_tables import cleanup_task_name_pseudo_tables
 from dlc_mcp.live import LiveWeData
 from dlc_mcp.mcp import _call_tool, _code_fence_language, _task_type_display, handle_request
 
@@ -1101,39 +1102,17 @@ class McpTest(unittest.TestCase):
         self.assertIn("m2c_ods_cloud_cost_aliyun_day_di", text)
         self.assertIn("ListTasks", [action for action, payload in client.calls])
 
-    def test_cleanup_task_name_pseudo_tables_tool_dry_runs_and_applies(self):
+    def test_cleanup_task_name_pseudo_tables_cli_dry_runs_and_applies(self):
         self.store.upsert_data_source({"id": "57738", "name": "crm_fxiaoke_tx"})
         self.store.upsert_table({"name": "m2c_ods_cloud_cost_aliyun_day_di", "data_source_id": "57738"})
         self.store.upsert_table({"name": "ods_cloud_cost_aliyun_day_di", "guid": "guid_001", "database": "byai_bigdata"})
         self.store.upsert_task({"id": "sync_aliyun", "name": "m2c_ods_cloud_cost_aliyun_day_di", "outputs": ["ods_cloud_cost_aliyun_day_di"]})
 
-        dry_run = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
-                    "name": "cleanup_task_name_pseudo_tables",
-                    "arguments": {"data_source_id": "57738"},
-                },
-            },
-        )
-        applied = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "cleanup_task_name_pseudo_tables",
-                    "arguments": {"data_source_id": "57738", "apply": True},
-                },
-            },
-        )
+        dry_run = cleanup_task_name_pseudo_tables(self.store.conn, "57738")
+        applied = cleanup_task_name_pseudo_tables(self.store.conn, "57738", apply=True)
 
-        self.assertIn('"candidate_tables": 1', dry_run["result"]["content"][0]["text"])
-        self.assertIn('"deleted_tables": 1', applied["result"]["content"][0]["text"])
+        self.assertEqual(dry_run["candidate_tables"], 1)
+        self.assertEqual(applied["deleted_tables"], 1)
         self.assertEqual(self.store.get_table_profile("m2c_ods_cloud_cost_aliyun_day_di")["error"], "table_not_found")
         self.assertNotIn("error", self.store.get_table_profile("ods_cloud_cost_aliyun_day_di"))
 
@@ -1197,10 +1176,8 @@ class McpTest(unittest.TestCase):
         self.assertIn("get_table_risk_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_asset_value_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_asset_owner_profile", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_asset_usage_profile", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_asset_lifecycle_profile", [tool["name"] for tool in response["result"]["tools"]])
+        self.assertIn("get_asset_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_asset_change_impact", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_metric_definition", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_asset_gaps", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_expert_label", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_metadata", [tool["name"] for tool in response["result"]["tools"]])
@@ -1616,8 +1593,8 @@ class McpTest(unittest.TestCase):
     def test_calls_asset_governance_tools(self):
         calls = [
             ("get_asset_owner_profile", {"table_name": "dim_customer"}, "资产责任画像", "责任人候选"),
-            ("get_asset_usage_profile", {"table_name": "dws_customer_revenue_1d_di"}, "资产使用画像", "使用信号"),
-            ("get_asset_lifecycle_profile", {"table_name": "dim_customer"}, "资产生命周期", "生命周期证据"),
+            ("get_asset_profile", {"table_name": "dws_customer_revenue_1d_di", "view": "usage"}, "资产使用画像", "使用信号"),
+            ("get_asset_profile", {"table_name": "dim_customer", "view": "lifecycle"}, "资产生命周期", "生命周期证据"),
             ("get_asset_change_impact", {"table_name": "dws_customer_revenue_1d_di", "change_type": "schema_change"}, "资产变更影响分析", "变更前检查"),
         ]
         for index, (name, arguments, title, section) in enumerate(calls, start=30):
@@ -1659,7 +1636,7 @@ class McpTest(unittest.TestCase):
                 "jsonrpc": "2.0",
                 "id": 17,
                 "method": "tools/call",
-                "params": {"name": "get_metric_definition", "arguments": {"table_name": "ads_customer_revenue_daily"}},
+                "params": {"name": "get_asset_profile", "arguments": {"table_name": "ads_customer_revenue_daily", "view": "metric"}},
             },
         )
 

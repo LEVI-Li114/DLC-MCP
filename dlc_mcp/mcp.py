@@ -2,7 +2,6 @@ import json
 import os
 from datetime import datetime
 
-from .cleanup_derived_tables import cleanup_task_name_pseudo_tables
 from .dlc_query import QueryValidationError
 from .live_assets import LiveAssetService
 from .source import Source, resolve_source
@@ -210,21 +209,25 @@ TOOLS = {
         "description": "Return asset ownership chain and responsibility gaps for a table.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
     },
-    "get_asset_usage_profile": {
-        "description": "Return metadata-proxy usage signals for a table asset.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
-    "get_asset_lifecycle_profile": {
-        "description": "Return lifecycle status and governance evidence for a table asset.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
+    "get_asset_profile": {
+        "description": (
+            "Return one asset profile view for a table. view=usage returns metadata-proxy usage signals; "
+            "view=lifecycle returns lifecycle status and governance evidence; view=metric explains the "
+            "ads/dws metric definition from fields, lineage, and tasks."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "table_name": {"type": "string"},
+                "view": {"type": "string", "enum": ["usage", "lifecycle", "metric"]},
+                "live": {"type": "boolean"},
+            },
+            "required": ["table_name", "view"],
+        },
     },
     "get_asset_change_impact": {
         "description": "Return bounded change impact analysis for a table asset.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "change_type": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
-    "get_metric_definition": {
-        "description": "Explain metric definition for ads/dws tables from fields, lineage, and tasks.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
     },
     "list_asset_gaps": {
         "description": (
@@ -312,17 +315,6 @@ TOOLS = {
                 "scope": {"type": "string"},
             },
         },
-    },
-    "cleanup_task_name_pseudo_tables": {
-        "description": "Delete task-name pseudo-table rows from the asset fact database after a dry run, using strict safeguards.",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "data_source_id": {"type": "string"},
-                "apply": {"type": "boolean"},
-            },
-        },
-        "annotations": {"readOnlyHint": False, "destructiveHint": True},
     },
 }
 
@@ -667,32 +659,38 @@ def _call_tool(store, request, live=None, query_service=None):
         if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("owner_candidates")):
             live.sync_table(args["table_name"])
             data = store.get_asset_owner_profile(args["table_name"])
-    elif name == "get_asset_usage_profile":
-        data = store.get_asset_usage_profile(args["table_name"])
-        if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("signals")):
-            live.sync_table(args["table_name"])
+    elif name == "get_asset_profile":
+        view = args.get("view", "")
+        if view == "usage":
             data = store.get_asset_usage_profile(args["table_name"])
-        if live and not _has_error(data) and not data.get("heat_value"):
-            try:
-                live.sync_table_stats(args["table_name"])
+            if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("signals")):
+                live.sync_table(args["table_name"])
                 data = store.get_asset_usage_profile(args["table_name"])
-            except (RuntimeError, ValueError, OSError):
-                pass
-    elif name == "get_asset_lifecycle_profile":
-        data = store.get_asset_lifecycle_profile(args["table_name"])
-        if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("lifecycle_status") in {"新建/待补齐", "疑似废弃"}):
-            live.sync_table(args["table_name"])
+            if live and not _has_error(data) and not data.get("heat_value"):
+                try:
+                    live.sync_table_stats(args["table_name"])
+                    data = store.get_asset_usage_profile(args["table_name"])
+                except (RuntimeError, ValueError, OSError):
+                    pass
+        elif view == "lifecycle":
             data = store.get_asset_lifecycle_profile(args["table_name"])
+            if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("lifecycle_status") in {"新建/待补齐", "疑似废弃"}):
+                live.sync_table(args["table_name"])
+                data = store.get_asset_lifecycle_profile(args["table_name"])
+        elif view == "metric":
+            data = store.get_metric_definition(args["table_name"])
+            if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("metric_fields")):
+                live.sync_table(args["table_name"])
+                data = store.get_metric_definition(args["table_name"])
+        else:
+            data = _error_data("invalid_view", view=view, supported_views=["usage", "lifecycle", "metric"])
+        if not _has_error(data):
+            data["view"] = view
     elif name == "get_asset_change_impact":
         data = store.get_asset_change_impact(args["table_name"], args.get("change_type", "logic_change"))
         if live and _live_fallback(args, data, lambda item: _has_error(item) or (not item.get("direct_downstream") and not item.get("affected_tasks"))):
             live.sync_table(args["table_name"])
             data = store.get_asset_change_impact(args["table_name"], args.get("change_type", "logic_change"))
-    elif name == "get_metric_definition":
-        data = store.get_metric_definition(args["table_name"])
-        if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("metric_fields")):
-            live.sync_table(args["table_name"])
-            data = store.get_metric_definition(args["table_name"])
     elif name == "list_asset_gaps":
         view = args.get("view", "")
         layer = args.get("layer", "")
@@ -798,8 +796,6 @@ def _call_tool(store, request, live=None, query_service=None):
             else:
                 data = store.get_patrol_report_data(run["run_id"])
                 data["source"] = Source.PATROL_SNAPSHOT
-    elif name == "cleanup_task_name_pseudo_tables":
-        data = cleanup_task_name_pseudo_tables(store.conn, args.get("data_source_id", ""), bool(args.get("apply", False)))
     else:
         return _error(request, -32602, "unknown_tool")
 
@@ -1067,14 +1063,15 @@ def _format_markdown(tool_name, data):
         return _format_asset_value_profile(data)
     if tool_name == "get_asset_owner_profile":
         return _format_asset_owner_profile(data)
-    if tool_name == "get_asset_usage_profile":
+    if tool_name == "get_asset_profile":
+        view = data.get("view") or ""
+        if view == "lifecycle":
+            return _format_asset_lifecycle_profile(data)
+        if view == "metric":
+            return _format_metric_definition(data)
         return _format_asset_usage_profile(data)
-    if tool_name == "get_asset_lifecycle_profile":
-        return _format_asset_lifecycle_profile(data)
     if tool_name == "get_asset_change_impact":
         return _format_asset_change_impact(data)
-    if tool_name == "get_metric_definition":
-        return _format_metric_definition(data)
     if tool_name == "list_asset_gaps":
         view = data.get("view") or ""
         rows = data.get("results", [])

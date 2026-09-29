@@ -14,7 +14,11 @@ def main():
     db_path = args.db or os.environ.get("DLC_MCP_DB", "data/assets.db")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    print(json.dumps(cleanup_derived_tables(conn, apply=args.apply), ensure_ascii=False, sort_keys=True))
+    if args.task_name_pseudo:
+        result = cleanup_task_name_pseudo_tables(conn, args.data_source_id, args.apply)
+    else:
+        result = cleanup_derived_tables(conn, apply=args.apply)
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 
 def cleanup_derived_tables(conn, apply=False):
@@ -95,6 +99,8 @@ def _parse_args():
     parser.add_argument("--env-file", default=os.environ.get("DLC_MCP_ENV_FILE", "/etc/dlc-mcp/env"))
     parser.add_argument("--db", default="")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--task-name-pseudo", action="store_true", help="Clean pseudo tables whose name equals a WeData task name, optionally limited to one data source.")
+    parser.add_argument("--data-source-id", default="", help="Only used with --task-name-pseudo.")
     return parser.parse_args()
 
 

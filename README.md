@@ -150,10 +150,8 @@ Update this list whenever a new MCP tool is added.
 | `get_table_risk_profile(table_name, view, instance_date, live)` | Explain table risk or production state: `view=risk` (default) uses layer, downstream dependencies, quality rules, and task runs; `view=readiness` returns the governance readiness report; `view=production` returns produced-table status; `view=production_detail` returns the actionable production-risk diagnosis. |
 | `get_asset_value_profile(table_name, live)` | Return asset value tier and core-table decision. |
 | `get_asset_owner_profile(table_name, live)` | Return asset ownership chain and responsibility gaps. |
-| `get_asset_usage_profile(table_name, live)` | Return metadata-proxy usage signals for a table asset. |
-| `get_asset_lifecycle_profile(table_name, live)` | Return lifecycle status and governance evidence. |
+| `get_asset_profile(table_name, view, live)` | Return one asset profile view: `view=usage` (metadata-proxy usage signals), `view=lifecycle` (lifecycle status and governance evidence), `view=metric` (ads/dws metric definition from fields, lineage, and tasks). |
 | `get_asset_change_impact(table_name, change_type, live)` | Return bounded change impact analysis for a table asset. |
-| `get_metric_definition(table_name, live)` | Explain ads/dws metric definitions from fields, lineage, and related tasks. |
 | `list_asset_gaps(view, gap_type, layer, domain, limit)` | List table assets with governance gaps: `view=quality` (high-impact tables without quality rules), `view=expert_review` (high-impact unlabelled tables), `view=coverage` (missing asset profile coverage, optionally filtered by `gap_type`). |
 | `get_expert_label(asset_type, asset_name)` | Return expert label for one asset. |
 | `list_metadata()` | List imported databases and table metadata. |
@@ -161,7 +159,6 @@ Update this list whenever a new MCP tool is added.
 | `get_asset_coverage()` | Return asset coverage by layer for fields, lineage, quality rules, tasks, data sources, and runs. |
 | `get_asset_governance_issue_inventory(layer, core_level, issue_type, limit)` | Return deterministic governance issues with evidence, suspected root cause, severity, and recommended next check. |
 | `get_asset_governance_daily_report(instance_date, layer, core_level)` | Return a daily governance patrol report. |
-| `cleanup_task_name_pseudo_tables(dry_run, limit)` | Clean up pseudo table assets derived from task names. |
 | `submit_dlc_sql_query(sql, database_name, data_engine_name, datasource_connection_name)` | Submit one read-only `SELECT`/`WITH` statement to DLC; joins including `FULL OUTER JOIN` are allowed. |
 | `get_dlc_sql_query_result(task_id, next_token, max_results)` | Poll a DLC SQL task and return one page of status/results. |
 | `get_dlc_task_resource_usage(task_instance_id, include_cost, cost_task_id, cost_start_time, cost_end_time, cost_limit)` | Return the DLC engine Core usage curve for one DLC `TaskInstanceId` (no WeData `instance_id` mapping); optionally add CU consumption analysis for an explicit `cost_task_id`. |

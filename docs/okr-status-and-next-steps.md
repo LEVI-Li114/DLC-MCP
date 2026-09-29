@@ -178,8 +178,7 @@
 
 - `get_table_risk_profile(table_name, view, instance_date, live)`（`view="readiness"` 查看治理就绪度）
 - `get_asset_owner_profile(table_name, live)`
-- `get_asset_usage_profile(table_name, live)`
-- `get_asset_lifecycle_profile(table_name, live)`
+- `get_asset_profile(table_name, view, live)`（`view="usage"` 使用画像，`view="lifecycle"` 生命周期）
 - `get_asset_change_impact(table_name, change_type, live)`
 - `get_asset_governance_issue_inventory(layer, core_level, issue_type, limit)`
 - `get_asset_governance_daily_report(instance_date, layer, core_level)`
@@ -200,7 +199,7 @@
 
 #### BI 指标口径
 
-- `get_metric_definition(table_name, live)`
+- `get_asset_profile(table_name, view="metric", live)`
 
 覆盖 OKR：
 
@@ -245,7 +244,7 @@
 | KR2 资产分层模型 | 覆盖 ods/dim/dwd/dws/ads，标记核心资产候选 | 已有层级、核心表、价值分层模型 | unknown 层 2141 需要治理；专家标注需补齐 |
 | KR3 完整资产画像 | 名称、负责人、层级、数据源、字段、上下游、任务、质量、运行状态 | `get_table_profile` 已实现 | 画像完整率依赖真实数据覆盖，需按缺口补数 |
 | KR4 价值分层初版 | 基于层级、血缘、质量、运行、人工标记 | 已实现可解释评分 | 需要真实数据校准权重和阈值 |
-| KR5 BI 指标口径 | 财务/业务分析模板 | 有 `get_metric_definition` 入口 | 模板、样例、核心指标清单不足 |
+| KR5 BI 指标口径 | 财务/业务分析模板 | 有 `get_asset_profile(view="metric")` 入口 | 模板、样例、核心指标清单不足 |
 | KR6 MCP/Agent 查询体验 | 自然语言查表/字段/质量/上下游 | MCP 工具完整，npm/Gateway 可用 | 需要验收问题集和真实案例回归 |
 
 ### 3.2 O2：数据质量监控 Agent
@@ -512,7 +511,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"g
    - Owner。
    - 使用场景。
    - 质量规则要求。
-3. 将 `get_metric_definition` 输出与模板对齐。
+3. 将 `get_asset_profile(view="metric")` 输出与模板对齐。
 
 验收标准：
 
