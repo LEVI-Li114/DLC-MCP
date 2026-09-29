@@ -853,7 +853,7 @@ python3 -m dlc_mcp.check_table ads_bill_company_1d_di --db /data/dlc-mcp/assets.
 MCP：
 
 ```text
-get_table_readiness(table_name="ads_bill_company_1d_di")
+get_table_risk_profile(table_name="ads_bill_company_1d_di", view="readiness")
 ```
 
 Codex 可直接问：
@@ -904,7 +904,7 @@ Codex 可直接问：
 MCP：
 
 ```text
-get_table_production_status(table_name="ads_bill_company_1d_di", instance_date="2026-07-08")
+get_table_risk_profile(table_name="ads_bill_company_1d_di", view="production", instance_date="2026-07-08")
 ```
 
 `instance_date` 可选：

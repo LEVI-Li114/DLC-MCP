@@ -1247,5 +1247,52 @@ class UpsertTaskTableMappingsTest(unittest.TestCase):
         self.assertEqual(store.upsert_task_table_mappings("task_001", ["ads_b"], "sideways"), 0)
 
 
+class ListTasksTest(unittest.TestCase):
+    def _store(self):
+        store = AssetStore(sqlite3.connect(":memory:"))
+        store.init_schema()
+        for item in [
+            {"id": "task_dlc_1", "name": "build_dws_a", "task_type": "32", "owner": "alice", "status": "online"},
+            {"id": "task_dlc_2", "name": "build_ads_a", "task_type": "32", "owner": "bob", "status": "online"},
+            {"id": "task_pyspark", "name": "train_features", "task_type": "31", "owner": "alice", "status": "offline"},
+        ]:
+            store.upsert_task(item)
+        return store
+
+    def test_lists_all_tasks_with_total_count(self):
+        data = self._store().list_tasks()
+
+        self.assertEqual(data["total_count"], 3)
+        self.assertEqual(data["limit"], 20)
+        self.assertEqual(data["offset"], 0)
+        self.assertEqual([task["id"] for task in data["results"]], ["task_dlc_2", "task_dlc_1", "task_pyspark"])
+
+    def test_filters_by_keyword_task_type_and_owner(self):
+        store = self._store()
+
+        self.assertEqual(store.list_tasks(task_type="32")["total_count"], 2)
+        self.assertEqual(store.list_tasks(keyword="ads")["total_count"], 1)
+        self.assertEqual(store.list_tasks(owner="alice")["total_count"], 2)
+        self.assertEqual(store.list_tasks(task_type="32", owner="bob")["total_count"], 1)
+        self.assertEqual(store.list_tasks(task_type="32", owner="bob")["results"][0]["id"], "task_dlc_2")
+        self.assertEqual(store.list_tasks(keyword="no_match")["total_count"], 0)
+
+    def test_paginates_with_limit_and_offset(self):
+        store = self._store()
+
+        page_one = store.list_tasks(limit=2, offset=0)
+        page_two = store.list_tasks(limit=2, offset=2)
+
+        self.assertEqual(page_one["total_count"], 3)
+        self.assertEqual([task["id"] for task in page_one["results"]], ["task_dlc_2", "task_dlc_1"])
+        self.assertEqual([task["id"] for task in page_two["results"]], ["task_pyspark"])
+
+    def test_falls_back_to_defaults_on_bad_page_args(self):
+        data = self._store().list_tasks(limit="bad", offset=None)
+
+        self.assertEqual(data["limit"], 20)
+        self.assertEqual(data["offset"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

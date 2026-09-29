@@ -982,6 +982,60 @@ class McpTest(unittest.TestCase):
         self.assertIn("仅支持 SQL 类任务解析", text)
         self.assertEqual(self.store.get_table_tasks("ads_pyspark")["tasks"], [])
 
+    def test_list_tasks_renders_total_count_and_rows(self):
+        self.store.upsert_task({"id": "task_dlc_1", "name": "build_dws_a", "task_type": "32", "owner": "alice"})
+        self.store.upsert_task({"id": "task_dlc_2", "name": "build_ads_a", "task_type": "32", "owner": "bob"})
+
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 150, "method": "tools/call", "params": {"name": "list_tasks", "arguments": {"task_type": "32", "limit": 1}}},
+        )
+        text = response["result"]["content"][0]["text"]
+
+        total = self.store.list_tasks(task_type="32")["total_count"]
+        self.assertIn(f"总数：**{total}**", text)
+        self.assertIn("本页：1（limit=1，offset=0）", text)
+        self.assertIn("task_dlc_2", text)
+        self.assertNotIn("task_dlc_1", text)
+
+    def test_list_tasks_is_listed_in_tools(self):
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 151, "method": "tools/list", "params": {}},
+        )
+        names = [tool["name"] for tool in response["result"]["tools"]]
+
+        self.assertIn("list_tasks", names)
+
+    def test_list_tasks_live_refreshes_by_keyword(self):
+        client = FakeWeDataClient()
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            live = LiveWeData(self.store, client=client)
+            response = handle_request(
+                self.store,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 152,
+                    "method": "tools/call",
+                    "params": {"name": "list_tasks", "arguments": {"keyword": "m2c_ods_cloud_cost_aliyun_day_di", "live": True}},
+                },
+                live=live,
+            )
+
+        text = response["result"]["content"][0]["text"]
+
+        self.assertIn("m2c_ods_cloud_cost_aliyun_day_di", text)
+        self.assertTrue(any(call[0] == "ListTasks" and call[1].get("TaskName") == "m2c_ods_cloud_cost_aliyun_day_di" for call in client.calls))
+
+    def test_list_tasks_live_requires_keyword(self):
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 153, "method": "tools/call", "params": {"name": "list_tasks", "arguments": {"live": True}}},
+        )
+        text = response["result"]["content"][0]["text"]
+
+        self.assertIn("keyword_required_for_live", text)
+
     def test_get_task_code_resolves_cached_task_name(self):
         self.store.upsert_task_code(
             "project",
@@ -1136,9 +1190,6 @@ class McpTest(unittest.TestCase):
         self.assertEqual(response["id"], 1)
         self.assertIn("get_table_profile", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("get_table_partition_profile", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_table_readiness", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_table_production_status", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_table_production_risk_detail", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_table_production_risks", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("search_tasks", [tool["name"] for tool in response["result"]["tools"]])
         self.assertIn("list_data_sources", [tool["name"] for tool in response["result"]["tools"]])
@@ -1182,6 +1233,22 @@ class McpTest(unittest.TestCase):
         self.assertIn("运行状态", text)
         self.assertIn("当前缺口", text)
         self.assertIn("专家标注", text)
+
+    def test_calls_table_profile_tool_with_sections(self):
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "get_table_profile", "arguments": {"table_name": "dim_customer", "sections": ["columns"]}},
+            },
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("字段信息", text)
+        self.assertNotIn("标准表画像", text)
+        self.assertNotIn("上下游血缘", text)
 
     def test_calls_table_partition_profile_tool(self):
         self.store.upsert_table_partition(
@@ -1250,7 +1317,7 @@ class McpTest(unittest.TestCase):
                 "jsonrpc": "2.0",
                 "id": 21,
                 "method": "tools/call",
-                "params": {"name": "get_table_readiness", "arguments": {"table_name": "dim_customer"}},
+                "params": {"name": "get_table_risk_profile", "arguments": {"table_name": "dim_customer", "view": "readiness"}},
             },
         )
 
@@ -1266,7 +1333,7 @@ class McpTest(unittest.TestCase):
                 "jsonrpc": "2.0",
                 "id": 22,
                 "method": "tools/call",
-                "params": {"name": "get_table_production_status", "arguments": {"table_name": "dim_customer", "instance_date": "2026-07-01"}},
+                "params": {"name": "get_table_risk_profile", "arguments": {"table_name": "dim_customer", "view": "production", "instance_date": "2026-07-01"}},
             },
         )
 
@@ -1283,7 +1350,7 @@ class McpTest(unittest.TestCase):
                 "jsonrpc": "2.0",
                 "id": 24,
                 "method": "tools/call",
-                "params": {"name": "get_table_production_risk_detail", "arguments": {"table_name": "dws_customer_revenue_1d_di", "instance_date": "2026-07-01"}},
+                "params": {"name": "get_table_risk_profile", "arguments": {"table_name": "dws_customer_revenue_1d_di", "view": "production_detail", "instance_date": "2026-07-01"}},
             },
         )
 

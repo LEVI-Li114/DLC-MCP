@@ -115,9 +115,7 @@
 
 - `search_assets(query)`
 - `list_metadata()`
-- `get_table_profile(table_name, live)`
-- `list_table_columns(table_name, live)`
-- `get_table_lineage(table_name, live)`
+- `get_table_profile(table_name, sections, live)`（`sections` 可选取 `columns` / `lineage` / `quality` 等分区）
 - `get_task_code(task_id/task_name, live)`
 
 覆盖 OKR：
@@ -142,11 +140,10 @@
 
 #### 质量与生产状态
 
-- `get_quality_status(table_name, live)`
+- `get_table_profile(table_name, sections=["quality"], live)`
 - `list_asset_gaps(view, gap_type, layer, domain, limit)`
 - `get_task_runs(task_id/task_name, instance_date, live)`
-- `get_table_production_status(table_name, instance_date, live)`
-- `get_table_production_risk_detail(table_name, instance_date, live)`
+- `get_table_risk_profile(table_name, view, instance_date, live)`（`view="production"` 查看产出状态，`view="production_detail"` 查看产出风险诊断）
 - `list_table_production_risks(layer, core_level, instance_date, status, limit)`
 
 覆盖 OKR：
@@ -179,8 +176,7 @@
 
 #### 治理与风险画像
 
-- `get_table_readiness(table_name, live)`
-- `get_table_risk_profile(table_name, live)`
+- `get_table_risk_profile(table_name, view, instance_date, live)`（`view="readiness"` 查看治理就绪度）
 - `get_asset_owner_profile(table_name, live)`
 - `get_asset_usage_profile(table_name, live)`
 - `get_asset_lifecycle_profile(table_name, live)`
@@ -256,7 +252,7 @@
 
 | KR | 要求 | 当前状态 | 差距 |
 | --- | --- | --- | --- |
-| KR1 质量规则查询 | 各层级表质量规则数、明细、状态 | `get_quality_status`、`list_asset_gaps(view="quality")`、`get_asset_governance_issue_inventory(issue_type="missing_quality_rules")` 已有 | 质量规则总量 62，覆盖率低；需要字段级覆盖度 |
+| KR1 质量规则查询 | 各层级表质量规则数、明细、状态 | `get_table_profile(sections=["quality"])`、`list_asset_gaps(view="quality")`、`get_asset_governance_issue_inventory(issue_type="missing_quality_rules")` 已有 | 质量规则总量 62，覆盖率低；需要字段级覆盖度 |
 | KR2 任务运行实例查询 | 查询今天/昨天任务运行情况 | `get_task_runs`、表生产状态、`missing_task_mapping` / `missing_task_runs` issue 清单已实现 | 部分真实表缺运行实例，需要扩大/校准同步窗口 |
 | KR3 聚合质量与产出状态 | 按表/任务/数据源聚合风险 | 生产风险、巡检日报、issue summary / severity / owner 汇总已有 | 需要数据源维度风险聚合和 SLA 规则 |
 | KR4 风险解释 | 缺规则、失败、延迟、下游影响 | 已有风险画像、生产风险详情、issue suspected root cause 与 recommended next check | 需要更强的核心表影响解释和可执行处理建议 |

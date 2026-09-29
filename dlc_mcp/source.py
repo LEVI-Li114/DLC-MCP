@@ -10,22 +10,17 @@ class Source:
 
 DYNAMIC_TOOLS = {
     "get_table_partition_profile",
-    "get_table_production_status",
     "get_task_runs",
-    "get_quality_status",
-    "get_table_lineage",
     "get_task_code",
     "get_table_risk_profile",
-    "get_table_readiness",
     "get_table_profile",
-    "get_table_production_risk_detail",
 }
 
 REGISTRY_TOOLS = {
     "search_assets",
     "search_tasks",
+    "list_tasks",
     "get_table",
-    "list_table_columns",
     "list_data_sources",
     "get_data_source",
     "get_data_source_inventory",

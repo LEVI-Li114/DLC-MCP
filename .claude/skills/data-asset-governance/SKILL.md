@@ -41,10 +41,9 @@ When the user asks for one data source's tasks, tables, or DDL:
 
 When the user asks about one table:
 
-1. Use `get_table_profile(table_name=..., live=true)`.
-2. Use `list_table_columns(table_name=..., live=true)` when fields or DDL matter.
-3. Use `get_table_lineage(table_name=..., live=true)` for upstream/downstream impact; use `get_task_code(task_id=..., live=true)` to see a SQL task's parsed output tables.
-4. Use `get_table_production_status(table_name=..., instance_date=..., live=true)` or `get_table_production_risk_detail(...)` when execution status matters.
+1. Use `get_table_profile(table_name=..., live=true)`; pass `sections=["columns"]` when only fields matter, `sections=["lineage"]` for upstream/downstream impact, or `sections=["quality"]` for quality rules.
+2. Use `get_task_code(task_id=..., live=true)` to see a SQL task's parsed output tables.
+3. Use `get_table_risk_profile(table_name=..., view="production", instance_date=..., live=true)` when produced-table status matters, or `view="production_detail"` for the actionable production-risk diagnosis. Use `view="readiness"` for the governance readiness report.
 
 ### Coverage and Governance Gaps
 

@@ -80,33 +80,52 @@ TOOLS = {
         "description": "Search WeData ETL tasks by id, name, owner, or status.",
         "schema": {"type": "object", "properties": {"query": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["query"]},
     },
+    "list_tasks": {
+        "description": (
+            "List cached WeData tasks with pagination and optional keyword/task_type/owner filters. "
+            "Returns total_count for task inventory. live=true refreshes from WeData ListTasks but requires keyword."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "keyword": {"type": "string", "description": "Match task id or name (substring); required for live=true."},
+                "task_type": {"type": "string", "description": "Exact task type code, for example 32 for DLC SQL."},
+                "owner": {"type": "string", "description": "Match owner (substring)."},
+                "limit": {"type": "integer", "description": "Page size, 1-200, default 20."},
+                "offset": {"type": "integer", "description": "Page offset, default 0."},
+                "live": {"type": "boolean", "description": "Force a WeData ListTasks refresh filtered by keyword before reading the cache."},
+            },
+        },
+    },
     "get_table_profile": {
-        "description": "Return table metadata, columns, lineage, quality status, and core-table decision.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
-    "get_table_partition_profile": {
-        "description": "Return table partition profile, row counts, recent partitions, and partition health based on synced partition facts.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "partition_date": {"type": "string"}}, "required": ["table_name"]},
-    },
-    "get_table_readiness": {
-        "description": "Return a governance readiness report for any table asset profile.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
-    "get_table_production_status": {
-        "description": "Return table-level production status from output tasks and latest task run instances.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "instance_date": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
-    "get_table_production_risk_detail": {
-        "description": "Return actionable production-risk diagnosis for one table, including producer tasks, reasons, impact, and suggestions.",
+        "description": (
+            "Return table metadata, columns, lineage, quality status, related tasks, and core-table decision. "
+            "sections narrows the output to the listed sections; omit it to return everything."
+        ),
         "schema": {
             "type": "object",
             "properties": {
                 "table_name": {"type": "string"},
-                "instance_date": {"type": "string"},
+                "sections": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["summary", "value", "storage", "expert_label", "columns", "lineage", "tasks", "data_source", "quality", "runs", "gaps"],
+                    },
+                    "description": (
+                        "Optional section filter; omit it to return every section. "
+                        "sections=[\"columns\"] replaces list_table_columns, [\"quality\"] replaces get_quality_status, "
+                        "[\"lineage\"] replaces get_table_lineage. Combine with \"summary\" to keep the table identity."
+                    ),
+                },
                 "live": {"type": "boolean"},
             },
             "required": ["table_name"],
         },
+    },
+    "get_table_partition_profile": {
+        "description": "Return table partition profile, row counts, recent partitions, and partition health based on synced partition facts.",
+        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "partition_date": {"type": "string"}}, "required": ["table_name"]},
     },
     "list_table_production_risks": {
         "description": "List table-level production risks from output tasks and task run instances.",
@@ -120,18 +139,6 @@ TOOLS = {
                 "limit": {"type": "integer"},
             },
         },
-    },
-    "list_table_columns": {
-        "description": "List fields for a table.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
-    "get_quality_status": {
-        "description": "Return quality monitoring rules and latest status for a table.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
-    "get_table_lineage": {
-        "description": "Return upstream and downstream assets for a table.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
     },
     "get_task_runs": {
         "description": "Return task instances by task id or exact task name, with optional instance date filter.",
@@ -178,8 +185,22 @@ TOOLS = {
         },
     },
     "get_table_risk_profile": {
-        "description": "Return table risk level based on lineage, quality rules, and latest output task runs.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
+        "description": (
+            "Return a table-level risk or production report. view=risk returns risk level from lineage, quality "
+            "rules, and latest output task runs; view=readiness returns the governance readiness report; "
+            "view=production returns the produced-table status; view=production_detail returns the actionable "
+            "production-risk diagnosis."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "table_name": {"type": "string"},
+                "view": {"type": "string", "enum": ["risk", "readiness", "production", "production_detail"]},
+                "instance_date": {"type": "string", "description": "Only used when view=production or production_detail."},
+                "live": {"type": "boolean"},
+            },
+            "required": ["table_name"],
+        },
     },
     "get_asset_value_profile": {
         "description": "Return reusable asset value tier and core-table decision for a table.",
@@ -482,6 +503,28 @@ def _call_tool(store, request, live=None, query_service=None):
             refreshed = _maybe_live_refresh(meta, args, data, _empty_list("results"), lambda: live.sync_tasks(args["query"]))
             if refreshed:
                 data = store.search_tasks(args["query"])
+    elif name == "list_tasks":
+        keyword = args.get("keyword", "")
+        has_keyword = bool((keyword or "").strip())
+        if args.get("live") and not has_keyword:
+            data = _error_data("keyword_required_for_live")
+        else:
+            data = store.list_tasks(
+                keyword,
+                args.get("task_type", ""),
+                args.get("owner", ""),
+                args.get("limit", 20),
+                args.get("offset", 0),
+            )
+            if live and has_keyword:
+                _maybe_live_refresh(meta, args, data, _empty_list("results"), lambda: live.sync_tasks(keyword))
+                data = store.list_tasks(
+                    keyword,
+                    args.get("task_type", ""),
+                    args.get("owner", ""),
+                    args.get("limit", 20),
+                    args.get("offset", 0),
+                )
     elif name == "get_table_profile":
         data = store.get_table_profile(args["table_name"])
         if live:
@@ -495,6 +538,8 @@ def _call_tool(store, request, live=None, query_service=None):
                     meta["source"] = "cache_after_live_refresh"
                 except (RuntimeError, ValueError, OSError):
                     pass
+        if not _has_error(data):
+            data["sections"] = args.get("sections") or []
     elif name == "get_table_partition_profile":
         partition_date = args.get("partition_date", "")
         data = store.get_table_partition_profile(args["table_name"], partition_date)
@@ -513,43 +558,8 @@ def _call_tool(store, request, live=None, query_service=None):
                 "table_name": args["table_name"],
                 "requested_source": source,
             }
-    elif name == "get_table_readiness":
-        data = store.get_table_readiness(args["table_name"])
-        if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("score", 0) < 80):
-            live.sync_table(args["table_name"])
-            data = store.get_table_readiness(args["table_name"])
-    elif name == "get_table_production_status":
-        data = store.get_table_production_status(args["table_name"], args.get("instance_date", ""))
-        if live:
-            refreshed = _maybe_live_refresh(meta, args, data, lambda item: _has_error(item) or item.get("status") in {"not_run", "unknown"}, lambda: live.sync_table(args["table_name"]), reason=data.get("status", ""))
-            if refreshed:
-                data = store.get_table_production_status(args["table_name"], args.get("instance_date", ""))
-    elif name == "get_table_production_risk_detail":
-        data = store.get_table_production_risk_detail(args["table_name"], args.get("instance_date", ""))
-        if live:
-            refreshed = _maybe_live_refresh(meta, args, data, lambda item: _has_error(item) or item.get("status") in {"not_run", "unknown"}, lambda: live.sync_table(args["table_name"]), reason=data.get("status", ""))
-            if refreshed:
-                data = store.get_table_production_risk_detail(args["table_name"], args.get("instance_date", ""))
     elif name == "list_table_production_risks":
         data = store.list_table_production_risks(args.get("layer", ""), args.get("core_level", ""), args.get("instance_date", ""), args.get("status", ""), args.get("limit", 50))
-    elif name == "list_table_columns":
-        data = store.list_table_columns(args["table_name"])
-        if live:
-            refreshed = _maybe_live_refresh(meta, args, data, _empty_list("columns"), lambda: live.sync_table(args["table_name"]))
-            if refreshed:
-                data = store.list_table_columns(args["table_name"])
-    elif name == "get_quality_status":
-        data = store.get_quality_status(args["table_name"])
-        if live:
-            refreshed = _maybe_live_refresh(meta, args, data, lambda item: _has_error(item) or not item.get("has_quality_monitoring"), lambda: live.sync_table(args["table_name"]), reason="incomplete" if not data.get("has_quality_monitoring") else "")
-            if refreshed:
-                data = store.get_quality_status(args["table_name"])
-    elif name == "get_table_lineage":
-        data = store.get_table_lineage(args["table_name"])
-        if live:
-            refreshed = _maybe_live_refresh(meta, args, data, lambda item: not item.get("downstream"), lambda: live.sync_table(args["table_name"]), reason="incomplete" if not data.get("downstream") else "")
-            if refreshed:
-                data = store.get_table_lineage(args["table_name"])
     elif name == "get_task_runs":
         if not args.get("task_id") and not args.get("task_name"):
             data = _error_data("missing_task_identity")
@@ -619,10 +629,34 @@ def _call_tool(store, request, live=None, query_service=None):
             if not _has_error(data):
                 data["view"] = view
     elif name == "get_table_risk_profile":
-        data = store.get_table_risk_profile(args["table_name"])
-        if live and _live_fallback(args, data, _has_error):
-            live.sync_table(args["table_name"])
+        view = args.get("view", "risk")
+        instance_date = args.get("instance_date", "")
+        if view == "risk":
             data = store.get_table_risk_profile(args["table_name"])
+            if live and _live_fallback(args, data, _has_error):
+                live.sync_table(args["table_name"])
+                data = store.get_table_risk_profile(args["table_name"])
+        elif view == "readiness":
+            data = store.get_table_readiness(args["table_name"])
+            if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("score", 0) < 80):
+                live.sync_table(args["table_name"])
+                data = store.get_table_readiness(args["table_name"])
+        elif view == "production":
+            data = store.get_table_production_status(args["table_name"], instance_date)
+            if live:
+                refreshed = _maybe_live_refresh(meta, args, data, lambda item: _has_error(item) or item.get("status") in {"not_run", "unknown"}, lambda: live.sync_table(args["table_name"]), reason=data.get("status", ""))
+                if refreshed:
+                    data = store.get_table_production_status(args["table_name"], instance_date)
+        elif view == "production_detail":
+            data = store.get_table_production_risk_detail(args["table_name"], instance_date)
+            if live:
+                refreshed = _maybe_live_refresh(meta, args, data, lambda item: _has_error(item) or item.get("status") in {"not_run", "unknown"}, lambda: live.sync_table(args["table_name"]), reason=data.get("status", ""))
+                if refreshed:
+                    data = store.get_table_production_risk_detail(args["table_name"], instance_date)
+        else:
+            data = _error_data("invalid_view", view=view, supported_views=["risk", "readiness", "production", "production_detail"])
+        if not _has_error(data):
+            data["view"] = view
     elif name == "get_asset_value_profile":
         data = store.get_asset_value_profile(args["table_name"])
         if live and _live_fallback(args, data, _has_error):
@@ -1002,6 +1036,13 @@ def _format_markdown(tool_name, data):
             )
         return _format_data_source_inventory(data)
     if tool_name == "get_table_risk_profile":
+        view = data.get("view") or "risk"
+        if view == "readiness":
+            return _format_table_readiness(data)
+        if view == "production":
+            return _format_table_production_status(data)
+        if view == "production_detail":
+            return _format_table_production_risk_detail(data)
         return "\n\n".join(
             [
                 _section(
@@ -1056,6 +1097,19 @@ def _format_markdown(tool_name, data):
             ["TaskId", "任务名", "类型", "负责人", "状态", "产出表"],
             [[r.get("id"), r.get("name"), _task_type_display(r.get("task_type")), _owner_display(r), r.get("status"), ", ".join(r.get("outputs") or [])] for r in rows],
         )
+    if tool_name == "list_tasks":
+        rows = data.get("results", [])
+        return _section(
+            "任务列表",
+            [
+                f"总数：**{data.get('total_count', 0)}**",
+                f"本页：{len(rows)}（limit={data.get('limit', 0)}，offset={data.get('offset', 0)}）",
+                "说明：来自本地缓存的全量任务同步结果。",
+            ],
+        ) + "\n\n" + _table(
+            ["TaskId", "任务名", "类型", "负责人", "状态", "产出表"],
+            [[r.get("id"), r.get("name"), _task_type_display(r.get("task_type")), _owner_display(r), r.get("status"), ", ".join(r.get("outputs") or [])] for r in rows],
+        )
     if tool_name == "get_task_code":
         code_text = data.get("code_text", "")
         language = _code_fence_language(code_text)
@@ -1079,30 +1133,10 @@ def _format_markdown(tool_name, data):
             ["实例日期", "开始时间", "结束时间", "耗时秒", "状态", "实例ID"],
             [[r.get("instance_date"), r.get("start_time"), r.get("end_time"), r.get("duration_seconds"), r.get("status"), r.get("instance_id")] for r in rows],
         )
-    if tool_name == "list_table_columns":
-        return _section(f"字段列表：{data.get('table_name')}", [f"字段数：{len(data.get('columns', []))}"]) + "\n\n" + _table(
-            ["字段名", "类型", "说明"],
-            [[c.get("name"), c.get("type"), c.get("description")] for c in data.get("columns", [])],
-        )
-    if tool_name == "get_quality_status":
-        return _section(f"质量状态：{data.get('table_name')}", [f"是否有监控：{data.get('has_quality_monitoring')}", f"规则数：{data.get('rule_count')}", f"最新状态：`{_cell(data.get('latest_status'))}`"]) + "\n\n" + _table(
-            ["规则名", "类型", "目标", "启用", "状态", "检查时间"],
-            [[r.get("rule_name"), r.get("rule_type"), r.get("target"), r.get("enabled"), r.get("last_status"), r.get("last_checked_at")] for r in data.get("rules", [])],
-        )
-    if tool_name == "get_table_lineage":
-        upstream = _table(["上游", "经由"], [[r.get("upstream"), r.get("via")] for r in data.get("upstream", [])])
-        downstream = _table(["下游", "经由"], [[r.get("downstream"), r.get("via")] for r in data.get("downstream", [])])
-        return f"**血缘关系**\n\n上游：\n\n{upstream}\n\n下游：\n\n{downstream}"
     if tool_name == "get_table_profile":
         return _format_table_profile(data)
     if tool_name == "get_table_partition_profile":
         return _format_table_partition_profile(data)
-    if tool_name == "get_table_readiness":
-        return _format_table_readiness(data)
-    if tool_name == "get_table_production_status":
-        return _format_table_production_status(data)
-    if tool_name == "get_table_production_risk_detail":
-        return _format_table_production_risk_detail(data)
     if tool_name == "list_table_production_risks":
         rows = data.get("results", [])
         return "\n\n".join(
@@ -1766,60 +1800,64 @@ def _format_table_profile(data):
     quality = data.get("quality", {})
     lineage = data.get("lineage", {})
     source = data.get("data_source") or {}
-    return "\n\n".join(
-        [
-            _section(
-                f"标准表画像：{table.get('name')}",
-                [
-                    f"库：`{_cell(table.get('database'))}`",
-                    f"层级：`{_cell(table.get('layer'))}`",
-                    f"领域：`{_cell(table.get('domain'))}`",
-                    f"负责人：`{_cell(table.get('owner'))}`",
-                    f"解析负责人：`{_cell((data.get('owner_resolution') or {}).get('resolved_owner'))}`",
-                    f"负责人来源：`{_cell((data.get('owner_resolution') or {}).get('owner_source'))}`",
-                    f"描述：{_cell(table.get('description'))}",
-                    f"数据源ID：`{_cell(table.get('data_source_id'))}`",
-                ],
-            ),
-            _section(
-                "资产价值与核心表判断",
-                [
-                    f"是否核心：**{core.get('is_core')}**",
-                    f"核心等级：**{_cell(core.get('core_level'))}**",
-                    f"价值分层：**{_cell(core.get('value_tier'))}**",
-                    f"分数：**{core.get('score')}**",
-                    f"依据：{', '.join(core.get('reasons') or [])}",
-                ],
-            ),
-            _format_table_storage_heat(data),
-            _format_expert_label(data.get("expert_label")),
-            _section("字段信息", [f"字段数：{len(data.get('columns', []))}"]) + "\n\n" + _table(
-                ["字段名", "类型", "说明"],
-                [[c.get("name"), c.get("type"), c.get("description")] for c in data.get("columns", [])],
-            ),
-            _section("上下游血缘", [f"上游数：{len(lineage.get('upstream', []))}", f"下游数：{len(lineage.get('downstream', []))}"])
+    blocks = [
+        ("summary", _section(
+            f"标准表画像：{table.get('name')}",
+            [
+                f"库：`{_cell(table.get('database'))}`",
+                f"层级：`{_cell(table.get('layer'))}`",
+                f"领域：`{_cell(table.get('domain'))}`",
+                f"负责人：`{_cell(table.get('owner'))}`",
+                f"解析负责人：`{_cell((data.get('owner_resolution') or {}).get('resolved_owner'))}`",
+                f"负责人来源：`{_cell((data.get('owner_resolution') or {}).get('owner_source'))}`",
+                f"描述：{_cell(table.get('description'))}",
+                f"数据源ID：`{_cell(table.get('data_source_id'))}`",
+            ],
+        )),
+        ("value", _section(
+            "资产价值与核心表判断",
+            [
+                f"是否核心：**{core.get('is_core')}**",
+                f"核心等级：**{_cell(core.get('core_level'))}**",
+                f"价值分层：**{_cell(core.get('value_tier'))}**",
+                f"分数：**{core.get('score')}**",
+                f"依据：{', '.join(core.get('reasons') or [])}",
+            ],
+        )),
+        ("storage", _format_table_storage_heat(data)),
+        ("expert_label", _format_expert_label(data.get("expert_label"))),
+        ("columns", _section("字段信息", [f"字段数：{len(data.get('columns', []))}"]) + "\n\n" + _table(
+            ["字段名", "类型", "说明"],
+            [[c.get("name"), c.get("type"), c.get("description")] for c in data.get("columns", [])],
+        )),
+        ("lineage", _section("上下游血缘", [f"上游数：{len(lineage.get('upstream', []))}", f"下游数：{len(lineage.get('downstream', []))}"])
             + "\n\n上游：\n\n"
             + _table(["表名", "经由"], [[r.get("upstream"), r.get("via")] for r in lineage.get("upstream", [])])
             + "\n\n下游：\n\n"
-            + _table(["表名", "经由"], [[r.get("downstream"), r.get("via")] for r in lineage.get("downstream", [])]),
-            _section("相关任务", [f"任务数：{len(data.get('tasks', []))}"]) + "\n\n" + _table(
-                ["TaskId", "任务名", "方向", "状态", "负责人", "调度周期", "调度时间", "调度说明"],
-                [[t.get("id"), t.get("name"), t.get("direction"), t.get("status"), _owner_display(t), t.get("cycle"), t.get("schedule_time"), t.get("schedule_desc")] for t in data.get("tasks", [])],
-            ),
-            _format_profile_data_source(source),
-            _section("质量监控", [f"是否有监控：{bool(quality.get('rule_count'))}", f"规则数：{quality.get('rule_count')}", f"最新状态：`{_cell(quality.get('latest_status'))}`"])
+            + _table(["表名", "经由"], [[r.get("downstream"), r.get("via")] for r in lineage.get("downstream", [])])),
+        ("tasks", _section("相关任务", [f"任务数：{len(data.get('tasks', []))}"]) + "\n\n" + _table(
+            ["TaskId", "任务名", "方向", "状态", "负责人", "调度周期", "调度时间", "调度说明"],
+            [[t.get("id"), t.get("name"), t.get("direction"), t.get("status"), _owner_display(t), t.get("cycle"), t.get("schedule_time"), t.get("schedule_desc")] for t in data.get("tasks", [])],
+        )),
+        ("data_source", _format_profile_data_source(source)),
+        ("quality", _section("质量监控", [f"是否有监控：{bool(quality.get('rule_count'))}", f"规则数：{quality.get('rule_count')}", f"最新状态：`{_cell(quality.get('latest_status'))}`"])
             + "\n\n"
             + _table(
                 ["规则名", "类型", "目标", "启用", "状态", "检查时间"],
                 [[r.get("rule_name"), r.get("rule_type"), r.get("target"), r.get("enabled"), r.get("last_status"), r.get("last_checked_at")] for r in quality.get("rules", [])],
-            ),
-            _section("运行状态", [f"最近运行实例数：{len(data.get('latest_runs', []))}"]) + "\n\n" + _table(
-                ["TaskId", "任务名", "实例日期", "开始时间", "结束时间", "耗时秒", "状态"],
-                [[r.get("task_id"), r.get("task_name"), r.get("instance_date"), r.get("start_time"), r.get("end_time"), r.get("duration_seconds"), r.get("status")] for r in data.get("latest_runs", [])],
-            ),
-            _section("当前缺口", data.get("gaps") or ["暂无明显缺口"]),
-        ]
-    )
+            )),
+        ("runs", _section("运行状态", [f"最近运行实例数：{len(data.get('latest_runs', []))}"]) + "\n\n" + _table(
+            ["TaskId", "任务名", "实例日期", "开始时间", "结束时间", "耗时秒", "状态"],
+            [[r.get("task_id"), r.get("task_name"), r.get("instance_date"), r.get("start_time"), r.get("end_time"), r.get("duration_seconds"), r.get("status")] for r in data.get("latest_runs", [])],
+        )),
+        ("gaps", _section("当前缺口", data.get("gaps") or ["暂无明显缺口"])),
+    ]
+    selected = set(data.get("sections") or [])
+    if selected:
+        blocks = [text for key, text in blocks if key in selected]
+    else:
+        blocks = [text for _, text in blocks]
+    return "\n\n".join(blocks)
 
 
 def _format_table_partition_profile(data):

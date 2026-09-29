@@ -2181,6 +2181,42 @@ class AssetStore:
         )
         return {"query": query, "results": [self.get_task(row["id"]) for row in rows]}
 
+    def list_tasks(self, keyword="", task_type="", owner="", limit=20, offset=0):
+        try:
+            limit = max(1, min(int(limit or 20), 200))
+        except (TypeError, ValueError):
+            limit = 20
+        try:
+            offset = max(0, int(offset or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        conditions = []
+        params = []
+        keyword = (keyword or "").strip()
+        if keyword:
+            conditions.append("(id like ? or name like ?)")
+            params.extend([f"%{keyword}%", f"%{keyword}%"])
+        task_type = str(task_type or "").strip()
+        if task_type:
+            conditions.append("task_type = ?")
+            params.append(task_type)
+        owner = (owner or "").strip()
+        if owner:
+            conditions.append("owner like ?")
+            params.append(f"%{owner}%")
+        where = f"where {' and '.join(conditions)}" if conditions else ""
+        total = self._one(f"select count(*) as n from tasks {where}", tuple(params))["n"]
+        rows = self._all(
+            f"select id from tasks {where} order by name, id limit ? offset ?",
+            tuple([*params, limit, offset]),
+        )
+        return {
+            "total_count": total,
+            "limit": limit,
+            "offset": offset,
+            "results": [self.get_task(row["id"]) for row in rows],
+        }
+
     def get_table_profile(self, table_name):
         table = self._one("select * from tables where name = ?", (table_name,))
         if not table:

@@ -24,7 +24,9 @@ def main():
 
 def render_table_readiness(store, table_name):
     data = store.get_table_readiness(table_name)
-    return _format_markdown("get_table_readiness", data)
+    if not data.get("error"):
+        data["view"] = "readiness"
+    return _format_markdown("get_table_risk_profile", data)
 
 
 if __name__ == "__main__":
