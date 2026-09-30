@@ -1132,7 +1132,7 @@ class AssetStore:
             )
         self.conn.commit()
 
-    def upsert_task_table_mappings(self, task_id, table_names, direction):
+    def upsert_task_table_mappings(self, task_id, table_names, direction, evidence_source="wedata_task_code"):
         """Insert parsed task-table mappings without clearing existing rows."""
         if not task_id or direction not in ("input", "output"):
             return 0
@@ -1152,7 +1152,7 @@ class AssetStore:
                 "table",
                 table_name,
                 relation_type,
-                "wedata_task_code",
+                evidence_source,
                 "medium",
                 {"task_name": task_name, "direction": direction},
                 commit=False,

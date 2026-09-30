@@ -5,7 +5,7 @@ from datetime import datetime
 from .dlc_query import QueryValidationError
 from .live_assets import LiveAssetService
 from .source import Source, resolve_source
-from .wedata import task_output_tables
+from .wedata import is_offline_sync_task_type, task_output_tables
 
 
 def _with_source_schema(schema):
@@ -153,7 +153,11 @@ TOOLS = {
         },
     },
     "get_task_code": {
-        "description": "Return SQL/code content for a WeData task from cache or live GetTaskCode refresh, plus output tables parsed from SQL task code.",
+        "description": (
+            "Return SQL/code content for a WeData task from cache or live GetTaskCode refresh, plus output tables parsed "
+            "from SQL task code. For offline-sync tasks, which do not support code retrieval, return input/output tables "
+            "resolved from the task definition's source/target configuration, falling back to WeData task lineage."
+        ),
         "schema": {
             "type": "object",
             "properties": {
@@ -362,6 +366,43 @@ def _sync_task_output_tables(store, data):
 
 def _has_error(data):
     return bool(data.get("error"))
+
+
+def _offline_sync_task_tables(store, live, args, project_id):
+    """解析离线同步任务的输入/输出表。
+
+    先读任务详情中的 source/target 节点配置；配置未给出完整表信息时，
+    再回退 WeData 任务血缘。任务类型非离线同步或无任何证据时返回 None。
+    """
+    task = store.resolve_task(args.get("task_id", ""), args.get("task_name", ""))
+    if not task or not is_offline_sync_task_type(task.get("task_type")):
+        return None
+    evidence_source = ""
+    if live:
+        try:
+            resolved = live.sync_task_tables(
+                task_id=task["id"],
+                task_name=task.get("name") or args.get("task_name", ""),
+                project_id=project_id,
+            )
+            evidence_source = resolved.get("evidence_source", "")
+        except Exception as exc:
+            evidence_source = f"live_failed: {exc}"
+    detail = store.get_task(task["id"])
+    inputs = detail.get("inputs") or []
+    outputs = detail.get("outputs") or []
+    if not inputs and not outputs:
+        return None
+    return {
+        "project_id": project_id,
+        "task_id": task["id"],
+        "task_name": detail.get("name") or task.get("name") or args.get("task_name", ""),
+        "task_type": task.get("task_type", ""),
+        "code_text": "",
+        "input_tables": inputs,
+        "output_tables": outputs,
+        "evidence_source": evidence_source or "cache",
+    }
 
 
 def _empty_list(key):
@@ -580,19 +621,21 @@ def _call_tool(store, request, live=None, query_service=None):
             data = _error_data("missing_task_identity")
         else:
             project_id = os.environ.get("WEDATA_PROJECT_ID", "")
-            data = store.get_task_code(project_id, args.get("task_id", ""), args.get("task_name", ""))
-            if live:
-                refreshed = _maybe_live_refresh(
-                    meta,
-                    args,
-                    data,
-                    lambda item: item.get("error") in {"task_code_not_found", "task_not_found"},
-                    lambda: live.sync_task_code(task_id=args.get("task_id", ""), task_name=args.get("task_name", ""), project_id=project_id),
-                )
-                if refreshed:
-                    data = store.get_task_code(project_id, args.get("task_id", ""), args.get("task_name", ""))
-            if not _has_error(data):
-                data["output_tables"] = _sync_task_output_tables(store, data)
+            data = _offline_sync_task_tables(store, live, args, project_id)
+            if data is None:
+                data = store.get_task_code(project_id, args.get("task_id", ""), args.get("task_name", ""))
+                if live:
+                    refreshed = _maybe_live_refresh(
+                        meta,
+                        args,
+                        data,
+                        lambda item: item.get("error") in {"task_code_not_found", "task_not_found"},
+                        lambda: live.sync_task_code(task_id=args.get("task_id", ""), task_name=args.get("task_name", ""), project_id=project_id),
+                    )
+                    if refreshed:
+                        data = store.get_task_code(project_id, args.get("task_id", ""), args.get("task_name", ""))
+                if not _has_error(data):
+                    data["output_tables"] = _sync_task_output_tables(store, data)
     elif name == "list_data_sources":
         data = store.list_data_sources(args.get("query", ""))
         if live and _live_fallback(args, data, _empty_list("results")):
@@ -1109,8 +1152,23 @@ def _format_markdown(tool_name, data):
         )
     if tool_name == "get_task_code":
         code_text = data.get("code_text", "")
-        language = _code_fence_language(code_text)
         output_tables = data.get("output_tables") or []
+        input_tables = data.get("input_tables") or []
+        if not code_text:
+            return _section(
+                "任务表映射",
+                [
+                    f"项目ID：`{_cell(data.get('project_id'))}`",
+                    f"TaskId：`{_cell(data.get('task_id'))}`",
+                    f"任务名：**{_cell(data.get('task_name'))}**",
+                    f"任务类型：{_cell(_task_type_display(data.get('task_type')))}",
+                    f"输入表：{', '.join(f'`{name}`' for name in input_tables) if input_tables else '（无）'}",
+                    f"输出表：{', '.join(f'`{name}`' for name in output_tables) if output_tables else '（无）'}",
+                    f"证据来源：`{_cell(data.get('evidence_source'))}`",
+                    "说明：该任务不支持查看代码，输入/输出表优先取自任务详情中的 source/target 配置，配置不完整时回退 WeData 任务血缘。",
+                ],
+            )
+        language = _code_fence_language(code_text)
         return _section(
             "任务代码",
             [

@@ -2,9 +2,9 @@ import os
 from datetime import datetime, timedelta
 
 from .assets import AssetStore, decode_task_code_info
-from .sync_wedata import _dlc_client, _list_partitions, _merge_task_responses, _partition_client, _partition_items, _partition_payload, _partition_payload_ready, _sync_related_task_definitions
+from .sync_wedata import _dlc_client, _list_partitions, _merge_task_responses, _partition_client, _partition_items, _partition_payload, _partition_payload_ready, _sync_related_task_definitions, _task_lineage_tables, _task_detail
 from .tencentcloud import TencentCloudClient
-from .wedata import import_wedata_snapshot, snapshot_from_api_dump
+from .wedata import _task_table_names, import_wedata_snapshot, snapshot_from_api_dump
 
 
 class LiveWeData:
@@ -103,6 +103,31 @@ class LiveWeData:
             payload["Keyword"] = task_name or task_id
         data = self._list_all("ListTaskInstances", payload, max_pages=int(os.environ.get("WEDATA_LIVE_INSTANCE_MAX_PAGES", "5")))
         self._import({"task_instances": data})
+
+    def sync_task_tables(self, task_id="", task_name="", project_id=""):
+        resolved_project_id = self.project_id_or_default(project_id)
+        task = self.store.resolve_task(task_id, task_name)
+        if not task and task_name:
+            self.sync_tasks(task_name)
+            task = self.store.resolve_task("", task_name)
+        if not task:
+            raise RuntimeError("task_not_found")
+        related = {"task_id": task["id"], "task_name": task.get("name") or task_name}
+        detail = _task_detail(self.client, resolved_project_id, related)
+        enriched = {**task, **detail}
+        inputs = _task_table_names(enriched, "input")
+        outputs = _task_table_names(enriched, "output")
+        source = "wedata_task_config"
+        if not inputs or not outputs:
+            lineage_inputs, lineage_outputs = _task_lineage_tables(self.client, resolved_project_id, related, self.page_size)
+            inputs = inputs or lineage_inputs
+            outputs = outputs or lineage_outputs
+            source = "wedata_task_lineage"
+        if inputs:
+            self.store.upsert_task_table_mappings(task["id"], inputs, "input", evidence_source=source)
+        if outputs:
+            self.store.upsert_task_table_mappings(task["id"], outputs, "output", evidence_source=source)
+        return {"task_id": task["id"], "task_name": task.get("name") or task_name, "input_tables": inputs, "output_tables": outputs, "evidence_source": source}
 
     def sync_task_code(self, task_id="", task_name="", project_id=""):
         resolved_project_id = self.project_id_or_default(project_id)

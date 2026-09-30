@@ -101,6 +101,33 @@ class FakeWeDataClient:
                     "RequestId": "req-task-code",
                 }
             }
+        if action == "GetTask" and payload.get("TaskId") == "task_sync_config":
+            return {
+                "Response": {
+                    "Data": {
+                        "TaskId": "task_sync_config",
+                        "TaskName": "sync_sms_bill_1d_di",
+                        "TaskConfiguration": {
+                            "Source": {"NodeType": "SOURCE", "TableName": "crm_fxiaoke.sms_bill_di"},
+                            "Target": {"NodeType": "TARGET", "TableName": "ads_sms_bill_1d_di"},
+                        },
+                    }
+                }
+            }
+        if action == "GetTask" and payload.get("TaskId") == "task_sync_partial":
+            return {
+                "Response": {
+                    "Data": {
+                        "TaskId": "task_sync_partial",
+                        "TaskName": "sync_sms_bill_partial_di",
+                        "TaskConfiguration": {
+                            "Target": {"NodeType": "TARGET", "TableName": "ads_sms_bill_1d_di"},
+                        },
+                    }
+                }
+            }
+        if action == "GetTask":
+            return {"Response": {"Data": {}}}
         return {"Response": {"Data": {"Items": [], "TotalPageNumber": 1}}}
 
 
@@ -982,6 +1009,84 @@ class McpTest(unittest.TestCase):
 
         self.assertIn("仅支持 SQL 类任务解析", text)
         self.assertEqual(self.store.get_table_tasks("ads_pyspark")["tasks"], [])
+
+    def test_get_task_code_resolves_offline_sync_tables_from_task_config(self):
+        self.store.upsert_task({"id": "task_sync_config", "name": "sync_sms_bill_1d_di", "task_type": "26"})
+        client = FakeWeDataClient()
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            live = LiveWeData(self.store, client=client)
+            response = handle_request(
+                self.store,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 150,
+                    "method": "tools/call",
+                    "params": {"name": "get_task_code", "arguments": {"task_id": "task_sync_config", "live": True}},
+                },
+                live=live,
+            )
+        text = response["result"]["content"][0]["text"]
+        actions = [action for action, payload in client.calls]
+
+        self.assertIn("输入表：`sms_bill_di`", text)
+        self.assertIn("输出表：`ads_sms_bill_1d_di`", text)
+        self.assertIn("证据来源：`wedata_task_config`", text)
+        self.assertNotIn("ListProcessLineage", actions)
+        self.assertNotIn("GetTaskCode", actions)
+        cached = self.store.get_task("task_sync_config")
+        self.assertEqual(cached["inputs"], ["sms_bill_di"])
+        self.assertEqual(cached["outputs"], ["ads_sms_bill_1d_di"])
+
+    def test_get_task_code_falls_back_to_lineage_when_sync_config_is_incomplete(self):
+        self.store.upsert_task({"id": "task_sync_partial", "name": "sync_sms_bill_partial_di", "task_type": "26"})
+        client = FakeWeDataClient()
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            live = LiveWeData(self.store, client=client)
+            response = handle_request(
+                self.store,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 151,
+                    "method": "tools/call",
+                    "params": {"name": "get_task_code", "arguments": {"task_id": "task_sync_partial", "live": True}},
+                },
+                live=live,
+            )
+        text = response["result"]["content"][0]["text"]
+        actions = [action for action, payload in client.calls]
+
+        self.assertIn("ListProcessLineage", actions)
+        self.assertIn("输入表：`cloud_cost_aliyun_day`", text)
+        self.assertIn("输出表：`ads_sms_bill_1d_di`", text)
+        self.assertNotIn("ods_cloud_cost_aliyun_day_di", text)
+        self.assertIn("证据来源：`wedata_task_lineage`", text)
+
+    def test_get_task_code_returns_cached_sync_mapping_without_live(self):
+        self.store.upsert_task({"id": "task_sync_cached", "name": "sync_cached_di", "task_type": "26"})
+        self.store.upsert_task_table_mappings("task_sync_cached", ["ods_sms_bill_di"], "input")
+        self.store.upsert_task_table_mappings("task_sync_cached", ["ads_sms_bill_di"], "output")
+
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 152, "method": "tools/call", "params": {"name": "get_task_code", "arguments": {"task_id": "task_sync_cached"}}},
+        )
+        text = response["result"]["content"][0]["text"]
+
+        self.assertIn("输入表：`ods_sms_bill_di`", text)
+        self.assertIn("输出表：`ads_sms_bill_di`", text)
+        self.assertIn("证据来源：`cache`", text)
+
+    def test_get_task_code_reports_cache_miss_for_sync_task_without_evidence(self):
+        self.store.upsert_task({"id": "task_sync_empty", "name": "sync_empty_di", "task_type": "26"})
+
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 153, "method": "tools/call", "params": {"name": "get_task_code", "arguments": {"task_id": "task_sync_empty"}}},
+        )
+        text = response["result"]["content"][0]["text"]
+
+        self.assertIn("task_code_not_found", text)
+        self.assertEqual(self.store.get_task("task_sync_empty")["outputs"], [])
 
     def test_list_tasks_renders_total_count_and_rows(self):
         self.store.upsert_task({"id": "task_dlc_1", "name": "build_dws_a", "task_type": "32", "owner": "alice"})

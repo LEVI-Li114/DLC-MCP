@@ -195,6 +195,8 @@ INPUT_TABLE_FIELDS = (
     "SourceTableList",
     "SourceTableNames",
     "Sources",
+    "Source",
+    "SourceNode",
     "Reads",
     "ReadTables",
     "ReadTableList",
@@ -212,6 +214,8 @@ OUTPUT_TABLE_FIELDS = (
     "TargetTableList",
     "TargetTableNames",
     "Targets",
+    "Target",
+    "TargetNode",
     "Writes",
     "WriteTables",
     "WriteTableList",
@@ -238,12 +242,28 @@ TABLE_NAME_FIELDS = (
 )
 
 
+NODE_TYPE_DIRECTIONS = {
+    "INPUT": "input",
+    "SOURCE": "input",
+    "READER": "input",
+    "OUTPUT": "output",
+    "TARGET": "output",
+    "SINK": "output",
+    "WRITER": "output",
+}
+
+
+def _node_type_direction(document):
+    """把节点配置的 NodeType 映射为 input/output；未知类型返回空串。"""
+    return NODE_TYPE_DIRECTIONS.get(str(document.get("NodeType") or "").upper(), "")
+
+
 def _task_table_names(item, direction):
     fields = INPUT_TABLE_FIELDS if direction == "input" else OUTPUT_TABLE_FIELDS
     names = []
     for document in _task_config_documents(item):
-        node_type = str(document.get("NodeType") or "").upper()
-        if node_type and node_type != direction.upper():
+        node_direction = _node_type_direction(document)
+        if node_direction and node_direction != direction:
             continue
         for field in fields:
             names.extend(_table_names_from_value(document.get(field)))
@@ -435,6 +455,12 @@ SQL_TASK_TYPES = frozenset(
         "138",  # Setats SQL
     }
 )
+
+OFFLINE_SYNC_TASK_TYPES = frozenset({"26"})  # 离线同步
+
+
+def is_offline_sync_task_type(task_type):
+    return str(task_type or "").strip() in OFFLINE_SYNC_TASK_TYPES
 
 
 def task_output_tables(task_type, code_text):

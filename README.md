@@ -137,7 +137,7 @@ Update this list whenever a new MCP tool is added.
 | `get_table_partition_profile(table_name, partition_date)` | Return partition volume, recent partitions, and partition health. |
 | `list_table_production_risks(layer, core_level, instance_date, status, limit)` | List table-level production risks. |
 | `get_task_runs(task_id/task_name, instance_date, live)` | Return task instance start time, end time, duration, and status. |
-| `get_task_code(task_id/task_name, live)` | Return cached or live-refreshed WeData task SQL/code content, plus output tables parsed from SQL task code. |
+| `get_task_code(task_id/task_name, live)` | Return cached or live-refreshed WeData task SQL/code content, plus output tables parsed from SQL task code. For offline-sync tasks (code retrieval unsupported), return input/output tables resolved from the task definition's source/target configuration, falling back to WeData task lineage. |
 | `list_tasks(keyword, task_type, owner, limit, offset, live)` | List WeData tasks with pagination and total_count for task inventory; `live=true` refreshes from WeData `ListTasks` filtered by `keyword` (required for live). |
 | `list_data_sources(query, live)` | List data sources, configuration summaries, and related task counts. |
 | `get_data_source(data_source_id, live)` | Return one data source, including type, owner, related task count, description, and config summary. |
