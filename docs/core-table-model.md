@@ -64,10 +64,10 @@ Temporary/test/backup tables reduce business value and cap lineage impact.
 Use:
 
 ```text
-get_asset_value_profile(table_name)
+get_table_profile(table_name)
 ```
 
-The response includes:
+The `core` field includes:
 
 - value tier
 - core level

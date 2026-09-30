@@ -1271,28 +1271,31 @@ class McpTest(unittest.TestCase):
     def test_lists_tools(self):
         response = handle_request(self.store, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
 
-        self.assertEqual(response["id"], 1)
-        self.assertIn("get_table_profile", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_table_partition_profile", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_table_production_risks", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("search_tasks", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_data_sources", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_data_source_inventory", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_table_risk_profile", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_asset_value_profile", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_asset_owner_profile", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_asset_profile", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_asset_change_impact", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_asset_gaps", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_expert_label", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_metadata", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_sync_health", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_asset_coverage", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_asset_governance_daily_report", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_projects", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("get_project", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_project_members", [tool["name"] for tool in response["result"]["tools"]])
-        self.assertIn("list_task_relations", [tool["name"] for tool in response["result"]["tools"]])
+        tools = [tool["name"] for tool in response["result"]["tools"]]
+        self.assertIn("get_table_profile", tools)
+        self.assertIn("get_table_partition_profile", tools)
+        self.assertIn("search_tasks", tools)
+        self.assertIn("list_data_sources", tools)
+        self.assertIn("get_data_source_inventory", tools)
+        self.assertIn("list_asset_gaps", tools)
+        self.assertIn("list_metadata", tools)
+        self.assertIn("get_sync_health", tools)
+        self.assertIn("get_asset_coverage", tools)
+        self.assertIn("get_asset_governance_daily_report", tools)
+        self.assertIn("list_projects", tools)
+        self.assertIn("get_project", tools)
+        self.assertIn("list_project_members", tools)
+        self.assertIn("list_task_relations", tools)
+        for removed in (
+            "get_table_risk_profile",
+            "list_table_production_risks",
+            "get_asset_value_profile",
+            "get_asset_owner_profile",
+            "get_asset_profile",
+            "get_asset_change_impact",
+            "get_expert_label",
+        ):
+            self.assertNotIn(removed, tools)
         self.assertIn("get_table", [tool["name"] for tool in response["result"]["tools"]])
 
     def test_calls_table_profile_tool(self):
@@ -1391,76 +1394,6 @@ class McpTest(unittest.TestCase):
         self.assertIn("分区字段：`dt`", text)
         self.assertIn("分区事实：`missing`", text)
         self.assertIn("表元数据/字段显示为分区表，但未同步到分区统计事实", text)
-
-    def test_calls_table_readiness_tool(self):
-        response = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 21,
-                "method": "tools/call",
-                "params": {"name": "get_table_risk_profile", "arguments": {"table_name": "dim_customer", "view": "readiness"}},
-            },
-        )
-
-        text = response["result"]["content"][0]["text"]
-        self.assertIn("表资产治理就绪度", text)
-        self.assertIn("画像维度检查", text)
-        self.assertIn("治理动作建议", text)
-
-    def test_calls_table_production_status_tool(self):
-        response = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 22,
-                "method": "tools/call",
-                "params": {"name": "get_table_risk_profile", "arguments": {"table_name": "dim_customer", "view": "production", "instance_date": "2026-07-01"}},
-            },
-        )
-
-        text = response["result"]["content"][0]["text"]
-        self.assertIn("表产出状态", text)
-        self.assertIn("成功", text)
-        self.assertIn("build_dim_customer", text)
-        self.assertIn("2026-07-01 08:00:00", text)
-
-    def test_calls_table_production_risk_detail_tool(self):
-        response = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 24,
-                "method": "tools/call",
-                "params": {"name": "get_table_risk_profile", "arguments": {"table_name": "dws_customer_revenue_1d_di", "view": "production_detail", "instance_date": "2026-07-01"}},
-            },
-        )
-
-        text = response["result"]["content"][0]["text"]
-        self.assertIn("表产出风险诊断", text)
-        self.assertIn("dws_customer_revenue_1d_di", text)
-        self.assertIn("未执行", text)
-        self.assertIn("影响面", text)
-        self.assertIn("风险判断", text)
-        self.assertIn("处理建议", text)
-
-    def test_calls_table_production_risks_tool(self):
-        response = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 23,
-                "method": "tools/call",
-                "params": {"name": "list_table_production_risks", "arguments": {"layer": "dws", "instance_date": "2026-07-01"}},
-            },
-        )
-
-        text = response["result"]["content"][0]["text"]
-        self.assertIn("表产出风险清单", text)
-        self.assertIn("dws_customer_revenue_1d_di", text)
-        self.assertIn("未执行", text)
-        self.assertIn("未找到产出任务", text)
-        self.assertIn("检查 `ListTasks`", text)
 
     def test_calls_sync_health_tool(self):
         response = handle_request(
@@ -1663,96 +1596,6 @@ class McpTest(unittest.TestCase):
 
         self.assertIn("dim_customer", response["result"]["content"][0]["text"])
 
-    def test_calls_table_risk_profile_tool(self):
-        response = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 12,
-                "method": "tools/call",
-                "params": {"name": "get_table_risk_profile", "arguments": {"table_name": "dwd_sms_bill"}},
-            },
-        )
-
-        text = response["result"]["content"][0]["text"]
-        self.assertIn("风险等级：**高**", text)
-        self.assertIn("missing quality rules", text)
-
-    def test_calls_asset_value_profile_tool(self):
-        response = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 16,
-                "method": "tools/call",
-                "params": {"name": "get_asset_value_profile", "arguments": {"table_name": "dwd_sms_bill"}},
-            },
-        )
-
-        text = response["result"]["content"][0]["text"]
-        self.assertIn("资产价值模型", text)
-        self.assertIn("L2 重要公共资产", text)
-        self.assertIn("机器初判", text)
-        self.assertIn("最终判断", text)
-
-    def test_calls_asset_governance_tools(self):
-        calls = [
-            ("get_asset_owner_profile", {"table_name": "dim_customer"}, "资产责任画像", "责任人候选"),
-            ("get_asset_profile", {"table_name": "dws_customer_revenue_1d_di", "view": "usage"}, "资产使用画像", "使用信号"),
-            ("get_asset_profile", {"table_name": "dim_customer", "view": "lifecycle"}, "资产生命周期", "生命周期证据"),
-            ("get_asset_change_impact", {"table_name": "dws_customer_revenue_1d_di", "change_type": "schema_change"}, "资产变更影响分析", "变更前检查"),
-        ]
-        for index, (name, arguments, title, section) in enumerate(calls, start=30):
-            response = handle_request(
-                self.store,
-                {
-                    "jsonrpc": "2.0",
-                    "id": index,
-                    "method": "tools/call",
-                    "params": {"name": name, "arguments": arguments},
-                },
-            )
-            text = response["result"]["content"][0]["text"]
-            self.assertIn(title, text)
-            self.assertIn(section, text)
-
-    def test_calls_asset_value_profile_core_decision_sections(self):
-        response = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 18,
-                "method": "tools/call",
-                "params": {"name": "get_asset_value_profile", "arguments": {"table_name": "ads_customer_revenue_daily"}},
-            },
-        )
-
-        text = response["result"]["content"][0]["text"]
-        self.assertIn("资产价值模型", text)
-        self.assertIn("机器初判", text)
-        self.assertIn("人工标注", text)
-        self.assertIn("最终判断", text)
-        self.assertIn("置信度", text)
-
-    def test_calls_metric_definition_tool(self):
-        response = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 17,
-                "method": "tools/call",
-                "params": {"name": "get_asset_profile", "arguments": {"table_name": "ads_customer_revenue_daily", "view": "metric"}},
-            },
-        )
-
-        text = response["result"]["content"][0]["text"]
-        self.assertIn("指标口径", text)
-        self.assertIn("指标应用结果层", text)
-        self.assertIn("统计粒度", text)
-        self.assertIn("维度字段", text)
-        self.assertIn("指标字段", text)
-        self.assertIn("dws_customer_revenue_1d_di", text)
-
     def test_calls_quality_gaps_tool(self):
         response = handle_request(
             self.store,
@@ -1765,19 +1608,6 @@ class McpTest(unittest.TestCase):
         )
 
         self.assertIn("dwd_sms_bill", response["result"]["content"][0]["text"])
-
-    def test_calls_expert_label_tool(self):
-        response = handle_request(
-            self.store,
-            {
-                "jsonrpc": "2.0",
-                "id": 14,
-                "method": "tools/call",
-                "params": {"name": "get_expert_label", "arguments": {"asset_name": "dim_customer"}},
-            },
-        )
-
-        self.assertIn("P1", response["result"]["content"][0]["text"])
 
     def test_calls_expert_review_queue_tool(self):
         response = handle_request(

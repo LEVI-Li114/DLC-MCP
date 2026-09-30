@@ -43,7 +43,7 @@ When the user asks about one table:
 
 1. Use `get_table_profile(table_name=..., live=true)`; pass `sections=["columns"]` when only fields matter, `sections=["lineage"]` for upstream/downstream impact, or `sections=["quality"]` for quality rules.
 2. Use `get_task_code(task_id=..., live=true)` to see a SQL task's parsed output tables.
-3. Use `get_table_risk_profile(table_name=..., view="production", instance_date=..., live=true)` when produced-table status matters, or `view="production_detail"` for the actionable production-risk diagnosis. Use `view="readiness"` for the governance readiness report.
+3. Use `get_task_runs(task_id=..., instance_date=..., live=true)` for per-task execution status. Table-level production status and risk aggregation come from `get_asset_governance_issue_inventory` and `get_asset_governance_daily_report`. The governance readiness report is rendered by the admin CLI `python3 -m dlc_mcp.check_table <table_name>`.
 
 ### Coverage and Governance Gaps
 

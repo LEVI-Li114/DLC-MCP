@@ -703,7 +703,7 @@ python3 -m dlc_mcp.call_wedata_api ListTasks '{"ProjectId":"'$WEDATA_PROJECT_ID'
 
 ### 13.4 输出结构
 
-`get_asset_value_profile` 会保留兼容字段：
+资产价值模型（store 层 `get_asset_value_profile`，经 `get_table_profile` 的 core 字段暴露）会保留兼容字段：
 
 ```text
 is_core
@@ -738,8 +738,10 @@ review_suggestion 复核建议
 MCP 查询：
 
 ```text
-get_asset_value_profile(table_name="ads_bill_company_1d_di")
+get_table_profile(table_name="ads_bill_company_1d_di")
 ```
+
+价值分层与核心判断在输出的 core 字段中（store 层方法为 `get_asset_value_profile`）。
 
 Codex 可直接问：
 
@@ -853,8 +855,10 @@ python3 -m dlc_mcp.check_table ads_bill_company_1d_di --db /data/dlc-mcp/assets.
 MCP：
 
 ```text
-get_table_risk_profile(table_name="ads_bill_company_1d_di", view="readiness")
+get_table_profile(table_name="ads_bill_company_1d_di", sections=["summary", "value", "quality", "tasks", "runs", "gaps"])
 ```
+
+（就绪度评分报告已收敛为 CLI 渲染，不再提供独立 MCP 工具。）
 
 Codex 可直接问：
 
@@ -901,16 +905,12 @@ Codex 可直接问：
 
 ### 16.2 查询方式
 
-MCP：
-
-```text
-get_table_risk_profile(table_name="ads_bill_company_1d_di", view="production", instance_date="2026-07-08")
-```
+表级产出状态已并入治理巡检：`get_asset_governance_issue_inventory` / `get_asset_governance_daily_report` 聚合未执行或失败的产出风险；单任务实例用 `get_task_runs(task_name=..., instance_date=...)` 查询。
 
 `instance_date` 可选：
 
-- 不传：返回最近一次产出实例。
-- 传 `YYYY-MM-DD`：返回该日期的产出实例。
+- 不传：返回最近实例。
+- 传 `YYYY-MM-DD`：返回该日期的实例。
 
 ### 16.3 状态语义
 

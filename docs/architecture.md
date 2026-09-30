@@ -51,7 +51,7 @@ Examples:
 - Data source inventory: `get_data_source_inventory(data_source_name=..., live=true)`
 - Table diagnosis: `get_table_profile` (use `sections=["columns"]` for fields, `sections=["lineage"]` for lineage)
 - Task output tables: `get_task_code` parses SQL task code and writes the mapping back to `task_tables`
-- Production status: `get_table_risk_profile(view="production")`, `get_table_risk_profile(view="production_detail")`, `list_table_production_risks`
+- Production status: `get_asset_governance_issue_inventory` and `get_asset_governance_daily_report` aggregate produced-table status and risks; `get_task_runs` returns per-task instances
 - Coverage gaps: `get_sync_health`, `get_asset_coverage`, `list_asset_gaps(view="coverage")`
 
 Do not bypass MCP tools with shell, `curl`, or direct SQLite reads for ordinary data questions.

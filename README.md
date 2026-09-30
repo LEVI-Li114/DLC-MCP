@@ -135,7 +135,6 @@ Update this list whenever a new MCP tool is added.
 | `search_tasks(query, live)` | Search WeData ETL tasks by id, name, owner, or status. |
 | `get_table_profile(table_name, sections, live)` | Return metadata, columns, lineage, quality summary, related tasks, and core-table decision; `sections` narrows the output to the listed sections (`columns` replaces `list_table_columns`, `quality` replaces `get_quality_status`, `lineage` replaces `get_table_lineage`). |
 | `get_table_partition_profile(table_name, partition_date)` | Return partition volume, recent partitions, and partition health. |
-| `list_table_production_risks(layer, core_level, instance_date, status, limit)` | List table-level production risks. |
 | `get_task_runs(task_id/task_name, instance_date, live)` | Return task instance start time, end time, duration, and status. |
 | `get_task_code(task_id/task_name, live)` | Return cached or live-refreshed WeData task SQL/code content, plus output tables parsed from SQL task code. For offline-sync tasks (code retrieval unsupported), return input/output tables resolved from the task definition's source/target configuration, falling back to WeData task lineage. |
 | `list_tasks(keyword, task_type, owner, limit, offset, live)` | List WeData tasks with pagination and total_count for task inventory; `live=true` refreshes from WeData `ListTasks` filtered by `keyword` (required for live). |
@@ -147,13 +146,7 @@ Update this list whenever a new MCP tool is added.
 | `list_task_relations(task_id, direction, project_id, live)` | List upstream or downstream WeData task dependencies for a task. |
 | `get_table(table_name/table_guid, live)` | Return Tencent Cloud WeData table metadata detail. |
 | `get_data_source_inventory(data_source_id/data_source_name, view, live)` | Return one data source's tasks, parsed tables, SQL DDL, and unresolved or missing-field gaps; `view=tasks` returns only the related task list. |
-| `get_table_risk_profile(table_name, view, instance_date, live)` | Explain table risk or production state: `view=risk` (default) uses layer, downstream dependencies, quality rules, and task runs; `view=readiness` returns the governance readiness report; `view=production` returns produced-table status; `view=production_detail` returns the actionable production-risk diagnosis. |
-| `get_asset_value_profile(table_name, live)` | Return asset value tier and core-table decision. |
-| `get_asset_owner_profile(table_name, live)` | Return asset ownership chain and responsibility gaps. |
-| `get_asset_profile(table_name, view, live)` | Return one asset profile view: `view=usage` (metadata-proxy usage signals), `view=lifecycle` (lifecycle status and governance evidence), `view=metric` (ads/dws metric definition from fields, lineage, and tasks). |
-| `get_asset_change_impact(table_name, change_type, live)` | Return bounded change impact analysis for a table asset. |
 | `list_asset_gaps(view, gap_type, layer, domain, limit)` | List table assets with governance gaps: `view=quality` (high-impact tables without quality rules), `view=expert_review` (high-impact unlabelled tables), `view=coverage` (missing asset profile coverage, optionally filtered by `gap_type`). |
-| `get_expert_label(asset_type, asset_name)` | Return expert label for one asset. |
 | `list_metadata()` | List imported databases and table metadata. |
 | `get_sync_health()` | Return sync health, asset counts, latest observed sync signals, and current data gaps. |
 | `get_asset_coverage()` | Return asset coverage by layer for fields, lineage, quality rules, tasks, data sources, and runs. |

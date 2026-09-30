@@ -3,7 +3,7 @@ import os
 import sqlite3
 
 from .assets import AssetStore
-from .mcp import _format_markdown
+from .mcp import _format_table_readiness
 from .server import _load_env_file
 
 
@@ -24,9 +24,9 @@ def main():
 
 def render_table_readiness(store, table_name):
     data = store.get_table_readiness(table_name)
-    if not data.get("error"):
-        data["view"] = "readiness"
-    return _format_markdown("get_table_risk_profile", data)
+    if data.get("error"):
+        return f"**未找到**\n\n- 错误：`{data['error']}`\n"
+    return _format_table_readiness(data)
 
 
 if __name__ == "__main__":

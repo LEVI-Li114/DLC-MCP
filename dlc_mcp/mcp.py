@@ -126,19 +126,6 @@ TOOLS = {
         "description": "Return table partition profile, row counts, recent partitions, and partition health based on synced partition facts.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "partition_date": {"type": "string"}}, "required": ["table_name"]},
     },
-    "list_table_production_risks": {
-        "description": "List table-level production risks from output tasks and task run instances.",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "layer": {"type": "string"},
-                "core_level": {"type": "string"},
-                "instance_date": {"type": "string"},
-                "status": {"type": "string"},
-                "limit": {"type": "integer"},
-            },
-        },
-    },
     "get_task_runs": {
         "description": "Return task instances by task id or exact task name, with optional instance date filter.",
         "schema": {
@@ -187,52 +174,6 @@ TOOLS = {
             },
         },
     },
-    "get_table_risk_profile": {
-        "description": (
-            "Return a table-level risk or production report. view=risk returns risk level from lineage, quality "
-            "rules, and latest output task runs; view=readiness returns the governance readiness report; "
-            "view=production returns the produced-table status; view=production_detail returns the actionable "
-            "production-risk diagnosis."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "table_name": {"type": "string"},
-                "view": {"type": "string", "enum": ["risk", "readiness", "production", "production_detail"]},
-                "instance_date": {"type": "string", "description": "Only used when view=production or production_detail."},
-                "live": {"type": "boolean"},
-            },
-            "required": ["table_name"],
-        },
-    },
-    "get_asset_value_profile": {
-        "description": "Return reusable asset value tier and core-table decision for a table.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
-    "get_asset_owner_profile": {
-        "description": "Return asset ownership chain and responsibility gaps for a table.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
-    "get_asset_profile": {
-        "description": (
-            "Return one asset profile view for a table. view=usage returns metadata-proxy usage signals; "
-            "view=lifecycle returns lifecycle status and governance evidence; view=metric explains the "
-            "ads/dws metric definition from fields, lineage, and tasks."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "table_name": {"type": "string"},
-                "view": {"type": "string", "enum": ["usage", "lifecycle", "metric"]},
-                "live": {"type": "boolean"},
-            },
-            "required": ["table_name", "view"],
-        },
-    },
-    "get_asset_change_impact": {
-        "description": "Return bounded change impact analysis for a table asset.",
-        "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "change_type": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["table_name"]},
-    },
     "list_asset_gaps": {
         "description": (
             "List table assets with governance gaps. view=quality lists high-impact tables without quality rules; "
@@ -250,10 +191,6 @@ TOOLS = {
             },
             "required": ["view"],
         },
-    },
-    "get_expert_label": {
-        "description": "Return expert label for one asset.",
-        "schema": {"type": "object", "properties": {"asset_type": {"type": "string"}, "asset_name": {"type": "string"}}, "required": ["asset_name"]},
     },
     "list_projects": {
         "description": "List WeData projects cached from Tencent Cloud ListProjects.",
@@ -591,8 +528,6 @@ def _call_tool(store, request, live=None, query_service=None):
                 "table_name": args["table_name"],
                 "requested_source": source,
             }
-    elif name == "list_table_production_risks":
-        data = store.list_table_production_risks(args.get("layer", ""), args.get("core_level", ""), args.get("instance_date", ""), args.get("status", ""), args.get("limit", 50))
     elif name == "get_task_runs":
         if not args.get("task_id") and not args.get("task_name"):
             data = _error_data("missing_task_identity")
@@ -663,77 +598,6 @@ def _call_tool(store, request, live=None, query_service=None):
                     data = store.get_data_source_inventory(data_source_id, data_source_name)
             if not _has_error(data):
                 data["view"] = view
-    elif name == "get_table_risk_profile":
-        view = args.get("view", "risk")
-        instance_date = args.get("instance_date", "")
-        if view == "risk":
-            data = store.get_table_risk_profile(args["table_name"])
-            if live and _live_fallback(args, data, _has_error):
-                live.sync_table(args["table_name"])
-                data = store.get_table_risk_profile(args["table_name"])
-        elif view == "readiness":
-            data = store.get_table_readiness(args["table_name"])
-            if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("score", 0) < 80):
-                live.sync_table(args["table_name"])
-                data = store.get_table_readiness(args["table_name"])
-        elif view == "production":
-            data = store.get_table_production_status(args["table_name"], instance_date)
-            if live:
-                refreshed = _maybe_live_refresh(meta, args, data, lambda item: _has_error(item) or item.get("status") in {"not_run", "unknown"}, lambda: live.sync_table(args["table_name"]), reason=data.get("status", ""))
-                if refreshed:
-                    data = store.get_table_production_status(args["table_name"], instance_date)
-        elif view == "production_detail":
-            data = store.get_table_production_risk_detail(args["table_name"], instance_date)
-            if live:
-                refreshed = _maybe_live_refresh(meta, args, data, lambda item: _has_error(item) or item.get("status") in {"not_run", "unknown"}, lambda: live.sync_table(args["table_name"]), reason=data.get("status", ""))
-                if refreshed:
-                    data = store.get_table_production_risk_detail(args["table_name"], instance_date)
-        else:
-            data = _error_data("invalid_view", view=view, supported_views=["risk", "readiness", "production", "production_detail"])
-        if not _has_error(data):
-            data["view"] = view
-    elif name == "get_asset_value_profile":
-        data = store.get_asset_value_profile(args["table_name"])
-        if live and _live_fallback(args, data, _has_error):
-            live.sync_table(args["table_name"])
-            data = store.get_asset_value_profile(args["table_name"])
-    elif name == "get_asset_owner_profile":
-        data = store.get_asset_owner_profile(args["table_name"])
-        if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("owner_candidates")):
-            live.sync_table(args["table_name"])
-            data = store.get_asset_owner_profile(args["table_name"])
-    elif name == "get_asset_profile":
-        view = args.get("view", "")
-        if view == "usage":
-            data = store.get_asset_usage_profile(args["table_name"])
-            if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("signals")):
-                live.sync_table(args["table_name"])
-                data = store.get_asset_usage_profile(args["table_name"])
-            if live and not _has_error(data) and not data.get("heat_value"):
-                try:
-                    live.sync_table_stats(args["table_name"])
-                    data = store.get_asset_usage_profile(args["table_name"])
-                except (RuntimeError, ValueError, OSError):
-                    pass
-        elif view == "lifecycle":
-            data = store.get_asset_lifecycle_profile(args["table_name"])
-            if live and _live_fallback(args, data, lambda item: _has_error(item) or item.get("lifecycle_status") in {"新建/待补齐", "疑似废弃"}):
-                live.sync_table(args["table_name"])
-                data = store.get_asset_lifecycle_profile(args["table_name"])
-        elif view == "metric":
-            data = store.get_metric_definition(args["table_name"])
-            if live and _live_fallback(args, data, lambda item: _has_error(item) or not item.get("metric_fields")):
-                live.sync_table(args["table_name"])
-                data = store.get_metric_definition(args["table_name"])
-        else:
-            data = _error_data("invalid_view", view=view, supported_views=["usage", "lifecycle", "metric"])
-        if not _has_error(data):
-            data["view"] = view
-    elif name == "get_asset_change_impact":
-        data = store.get_asset_change_impact(args["table_name"], args.get("change_type", "logic_change"))
-        if live and _live_fallback(args, data, lambda item: _has_error(item) or (not item.get("direct_downstream") and not item.get("affected_tasks"))):
-            live.sync_table(args["table_name"])
-            data = store.get_asset_change_impact(args["table_name"], args.get("change_type", "logic_change"))
     elif name == "list_asset_gaps":
         view = args.get("view", "")
         layer = args.get("layer", "")
@@ -748,8 +612,6 @@ def _call_tool(store, request, live=None, query_service=None):
             data = _error_data("invalid_view", view=view, supported_views=["quality", "expert_review", "coverage"])
         if not _has_error(data):
             data["view"] = view
-    elif name == "get_expert_label":
-        data = store.get_expert_label(args.get("asset_type", "table"), args["asset_name"])
     elif name == "list_projects":
         data = store.list_projects(args.get("query", ""))
         if live and _live_fallback(args, data, _empty_list("results")):
@@ -1074,47 +936,6 @@ def _format_markdown(tool_name, data):
                 [[r.get("task_id"), r.get("task_name"), _task_type_display(r.get("task_type")), r.get("project_name"), r.get("create_time"), r.get("owner")] for r in rows],
             )
         return _format_data_source_inventory(data)
-    if tool_name == "get_table_risk_profile":
-        view = data.get("view") or "risk"
-        if view == "readiness":
-            return _format_table_readiness(data)
-        if view == "production":
-            return _format_table_production_status(data)
-        if view == "production_detail":
-            return _format_table_production_risk_detail(data)
-        return "\n\n".join(
-            [
-                _section(
-                    f"表风险画像：{data.get('table_name')}",
-                    [
-                        f"风险等级：**{_cell(data.get('risk_level'))}**",
-                        f"层级：`{_cell(data.get('layer'))}`",
-                        f"下游依赖数：**{data.get('downstream_count')}**",
-                        f"质量规则数：**{data.get('quality_rule_count')}**",
-                        f"原因：{', '.join(data.get('reasons') or [])}",
-                        f"建议：{'; '.join(data.get('suggestions') or [])}",
-                    ],
-                ),
-                _format_expert_label(data.get("expert_label")),
-                _table(
-                    ["TaskId", "任务名", "实例日期", "开始时间", "结束时间", "耗时秒", "状态"],
-                    [[r.get("task_id"), r.get("task_name"), r.get("instance_date"), r.get("start_time"), r.get("end_time"), r.get("duration_seconds"), r.get("status")] for r in data.get("latest_runs", [])],
-                ),
-            ]
-        )
-    if tool_name == "get_asset_value_profile":
-        return _format_asset_value_profile(data)
-    if tool_name == "get_asset_owner_profile":
-        return _format_asset_owner_profile(data)
-    if tool_name == "get_asset_profile":
-        view = data.get("view") or ""
-        if view == "lifecycle":
-            return _format_asset_lifecycle_profile(data)
-        if view == "metric":
-            return _format_metric_definition(data)
-        return _format_asset_usage_profile(data)
-    if tool_name == "get_asset_change_impact":
-        return _format_asset_change_impact(data)
     if tool_name == "list_asset_gaps":
         view = data.get("view") or ""
         rows = data.get("results", [])
@@ -1129,8 +950,6 @@ def _format_markdown(tool_name, data):
             ["表名", "层级", "领域", "负责人", "下游依赖数", "质量规则数"],
             [[r.get("name"), r.get("layer"), r.get("domain"), r.get("owner"), r.get("downstream_count"), r.get("quality_rule_count")] for r in rows],
         )
-    if tool_name == "get_expert_label":
-        return _format_expert_label(data)
     if tool_name == "search_tasks":
         rows = data.get("results", [])
         return _section("任务搜索结果", [f"查询：`{_cell(data.get('query'))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
@@ -1192,40 +1011,6 @@ def _format_markdown(tool_name, data):
         return _format_table_profile(data)
     if tool_name == "get_table_partition_profile":
         return _format_table_partition_profile(data)
-    if tool_name == "list_table_production_risks":
-        rows = data.get("results", [])
-        return "\n\n".join(
-            [
-                _section(
-                    "表产出风险清单",
-                    [
-                        f"层级：`{_cell(data.get('layer'))}`",
-                        f"核心等级：`{_cell(data.get('core_level'))}`",
-                        f"实例日期：`{_cell(data.get('instance_date'))}`",
-                        f"状态：`{_cell(data.get('status'))}`",
-                        f"数量：{len(rows)}",
-                    ],
-                ),
-                _table(
-                    ["表名", "层级", "领域", "负责人", "核心等级", "价值分层", "产出状态", "产出任务数", "原因", "建议"],
-                    [
-                        [
-                            r.get("name"),
-                            r.get("layer"),
-                            r.get("domain"),
-                            r.get("owner"),
-                            r.get("core_level"),
-                            r.get("value_tier"),
-                            r.get("status_label"),
-                            r.get("producer_task_count"),
-                            "；".join(r.get("reasons") or []),
-                            "；".join(r.get("suggestions") or []),
-                        ]
-                        for r in rows
-                    ],
-                ),
-            ]
-        )
     if tool_name == "get_sync_health":
         counts = data.get("counts", {})
         signals = data.get("latest_signals", {})

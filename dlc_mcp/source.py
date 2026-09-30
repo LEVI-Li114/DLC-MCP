@@ -12,7 +12,6 @@ DYNAMIC_TOOLS = {
     "get_table_partition_profile",
     "get_task_runs",
     "get_task_code",
-    "get_table_risk_profile",
     "get_table_profile",
 }
 
@@ -35,7 +34,6 @@ REGISTRY_TOOLS = {
 PATROL_TOOLS = {
     "get_asset_governance_daily_report",
     "get_asset_governance_issue_inventory",
-    "list_table_production_risks",
     "list_asset_gaps",
 }
 

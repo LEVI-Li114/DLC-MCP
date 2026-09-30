@@ -1,22 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "mcp__dlc-mcp__get_asset_change_impact",
       "mcp__dlc-mcp__get_asset_coverage",
       "mcp__dlc-mcp__get_asset_governance_daily_report",
       "mcp__dlc-mcp__get_asset_governance_issue_inventory",
-      "mcp__dlc-mcp__get_asset_owner_profile",
-      "mcp__dlc-mcp__get_asset_profile",
-      "mcp__dlc-mcp__get_asset_value_profile",
       "mcp__dlc-mcp__get_data_source",
       "mcp__dlc-mcp__get_data_source_inventory",
-      "mcp__dlc-mcp__get_expert_label",
       "mcp__dlc-mcp__get_project",
       "mcp__dlc-mcp__get_sync_health",
       "mcp__dlc-mcp__get_table",
       "mcp__dlc-mcp__get_table_partition_profile",
       "mcp__dlc-mcp__get_table_profile",
-      "mcp__dlc-mcp__get_table_risk_profile",
       "mcp__dlc-mcp__get_task_code",
       "mcp__dlc-mcp__get_task_runs",
       "mcp__dlc-mcp__list_asset_gaps",
@@ -24,7 +18,6 @@
       "mcp__dlc-mcp__list_metadata",
       "mcp__dlc-mcp__list_project_members",
       "mcp__dlc-mcp__list_projects",
-      "mcp__dlc-mcp__list_table_production_risks",
       "mcp__dlc-mcp__list_task_relations",
       "mcp__dlc-mcp__search_assets",
       "mcp__dlc-mcp__search_tasks"
