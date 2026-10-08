@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from dlc_mcp.assets import AssetStore
 from dlc_mcp.cleanup_derived_tables import cleanup_task_name_pseudo_tables
+from dlc_mcp.dlc_query import DLCQueryService
 from dlc_mcp.live import LiveWeData
 from dlc_mcp.mcp import _call_tool, _code_fence_language, _task_type_display, handle_request
 
@@ -156,6 +157,79 @@ class FakeLivePartitionClient:
                 }
             }
         return {"Response": {"Data": {"Items": []}}}
+
+
+class DeleteDlcTablesTest(unittest.TestCase):
+    def setUp(self):
+        self.store = AssetStore(sqlite3.connect(":memory:"))
+        self.store.init_schema()
+
+    def test_requires_exact_confirmation_and_discloses_risks(self):
+        response = handle_request(self.store, {"jsonrpc": "2.0", "id": 154, "method": "tools/list"})
+        tool = {item["name"]: item for item in response["result"]["tools"]}["delete_dlc_tables"]
+        self.assertEqual(tool["annotations"], {"readOnlyHint": False, "destructiveHint": True})
+        self.assertIn("Iceberg native tables in DataLakeCatalog", tool["description"])
+        self.assertIn("7, 15, or 30 days", tool["description"])
+        self.assertIn("underlying files are not guaranteed", tool["description"])
+
+        class FakeQueryService:
+            def delete_tables(self, tables):
+                raise AssertionError("must not execute without exact confirmation")
+
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 155, "method": "tools/call", "params": {"name": "delete_dlc_tables", "arguments": {"tables": [{"table_name": "t", "database_name": "db"}]}}},
+            query_service=FakeQueryService(),
+        )
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("explicit_confirmation_required", text)
+        self.assertIn("DataLakeCatalog", text)
+        self.assertIn("7、15 或 30 天", text)
+        self.assertIn("立即且不可逆", text)
+        self.assertIn("底层文件都会保留", text)
+
+    def test_delegates_only_after_confirmation(self):
+        class FakeQueryService:
+            def __init__(self):
+                self.tables = None
+
+            def delete_tables(self, tables):
+                self.tables = tables
+                return {"status": "completed", "results": [{"status": "deleted"}]}
+
+        service = FakeQueryService()
+        tables = [{"table_name": "t", "database_name": "db"}]
+        response = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 156, "method": "tools/call", "params": {"name": "delete_dlc_tables", "arguments": {"tables": tables, "confirmation": "DELETE TABLE DEFINITIONS"}}},
+            query_service=service,
+        )
+        self.assertEqual(service.tables, tables)
+        self.assertIn("completed", response["result"]["content"][0]["text"])
+
+    def test_service_deletes_tables_individually(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, action, payload):
+                self.calls.append((action, payload))
+                if payload["TableBaseInfo"]["TableName"] == "bad":
+                    raise RuntimeError("delete failed")
+                return {"Response": {"RequestId": "req-1"}}
+
+        client = FakeClient()
+        result = DLCQueryService(client=client).delete_tables(
+            [
+                {"table_name": "bad", "database_name": "db"},
+                {"table_name": "good", "database_name": "db", "datasource_connection_name": "catalog-x"},
+            ]
+        )
+        self.assertEqual([call[0] for call in client.calls], ["DeleteTable", "DeleteTable"])
+        self.assertEqual(client.calls[0][1]["TableBaseInfo"], {"TableName": "bad", "DatabaseName": "db", "DatasourceConnectionName": "DataLakeCatalog"})
+        self.assertEqual(client.calls[1][1]["TableBaseInfo"]["DatasourceConnectionName"], "catalog-x")
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual([item["status"] for item in result["results"]], ["failed", "deleted"])
 
 
 def test_live_sync_table_partitions_imports_dlc_partition_facts():

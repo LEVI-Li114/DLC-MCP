@@ -208,6 +208,24 @@ class DLCQueryService:
             result["cost_analysis"] = self._cost_analysis(cost_payload)
         return result
 
+    def delete_tables(self, tables):
+        results = []
+        for table in tables:
+            payload = {
+                "TableBaseInfo": {
+                    "TableName": table["table_name"],
+                    "DatabaseName": table["database_name"],
+                    "DatasourceConnectionName": table.get("datasource_connection_name") or "DataLakeCatalog",
+                }
+            }
+            try:
+                body = _response_body(self.client.call("DeleteTable", payload))
+                results.append({**table, "status": "deleted", "request_id": body.get("RequestId", "")})
+            except Exception as exc:
+                results.append({**table, "status": "failed", "error": str(exc)})
+        status = "completed" if all(item["status"] == "deleted" for item in results) else "partial"
+        return {"status": status, "results": results}
+
     def task_cost_analysis(self, task_id, start_time="", end_time="", limit=10):
         return self._cost_analysis(_cost_analysis_payload(task_id, start_time, end_time, limit))
 

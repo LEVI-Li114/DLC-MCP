@@ -48,6 +48,30 @@ TOOLS = {
             "required": ["task_id"],
         },
     },
+    "delete_dlc_tables": {
+        "description": "Permanently remove DLC table definitions using DeleteTable. This is not an explicit data-deletion API, but underlying files are not guaranteed to be retained for every table type. Recovery applies only to Iceberg native tables in DataLakeCatalog when the recycle bin is enabled; retention is configured as 7, 15, or 30 days. Other table types or a disabled recycle bin are not guaranteed recoverable, and deletion may be immediate and irreversible. Review the exact table list and risks; pass confirmation='DELETE TABLE DEFINITIONS' to execute.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "tables": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "table_name": {"type": "string"},
+                            "database_name": {"type": "string"},
+                            "datasource_connection_name": {"type": "string", "default": "DataLakeCatalog"},
+                        },
+                        "required": ["table_name", "database_name"],
+                    },
+                },
+                "confirmation": {"type": "string", "description": "Must exactly equal DELETE TABLE DEFINITIONS after reviewing the table list and deletion risks."},
+            },
+            "required": ["tables", "confirmation"],
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
     "get_dlc_task_resource_usage": {
         "description": (
             "Return the DLC engine resource profile for one task instance. "
@@ -261,7 +285,7 @@ TOOLS = {
 
 
 for _tool_name, _tool_spec in TOOLS.items():
-    if _tool_name not in {"submit_dlc_sql_query", "get_dlc_sql_query_result", "get_dlc_task_resource_usage"}:
+    if _tool_name not in {"submit_dlc_sql_query", "get_dlc_sql_query_result", "get_dlc_task_resource_usage", "delete_dlc_tables"}:
         _tool_spec["schema"] = _with_source_schema(_tool_spec["schema"])
 
 
@@ -427,7 +451,34 @@ def _call_tool(store, request, live=None, query_service=None):
     if name not in TOOLS:
         return _error(request, -32602, "unknown_tool")
 
-    if name in {"submit_dlc_sql_query", "get_dlc_sql_query_result"}:
+    if name == "delete_dlc_tables":
+        meta["source"] = "dlc_live"
+        confirmation = args.get("confirmation", "")
+        tables = args.get("tables") or []
+        if confirmation != "DELETE TABLE DEFINITIONS":
+            data = {
+                "status": "not_executed",
+                "error": "explicit_confirmation_required",
+                "required_confirmation": "DELETE TABLE DEFINITIONS",
+                "tables": tables,
+                "risk_notice": (
+                    "仅 DataLakeCatalog 下启用回收站的 Iceberg 原生表适用恢复，保留期由配置决定（7、15 或 30 天）；"
+                    "其他表类型或关闭回收站时不保证可恢复，删除可能立即且不可逆。DeleteTable 不保证所有表类型的底层文件都会保留。"
+                ),
+            }
+        elif not tables or any(
+            not isinstance(item, dict) or not item.get("table_name") or not item.get("database_name")
+            for item in tables
+        ):
+            data = _error_data("tables_required_with_table_and_database_names")
+        elif query_service is None:
+            data = _error_data("dlc_query_service_unavailable")
+        else:
+            try:
+                data = query_service.delete_tables(tables)
+            except (QueryValidationError, RuntimeError, ValueError, OSError) as exc:
+                data = _error_data(str(exc))
+    elif name in {"submit_dlc_sql_query", "get_dlc_sql_query_result"}:
         meta["source"] = "dlc_live"
         if query_service is None:
             data = _error_data("dlc_query_service_unavailable")
