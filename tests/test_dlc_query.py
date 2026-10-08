@@ -112,7 +112,32 @@ class DLCQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["DatabaseName"], "crm")
         self.assertEqual(result["task_id"], "task-123")
 
+    def test_deletes_tables_using_configured_database_and_catalog(self):
+        client = FakeDLCClient()
+        service = DLCQueryService(client)
+        with patch.dict(
+            "os.environ",
+            {"DLC_QUERY_DATABASE": "configured_db", "DLC_QUERY_DATASOURCE": "configured_catalog"},
+            clear=False,
+        ):
+            service.delete_tables([{"table_name": "t"}])
+
+        action, payload = client.calls[0]
+        self.assertEqual(action, "DeleteTable")
+        self.assertEqual(
+            payload["TableBaseInfo"],
+            {"TableName": "t", "DatabaseName": "configured_db", "DatasourceConnectionName": "configured_catalog"},
+        )
+
+    def test_delete_requires_configured_or_explicit_database(self):
+        client = FakeDLCClient()
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(QueryValidationError, "database_name_required_or_configure_DLC_QUERY_DATABASE"):
+                DLCQueryService(client).delete_tables([{"table_name": "t"}])
+        self.assertEqual(client.calls, [])
+
     def test_reads_paginated_task_result(self):
+
         client = FakeDLCClient()
         result = DLCQueryService(client).result("task-123", next_token="page-1", max_results=20)
 

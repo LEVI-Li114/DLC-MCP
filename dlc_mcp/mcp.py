@@ -49,7 +49,7 @@ TOOLS = {
         },
     },
     "delete_dlc_tables": {
-        "description": "Permanently remove DLC table definitions using DeleteTable. This is not an explicit data-deletion API, but underlying files are not guaranteed to be retained for every table type. Recovery applies only to Iceberg native tables in DataLakeCatalog when the recycle bin is enabled; retention is configured as 7, 15, or 30 days. Other table types or a disabled recycle bin are not guaranteed recoverable, and deletion may be immediate and irreversible. Review the exact table list and risks; pass confirmation='DELETE TABLE DEFINITIONS' to execute.",
+        "description": "Permanently remove DLC table definitions using DeleteTable. The database defaults to DLC_QUERY_DATABASE configuration if omitted. This is not an explicit data-deletion API, but underlying files are not guaranteed to be retained for every table type. Recovery applies only to Iceberg native tables in DataLakeCatalog when the recycle bin is enabled; retention is configured as 7, 15, or 30 days. Other table types or a disabled recycle bin are not guaranteed recoverable, and deletion may be immediate and irreversible. Review the exact table list and risks; pass confirmation='DELETE TABLE DEFINITIONS' to execute.",
         "schema": {
             "type": "object",
             "properties": {
@@ -60,10 +60,10 @@ TOOLS = {
                         "type": "object",
                         "properties": {
                             "table_name": {"type": "string"},
-                            "database_name": {"type": "string"},
-                            "datasource_connection_name": {"type": "string", "default": "DataLakeCatalog"},
+                            "database_name": {"type": "string", "description": "Optional; defaults to DLC_QUERY_DATABASE configuration."},
+                            "datasource_connection_name": {"type": "string", "description": "Optional; defaults to DLC_QUERY_DATASOURCE or DLC_CATALOG configuration."},
                         },
-                        "required": ["table_name", "database_name"],
+                        "required": ["table_name"],
                     },
                 },
                 "confirmation": {"type": "string", "description": "Must exactly equal DELETE TABLE DEFINITIONS after reviewing the table list and deletion risks."},
@@ -464,10 +464,11 @@ def _call_tool(store, request, live=None, query_service=None):
                 "risk_notice": (
                     "仅 DataLakeCatalog 下启用回收站的 Iceberg 原生表适用恢复，保留期由配置决定（7、15 或 30 天）；"
                     "其他表类型或关闭回收站时不保证可恢复，删除可能立即且不可逆。DeleteTable 不保证所有表类型的底层文件都会保留。"
+                    "database_name 可省略并读取 DLC_QUERY_DATABASE 配置。",
                 ),
             }
         elif not tables or any(
-            not isinstance(item, dict) or not item.get("table_name") or not item.get("database_name")
+            not isinstance(item, dict) or not item.get("table_name")
             for item in tables
         ):
             data = _error_data("tables_required_with_table_and_database_names")

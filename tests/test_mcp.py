@@ -171,6 +171,7 @@ class DeleteDlcTablesTest(unittest.TestCase):
         self.assertIn("Iceberg native tables in DataLakeCatalog", tool["description"])
         self.assertIn("7, 15, or 30 days", tool["description"])
         self.assertIn("underlying files are not guaranteed", tool["description"])
+        self.assertIn("DLC_QUERY_DATABASE", tool["description"])
 
         class FakeQueryService:
             def delete_tables(self, tables):
@@ -178,7 +179,7 @@ class DeleteDlcTablesTest(unittest.TestCase):
 
         response = handle_request(
             self.store,
-            {"jsonrpc": "2.0", "id": 155, "method": "tools/call", "params": {"name": "delete_dlc_tables", "arguments": {"tables": [{"table_name": "t", "database_name": "db"}]}}},
+            {"jsonrpc": "2.0", "id": 155, "method": "tools/call", "params": {"name": "delete_dlc_tables", "arguments": {"tables": [{"table_name": "t"}]}}},
             query_service=FakeQueryService(),
         )
         text = response["result"]["content"][0]["text"]
@@ -187,6 +188,7 @@ class DeleteDlcTablesTest(unittest.TestCase):
         self.assertIn("7、15 或 30 天", text)
         self.assertIn("立即且不可逆", text)
         self.assertIn("底层文件都会保留", text)
+        self.assertIn("DLC_QUERY_DATABASE", text)
 
     def test_delegates_only_after_confirmation(self):
         class FakeQueryService:
@@ -198,7 +200,7 @@ class DeleteDlcTablesTest(unittest.TestCase):
                 return {"status": "completed", "results": [{"status": "deleted"}]}
 
         service = FakeQueryService()
-        tables = [{"table_name": "t", "database_name": "db"}]
+        tables = [{"table_name": "t"}]
         response = handle_request(
             self.store,
             {"jsonrpc": "2.0", "id": 156, "method": "tools/call", "params": {"name": "delete_dlc_tables", "arguments": {"tables": tables, "confirmation": "DELETE TABLE DEFINITIONS"}}},
@@ -216,6 +218,10 @@ class DeleteDlcTablesTest(unittest.TestCase):
                 self.calls.append((action, payload))
                 if payload["TableBaseInfo"]["TableName"] == "bad":
                     raise RuntimeError("delete failed")
+                if payload["TableBaseInfo"]["TableName"] == "missing-response":
+                    return {}
+                if payload["TableBaseInfo"]["TableName"] == "api-error":
+                    return {"Response": {"Error": {"Code": "InternalError", "Message": "failed"}}}
                 return {"Response": {"RequestId": "req-1"}}
 
         client = FakeClient()
@@ -223,13 +229,17 @@ class DeleteDlcTablesTest(unittest.TestCase):
             [
                 {"table_name": "bad", "database_name": "db"},
                 {"table_name": "good", "database_name": "db", "datasource_connection_name": "catalog-x"},
+                {"table_name": "missing-response", "database_name": "db"},
+                {"table_name": "api-error", "database_name": "db"},
             ]
         )
-        self.assertEqual([call[0] for call in client.calls], ["DeleteTable", "DeleteTable"])
+        self.assertEqual([call[0] for call in client.calls], ["DeleteTable"] * 4)
         self.assertEqual(client.calls[0][1]["TableBaseInfo"], {"TableName": "bad", "DatabaseName": "db", "DatasourceConnectionName": "DataLakeCatalog"})
         self.assertEqual(client.calls[1][1]["TableBaseInfo"]["DatasourceConnectionName"], "catalog-x")
         self.assertEqual(result["status"], "partial")
-        self.assertEqual([item["status"] for item in result["results"]], ["failed", "deleted"])
+        self.assertEqual([item["status"] for item in result["results"]], ["failed", "deleted", "failed", "failed"])
+        self.assertIn("invalid_delete_response", result["results"][2]["error"])
+        self.assertIn("InternalError", result["results"][3]["error"])
 
 
 def test_live_sync_table_partitions_imports_dlc_partition_facts():

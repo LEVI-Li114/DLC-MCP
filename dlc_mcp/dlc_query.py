@@ -209,17 +209,26 @@ class DLCQueryService:
         return result
 
     def delete_tables(self, tables):
+        configured_database = _query_env("DLC_QUERY_DATABASE", "DLC_QUERY_DATABASE_NAME")
         results = []
         for table in tables:
+            database_name = table.get("database_name") or configured_database
+            if not database_name:
+                raise QueryValidationError("database_name_required_or_configure_DLC_QUERY_DATABASE")
             payload = {
                 "TableBaseInfo": {
                     "TableName": table["table_name"],
-                    "DatabaseName": table["database_name"],
-                    "DatasourceConnectionName": table.get("datasource_connection_name") or "DataLakeCatalog",
+                    "DatabaseName": database_name,
+                    "DatasourceConnectionName": table.get("datasource_connection_name")
+                    or _query_env("DLC_QUERY_DATASOURCE", "DLC_QUERY_DATASOURCE_CONNECTION_NAME")
+                    or os.environ.get("DLC_CATALOG", "DataLakeCatalog"),
                 }
             }
             try:
-                body = _response_body(self.client.call("DeleteTable", payload))
+                response = self.client.call("DeleteTable", payload)
+                body = _response_body(response)
+                if not isinstance(response, dict) or not isinstance(response.get("Response"), dict) or not body:
+                    raise RuntimeError("invalid_delete_response")
                 results.append({**table, "status": "deleted", "request_id": body.get("RequestId", "")})
             except Exception as exc:
                 results.append({**table, "status": "failed", "error": str(exc)})
