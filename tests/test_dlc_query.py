@@ -123,10 +123,10 @@ class DLCQueryServiceTest(unittest.TestCase):
             service.delete_tables([{"table_name": "t"}])
 
         action, payload = client.calls[0]
-        self.assertEqual(action, "DeleteTable")
+        self.assertEqual(action, "DropDMSTable")
         self.assertEqual(
-            payload["TableBaseInfo"],
-            {"TableName": "t", "DatabaseName": "configured_db", "DatasourceConnectionName": "configured_catalog"},
+            payload,
+            {"Name": "t", "DbName": "configured_db", "DatasourceConnectionName": "configured_catalog", "DeleteData": False},
         )
 
     def test_delete_requires_configured_or_explicit_database(self):

@@ -49,7 +49,7 @@ TOOLS = {
         },
     },
     "delete_dlc_tables": {
-        "description": "Permanently remove DLC table definitions using DeleteTable. The database defaults to DLC_QUERY_DATABASE configuration if omitted. This is not an explicit data-deletion API, but underlying files are not guaranteed to be retained for every table type. Recovery applies only to Iceberg native tables in DataLakeCatalog when the recycle bin is enabled; retention is configured as 7, 15, or 30 days. Other table types or a disabled recycle bin are not guaranteed recoverable, and deletion may be immediate and irreversible. Review the exact table list and risks; pass confirmation='DELETE TABLE DEFINITIONS' to execute.",
+        "description": "Remove DLC DMS table definitions using DropDMSTable with DeleteData=false (table data is not requested for deletion). The database defaults to DLC_QUERY_DATABASE configuration if omitted. Recovery applies only to Iceberg native tables in DataLakeCatalog when the recycle bin is enabled; retention is configured as 7, 15, or 30 days. Other table types or a disabled recycle bin are not guaranteed recoverable, and metadata deletion may be immediate and irreversible. Review the exact table list and risks; pass confirmation='DELETE TABLE DEFINITIONS' to execute.",
         "schema": {
             "type": "object",
             "properties": {
@@ -462,9 +462,8 @@ def _call_tool(store, request, live=None, query_service=None):
                 "required_confirmation": "DELETE TABLE DEFINITIONS",
                 "tables": tables,
                 "risk_notice": (
-                    "仅 DataLakeCatalog 下启用回收站的 Iceberg 原生表适用恢复，保留期由配置决定（7、15 或 30 天）；"
-                    "其他表类型或关闭回收站时不保证可恢复，删除可能立即且不可逆。DeleteTable 不保证所有表类型的底层文件都会保留。"
-                    "database_name 可省略并读取 DLC_QUERY_DATABASE 配置。",
+                    "本工具调用 DropDMSTable 并设置 DeleteData=false，请求只删除 DMS 表定义、不请求删除数据；回收站仅适用于 DataLakeCatalog 下启用回收站的 Iceberg 原生表，保留期由配置决定（7、15 或 30 天）。其他表类型或关闭回收站时不保证可恢复，元数据删除可能立即且不可逆。"
+                    "database_name 可省略并读取 DLC_QUERY_DATABASE 配置。"
                 ),
             }
         elif not tables or any(

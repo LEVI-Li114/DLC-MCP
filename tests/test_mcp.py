@@ -168,9 +168,10 @@ class DeleteDlcTablesTest(unittest.TestCase):
         response = handle_request(self.store, {"jsonrpc": "2.0", "id": 154, "method": "tools/list"})
         tool = {item["name"]: item for item in response["result"]["tools"]}["delete_dlc_tables"]
         self.assertEqual(tool["annotations"], {"readOnlyHint": False, "destructiveHint": True})
+        self.assertIn("DropDMSTable", tool["description"])
+        self.assertIn("DeleteData=false", tool["description"])
         self.assertIn("Iceberg native tables in DataLakeCatalog", tool["description"])
         self.assertIn("7, 15, or 30 days", tool["description"])
-        self.assertIn("underlying files are not guaranteed", tool["description"])
         self.assertIn("DLC_QUERY_DATABASE", tool["description"])
 
         class FakeQueryService:
@@ -184,10 +185,11 @@ class DeleteDlcTablesTest(unittest.TestCase):
         )
         text = response["result"]["content"][0]["text"]
         self.assertIn("explicit_confirmation_required", text)
+        self.assertIn("DropDMSTable", text)
+        self.assertIn("DeleteData=false", text)
         self.assertIn("DataLakeCatalog", text)
         self.assertIn("7、15 或 30 天", text)
         self.assertIn("立即且不可逆", text)
-        self.assertIn("底层文件都会保留", text)
         self.assertIn("DLC_QUERY_DATABASE", text)
 
     def test_delegates_only_after_confirmation(self):
@@ -216,11 +218,11 @@ class DeleteDlcTablesTest(unittest.TestCase):
 
             def call(self, action, payload):
                 self.calls.append((action, payload))
-                if payload["TableBaseInfo"]["TableName"] == "bad":
+                if payload["Name"] == "bad":
                     raise RuntimeError("delete failed")
-                if payload["TableBaseInfo"]["TableName"] == "missing-response":
+                if payload["Name"] == "missing-response":
                     return {}
-                if payload["TableBaseInfo"]["TableName"] == "api-error":
+                if payload["Name"] == "api-error":
                     return {"Response": {"Error": {"Code": "InternalError", "Message": "failed"}}}
                 return {"Response": {"RequestId": "req-1"}}
 
@@ -233,9 +235,13 @@ class DeleteDlcTablesTest(unittest.TestCase):
                 {"table_name": "api-error", "database_name": "db"},
             ]
         )
-        self.assertEqual([call[0] for call in client.calls], ["DeleteTable"] * 4)
-        self.assertEqual(client.calls[0][1]["TableBaseInfo"], {"TableName": "bad", "DatabaseName": "db", "DatasourceConnectionName": "DataLakeCatalog"})
-        self.assertEqual(client.calls[1][1]["TableBaseInfo"]["DatasourceConnectionName"], "catalog-x")
+        self.assertEqual([call[0] for call in client.calls], ["DropDMSTable"] * 4)
+        self.assertEqual(
+            client.calls[0][1],
+            {"Name": "bad", "DbName": "db", "DatasourceConnectionName": "DataLakeCatalog", "DeleteData": False},
+        )
+        self.assertEqual(client.calls[1][1]["DatasourceConnectionName"], "catalog-x")
+        self.assertTrue(all(call[1]["DeleteData"] is False for call in client.calls))
         self.assertEqual(result["status"], "partial")
         self.assertEqual([item["status"] for item in result["results"]], ["failed", "deleted", "failed", "failed"])
         self.assertIn("invalid_delete_response", result["results"][2]["error"])

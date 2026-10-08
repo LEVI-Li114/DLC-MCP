@@ -216,16 +216,15 @@ class DLCQueryService:
             if not database_name:
                 raise QueryValidationError("database_name_required_or_configure_DLC_QUERY_DATABASE")
             payload = {
-                "TableBaseInfo": {
-                    "TableName": table["table_name"],
-                    "DatabaseName": database_name,
-                    "DatasourceConnectionName": table.get("datasource_connection_name")
-                    or _query_env("DLC_QUERY_DATASOURCE", "DLC_QUERY_DATASOURCE_CONNECTION_NAME")
-                    or os.environ.get("DLC_CATALOG", "DataLakeCatalog"),
-                }
+                "Name": table["table_name"],
+                "DbName": database_name,
+                "DatasourceConnectionName": table.get("datasource_connection_name")
+                or _query_env("DLC_QUERY_DATASOURCE", "DLC_QUERY_DATASOURCE_CONNECTION_NAME")
+                or os.environ.get("DLC_CATALOG", "DataLakeCatalog"),
+                "DeleteData": False,
             }
             try:
-                response = self.client.call("DeleteTable", payload)
+                response = self.client.call("DropDMSTable", payload)
                 body = _response_body(response)
                 if not isinstance(response, dict) or not isinstance(response.get("Response"), dict) or not body:
                     raise RuntimeError("invalid_delete_response")
