@@ -9,11 +9,46 @@ from dlc_mcp.dlc_query import DLCQueryService, QueryValidationError, validate_re
 class FakeDLCClient:
     def __init__(self):
         self.calls = []
+        self.keep_table = False
 
     def call(self, action, payload):
         self.calls.append((action, payload))
         if action == "CreateTask":
-            return {"Response": {"TaskId": "task-123", "RequestId": "request-1"}}
+            encoded_sql = next(iter(payload["Task"].values()))["SQL"]
+            sql = base64.b64decode(encoded_sql).decode("utf-8")
+            task_id = "verify-task" if sql.startswith("SHOW TABLES") else "task-123"
+            return {"Response": {"TaskId": task_id, "RequestId": "request-1"}}
+        if action == "DescribeTaskResult" and payload["TaskId"] == "verify-task":
+            result_set = json.dumps([{"tableName": "api-still-there"}]) if self.keep_table else "[]"
+            return {
+                "Response": {
+                    "RequestId": "verify-result-request",
+                    "TaskInfo": {
+                        "State": 2,
+                        "Percentage": 100,
+                        "ResultSchema": [],
+                        "ResultSet": result_set,
+                    },
+                }
+            }
+        if action == "DescribeTaskResult":
+            return {
+                "Response": {
+                    "RequestId": "request-2",
+                    "TaskInfo": {
+                        "State": 2,
+                        "Percentage": 100,
+                        "ResultSchema": [{"Name": "id", "Type": "bigint"}],
+                        "ResultSet": json.dumps([{"id": 1}, {"id": 2}]),
+                        "NextToken": "next-page",
+                        "UsedTime": 12,
+                    },
+                }
+            }
+        if action == "DropDMSTable":
+            if payload["Name"] == "api-still-there":
+                self.keep_table = True
+            return {"Response": {"RequestId": "request-2"}}
         if action == "DescribeTaskResourceUsage":
             return {
                 "Response": {
@@ -71,6 +106,21 @@ class ReadOnlySQLValidationTest(unittest.TestCase):
         SELECT * FROM src"""
         self.assertEqual(validate_read_only_sql(sql), sql.strip())
 
+    def test_allows_show_tables_like_for_deletion_verification(self):
+        sql = "SHOW TABLES LIKE 'tmp_w547_w1'"
+        self.assertEqual(validate_read_only_sql(sql), sql)
+
+    def test_rejects_other_show_statements(self):
+        for sql in (
+            "SHOW DATABASES",
+            "SHOW TABLES IN db",
+            "SHOW TABLES LIKE x",
+            "SHOW TABLES LIKE 'x' LIKE 'y'",
+            "SHOW TABLES LIKE 'x'; DROP TABLE y",
+        ):
+            with self.subTest(sql=sql), self.assertRaises(QueryValidationError):
+                validate_read_only_sql(sql)
+
     def test_rejects_mutation_and_multiple_statements(self):
         invalid = (
             "INSERT INTO x SELECT 1",
@@ -120,14 +170,30 @@ class DLCQueryServiceTest(unittest.TestCase):
             {"DLC_QUERY_DATABASE": "configured_db", "DLC_QUERY_DATASOURCE": "configured_catalog"},
             clear=False,
         ):
-            service.delete_tables([{"table_name": "t"}])
+            result = service.delete_tables([{"table_name": "t"}])
 
-        action, payload = client.calls[0]
-        self.assertEqual(action, "DropDMSTable")
-        self.assertEqual(
-            payload,
-            {"Name": "t", "DbName": "configured_db", "DatasourceConnectionName": "configured_catalog", "DeleteData": False},
+        self.assertEqual([action for action, _ in client.calls], ["DropDMSTable", "CreateTask", "DescribeTaskResult"])
+        verify_payload = client.calls[1][1]
+        verify_sql = base64.b64decode(verify_payload["Task"]["SparkSQLTask"]["SQL"]).decode("utf-8")
+        self.assertEqual(verify_sql, "SHOW TABLES LIKE 't'")
+        self.assertEqual(verify_payload["DatabaseName"], "configured_db")
+        self.assertEqual(verify_payload["DatasourceConnectionName"], "configured_catalog")
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["results"][0]["status"], "api_accepted")
+        self.assertEqual(result["results"][0]["verification"], "verified_absent")
+        self.assertEqual(result["results"][0]["verification_task_id"], "verify-task")
+        self.assertEqual(result["results"][0]["verification_request_id"], "verify-result-request")
+        self.assertEqual(result["results"][0]["database_name_used"], "configured_db")
+
+    def test_delete_verification_reports_table_still_present(self):
+        client = FakeDLCClient()
+        result = DLCQueryService(client).delete_tables(
+            [{"table_name": "api-still-there", "database_name": "db"}]
         )
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"][0]["status"], "api_accepted_table_still_exists")
+        self.assertEqual(result["results"][0]["verification"], "table_still_exists")
 
     def test_delete_requires_configured_or_explicit_database(self):
         client = FakeDLCClient()

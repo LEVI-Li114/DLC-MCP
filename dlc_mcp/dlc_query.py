@@ -43,8 +43,15 @@ def validate_read_only_sql(sql, max_chars=100_000):
         raise QueryValidationError("multiple_statements_not_allowed")
 
     keywords = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", masked.upper())
-    if not keywords or keywords[0] not in {"SELECT", "WITH"}:
-        raise QueryValidationError("only_select_or_with_allowed")
+    is_show_tables = len(keywords) >= 2 and keywords[:2] == ["SHOW", "TABLES"]
+    if not keywords or (keywords[0] not in {"SELECT", "WITH"} and not is_show_tables):
+        raise QueryValidationError("only_select_with_or_show_tables_allowed")
+    if is_show_tables:
+        show_keywords = keywords[2:]
+        if any(keyword not in {"LIKE"} for keyword in show_keywords) or len(show_keywords) > 1:
+            raise QueryValidationError("only_show_tables_or_show_tables_like_allowed")
+        if show_keywords and not re.search(r"\bLIKE\s+(?:'|\")", sql, re.IGNORECASE):
+            raise QueryValidationError("only_show_tables_or_show_tables_like_allowed")
     forbidden = sorted(set(keywords) & FORBIDDEN_KEYWORDS)
     if forbidden:
         raise QueryValidationError("forbidden_sql_keyword:" + ",".join(forbidden))
@@ -228,11 +235,60 @@ class DLCQueryService:
                 body = _response_body(response)
                 if not isinstance(response, dict) or not isinstance(response.get("Response"), dict) or not body:
                     raise RuntimeError("invalid_delete_response")
-                results.append({**table, "status": "deleted", "request_id": body.get("RequestId", "")})
+                results.append({
+                    **table,
+                    "status": "api_accepted",
+                    "request_id": body.get("RequestId", ""),
+                    "verification": "not_performed",
+                    "database_name_used": database_name,
+                    "datasource_connection_name_used": payload["DatasourceConnectionName"],
+                })
+                try:
+                    verification = self._verify_table_absent(
+                        table["table_name"], database_name, payload["DatasourceConnectionName"]
+                    )
+                    results[-1]["verification"] = verification["status"]
+                    results[-1]["verification_task_id"] = verification["task_id"]
+                    results[-1]["verification_request_id"] = verification["request_id"]
+                    if verification["status"] == "table_still_exists":
+                        results[-1]["status"] = "api_accepted_table_still_exists"
+                    elif verification["status"] != "verified_absent":
+                        results[-1]["status"] = "verification_failed"
+                        results[-1]["verification_error"] = verification.get("error", verification["status"])
+                except Exception as exc:
+                    results[-1]["status"] = "verification_failed"
+                    results[-1]["verification"] = "failed"
+                    results[-1]["verification_error"] = str(exc)
             except Exception as exc:
                 results.append({**table, "status": "failed", "error": str(exc)})
-        status = "completed" if all(item["status"] == "deleted" for item in results) else "partial"
+        status = "verified" if all(item["status"] == "api_accepted" and item.get("verification") == "verified_absent" for item in results) else "partial"
         return {"status": status, "results": results}
+
+    def _verify_table_absent(self, table_name, database_name, datasource_connection_name):
+        escaped_table = table_name.replace("'", "''")
+        submitted = self.submit(
+            f"SHOW TABLES LIKE '{escaped_table}'",
+            database_name=database_name,
+            datasource_connection_name=datasource_connection_name,
+        )
+        task_id = submitted["task_id"]
+        if not task_id:
+            raise RuntimeError("verification_task_id_missing")
+        result = self.result(task_id)
+        if result["status"] != "succeeded":
+            return {
+                "status": "verification_failed",
+                "task_id": task_id,
+                "request_id": result["request_id"],
+                "error": f"verification_query_{result['status']}",
+            }
+        rows = result["rows"]
+        exists = bool(rows)
+        return {
+            "status": "table_still_exists" if exists else "verified_absent",
+            "task_id": task_id,
+            "request_id": result["request_id"],
+        }
 
     def task_cost_analysis(self, task_id, start_time="", end_time="", limit=10):
         return self._cost_analysis(_cost_analysis_payload(task_id, start_time, end_time, limit))

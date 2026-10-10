@@ -170,9 +170,9 @@ class DeleteDlcTablesTest(unittest.TestCase):
         self.assertEqual(tool["annotations"], {"readOnlyHint": False, "destructiveHint": True})
         self.assertIn("DropDMSTable", tool["description"])
         self.assertIn("DeleteData=false", tool["description"])
-        self.assertIn("Iceberg native tables in DataLakeCatalog", tool["description"])
-        self.assertIn("7, 15, or 30 days", tool["description"])
-        self.assertIn("DLC_QUERY_DATABASE", tool["description"])
+        self.assertIn("live DLC SHOW TABLES LIKE", tool["description"])
+        self.assertNotIn("verification=not_performed", tool["description"])
+        self.assertIn("SHOW TABLES", tool["description"])
 
         class FakeQueryService:
             def delete_tables(self, tables):
@@ -187,9 +187,8 @@ class DeleteDlcTablesTest(unittest.TestCase):
         self.assertIn("explicit_confirmation_required", text)
         self.assertIn("DropDMSTable", text)
         self.assertIn("DeleteData=false", text)
-        self.assertIn("DataLakeCatalog", text)
-        self.assertIn("7、15 或 30 天", text)
-        self.assertIn("立即且不可逆", text)
+        self.assertIn("SHOW TABLES LIKE", text)
+        self.assertIn("不查询资产缓存", text)
         self.assertIn("DLC_QUERY_DATABASE", text)
 
     def test_delegates_only_after_confirmation(self):
@@ -199,7 +198,7 @@ class DeleteDlcTablesTest(unittest.TestCase):
 
             def delete_tables(self, tables):
                 self.tables = tables
-                return {"status": "completed", "results": [{"status": "deleted"}]}
+                return {"status": "verified", "results": [{"status": "api_accepted", "verification": "verified_absent"}]}
 
         service = FakeQueryService()
         tables = [{"table_name": "t"}]
@@ -209,7 +208,11 @@ class DeleteDlcTablesTest(unittest.TestCase):
             query_service=service,
         )
         self.assertEqual(service.tables, tables)
-        self.assertIn("completed", response["result"]["content"][0]["text"])
+        output = response["result"]["content"][0]["text"]
+        self.assertIn("verified", output)
+        self.assertIn("api_accepted", output)
+        self.assertIn("verified_absent", output)
+        self.assertNotIn("deleted", output)
 
     def test_service_deletes_tables_individually(self):
         class FakeClient:
@@ -218,7 +221,16 @@ class DeleteDlcTablesTest(unittest.TestCase):
 
             def call(self, action, payload):
                 self.calls.append((action, payload))
-                if payload["Name"] == "bad":
+                if action == "CreateTask":
+                    return {"Response": {"TaskId": "verify-task", "RequestId": "verify-request"}}
+                if action == "DescribeTaskResult":
+                    return {
+                        "Response": {
+                            "RequestId": "verify-result-request",
+                            "TaskInfo": {"State": 2, "Percentage": 100, "ResultSet": "[]"},
+                        }
+                    }
+                if payload.get("Name") == "bad":
                     raise RuntimeError("delete failed")
                 if payload["Name"] == "missing-response":
                     return {}
@@ -235,15 +247,19 @@ class DeleteDlcTablesTest(unittest.TestCase):
                 {"table_name": "api-error", "database_name": "db"},
             ]
         )
-        self.assertEqual([call[0] for call in client.calls], ["DropDMSTable"] * 4)
+        self.assertEqual(
+            [call[0] for call in client.calls],
+            ["DropDMSTable", "DropDMSTable", "CreateTask", "DescribeTaskResult", "DropDMSTable", "DropDMSTable"],
+        )
         self.assertEqual(
             client.calls[0][1],
             {"Name": "bad", "DbName": "db", "DatasourceConnectionName": "DataLakeCatalog", "DeleteData": False},
         )
         self.assertEqual(client.calls[1][1]["DatasourceConnectionName"], "catalog-x")
-        self.assertTrue(all(call[1]["DeleteData"] is False for call in client.calls))
+        self.assertTrue(all(call[1]["DeleteData"] is False for call in client.calls if call[0] == "DropDMSTable"))
         self.assertEqual(result["status"], "partial")
-        self.assertEqual([item["status"] for item in result["results"]], ["failed", "deleted", "failed", "failed"])
+        self.assertEqual([item["status"] for item in result["results"]], ["failed", "api_accepted", "failed", "failed"])
+        self.assertEqual(result["results"][1]["verification"], "verified_absent")
         self.assertIn("invalid_delete_response", result["results"][2]["error"])
         self.assertIn("InternalError", result["results"][3]["error"])
 
