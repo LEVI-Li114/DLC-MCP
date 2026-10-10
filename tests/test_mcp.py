@@ -735,6 +735,25 @@ class McpTest(unittest.TestCase):
         self.assertIn("succeeded", fetched["result"]["content"][0]["text"])
         self.assertIn("count", fetched["result"]["content"][0]["text"])
 
+        class ArrayResultQueryService:
+            def result(self, task_id, **options):
+                return {
+                    "task_id": task_id,
+                    "state": 2,
+                    "status": "succeeded",
+                    "progress_percent": 100,
+                    "schema": [{"Name": "tableName", "Type": "varchar"}],
+                    "rows": [{"tableName": "tmp_w547_w7"}],
+                }
+
+        array_result = handle_request(
+            self.store,
+            {"jsonrpc": "2.0", "id": 143, "method": "tools/call", "params": {"name": "get_dlc_sql_query_result", "arguments": {"task_id": "task-array"}}},
+            query_service=ArrayResultQueryService(),
+        )
+        self.assertIn("tmp_w547_w7", array_result["result"]["content"][0]["text"])
+        self.assertIn("tableName", array_result["result"]["content"][0]["text"])
+
     def test_dlc_task_resource_usage_tool_requires_explicit_task_instance_id(self):
         response = handle_request(self.store, {"jsonrpc": "2.0", "id": 143, "method": "tools/list"})
         tools = {tool["name"]: tool for tool in response["result"]["tools"]}

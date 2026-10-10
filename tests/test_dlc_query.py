@@ -202,6 +202,24 @@ class DLCQueryServiceTest(unittest.TestCase):
                 DLCQueryService(client).delete_tables([{"table_name": "t"}])
         self.assertEqual(client.calls, [])
 
+    def test_reads_official_schema_and_array_result_set(self):
+        class ArrayResultClient:
+            def call(self, action, payload):
+                return {
+                    "Response": {
+                        "TaskInfo": {
+                            "State": 2,
+                            "Percentage": 100,
+                            "ResultSchema": [{"Name": "tableName", "Type": "varchar"}],
+                            "ResultSet": json.dumps([["tmp_w547_w7"]]),
+                        }
+                    }
+                }
+
+        result = DLCQueryService(ArrayResultClient()).result("task-array")
+
+        self.assertEqual(result["rows"], [{"tableName": "tmp_w547_w7"}])
+
     def test_reads_paginated_task_result(self):
 
         client = FakeDLCClient()

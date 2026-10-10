@@ -169,7 +169,7 @@ class DLCQueryService:
             "progress_percent": info.get("Percentage", 0),
             "message": info.get("OutputMessage", ""),
             "schema": info.get("ResultSchema") or [],
-            "rows": _parse_result_set(info.get("ResultSet")),
+            "rows": _parse_result_set(info.get("ResultSet"), info.get("ResultSchema") or []),
             "next_token": info.get("NextToken", ""),
             "data_amount": info.get("DataAmount", 0),
             "used_time": info.get("UsedTime", 0),
@@ -367,12 +367,17 @@ def _query_env(primary, legacy):
     return os.environ.get(primary, "") or os.environ.get(legacy, "")
 
 
-def _parse_result_set(value):
+def _parse_result_set(value, schema=None):
     if value in (None, ""):
         return []
-    if isinstance(value, (list, dict)):
+    if not isinstance(value, (list, dict)):
+        try:
+            value = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return value
+    if not isinstance(value, list) or not value or not all(isinstance(row, list) for row in value):
         return value
-    try:
-        return json.loads(value)
-    except (TypeError, json.JSONDecodeError):
+    columns = [item.get("Name", "") for item in (schema or [])]
+    if not columns:
         return value
+    return [dict(zip(columns, row)) for row in value]
