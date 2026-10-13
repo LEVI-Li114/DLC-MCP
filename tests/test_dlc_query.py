@@ -1,5 +1,7 @@
 import base64
 import json
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -95,6 +97,28 @@ class FakeDLCClient:
         }
 
 
+class FakeDDLClient:
+    def __init__(self, ddl='CREATE TABLE `dw`.`dim_customer` (`id` bigint);'):
+        self.calls = []
+        self.ddl = ddl
+
+    def call(self, action, payload):
+        self.calls.append((action, payload))
+        if action == "CreateTask":
+            return {"Response": {"TaskId": "ddl-task", "RequestId": "request-1"}}
+        return {
+            "Response": {
+                "RequestId": "request-2",
+                "TaskInfo": {
+                    "State": 2,
+                    "Percentage": 100,
+                    "ResultSchema": [{"Name": "createtab_stmt", "Type": "varchar"}],
+                    "ResultSet": json.dumps([[self.ddl]]),
+                },
+            }
+        }
+
+
 class ReadOnlySQLValidationTest(unittest.TestCase):
     def test_allows_select_with_full_outer_join(self):
         sql = "select a.id from a full outer join b on a.id = b.id;"
@@ -119,6 +143,19 @@ class ReadOnlySQLValidationTest(unittest.TestCase):
         ):
             with self.subTest(sql=sql):
                 self.assertEqual(validate_read_only_sql(sql), sql)
+
+    def test_allows_show_create_table_for_ddl_backup(self):
+        sql = "SHOW CREATE TABLE `dw`.`dim_customer`"
+        self.assertEqual(validate_read_only_sql(sql), sql)
+
+    def test_rejects_show_create_table_with_extra_keywords(self):
+        for sql in (
+            "SHOW CREATE TABLE dw.dim_customer",
+            "SHOW CREATE TABLE `dw`.`dim_customer`; DROP TABLE x",
+            "SHOW CREATE VIEW v",
+        ):
+            with self.subTest(sql=sql), self.assertRaises(QueryValidationError):
+                validate_read_only_sql(sql)
 
     def test_rejects_other_show_statements(self):
         for sql in (
@@ -211,6 +248,65 @@ class DLCQueryServiceTest(unittest.TestCase):
             with self.assertRaisesRegex(QueryValidationError, "database_name_required_or_configure_DLC_QUERY_DATABASE"):
                 DLCQueryService(client).delete_tables([{"table_name": "t"}])
         self.assertEqual(client.calls, [])
+
+    def test_backs_up_show_create_table_ddl_to_timestamped_file(self):
+        client = FakeDDLClient()
+        with tempfile.TemporaryDirectory() as directory:
+            result = DLCQueryService(client).backup_table_ddl(
+                "dim_customer", database_name="dw", backup_dir=directory
+            )
+
+            action, payload = client.calls[0]
+            sql = base64.b64decode(payload["Task"]["SparkSQLTask"]["SQL"]).decode("utf-8")
+            self.assertEqual(action, "CreateTask")
+            self.assertEqual(sql, "SHOW CREATE TABLE `dw`.`dim_customer`")
+            self.assertEqual(result["status"], "backed_up")
+            self.assertEqual(result["database_name"], "dw")
+            self.assertEqual(result["table_name"], "dim_customer")
+            self.assertIn(os.path.join(directory, "dw", "dim_customer"), result["backup_path"])
+            self.assertTrue(result["backup_path"].endswith(".sql"))
+            with open(result["backup_path"], encoding="utf-8") as backup:
+                self.assertEqual(backup.read(), "CREATE TABLE `dw`.`dim_customer` (`id` bigint);\n")
+            self.assertEqual(result["ddl"], "CREATE TABLE `dw`.`dim_customer` (`id` bigint);")
+
+    def test_backup_keeps_previous_versions(self):
+        client = FakeDDLClient()
+        with tempfile.TemporaryDirectory() as directory:
+            service = DLCQueryService(client)
+            first = service.backup_table_ddl("dim_customer", database_name="dw", backup_dir=directory)
+            second = service.backup_table_ddl("dim_customer", database_name="dw", backup_dir=directory)
+
+            self.assertNotEqual(first["backup_path"], second["backup_path"])
+            self.assertTrue(os.path.exists(first["backup_path"]))
+            self.assertTrue(os.path.exists(second["backup_path"]))
+
+    def test_backup_uses_configured_directory_and_database(self):
+        client = FakeDDLClient()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"DLC_DDL_BACKUP_DIR": directory, "DLC_QUERY_DATABASE": "configured_db"}, clear=False
+        ):
+            result = DLCQueryService(client).backup_table_ddl("t")
+
+            sql = base64.b64decode(client.calls[0][1]["Task"]["SparkSQLTask"]["SQL"]).decode("utf-8")
+            self.assertEqual(sql, "SHOW CREATE TABLE `configured_db`.`t`")
+            self.assertIn(os.path.join(directory, "configured_db", "t"), result["backup_path"])
+
+    def test_backup_requires_database_and_directory(self):
+        client = FakeDDLClient()
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(QueryValidationError, "database_name_required_or_configure_DLC_QUERY_DATABASE"):
+                DLCQueryService(client).backup_table_ddl("t")
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(QueryValidationError, "backup_dir_required_or_configure_DLC_DDL_BACKUP_DIR"):
+                DLCQueryService(client).backup_table_ddl("t", database_name="dw")
+        self.assertEqual(client.calls, [])
+
+    def test_backup_reports_missing_ddl(self):
+        client = FakeDDLClient(ddl="")
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "ddl_not_returned"):
+                DLCQueryService(client).backup_table_ddl("dim_customer", database_name="dw", backup_dir=directory)
+            self.assertEqual(os.listdir(directory), [])
 
     def test_reads_official_schema_and_array_result_set(self):
         class ArrayResultClient:

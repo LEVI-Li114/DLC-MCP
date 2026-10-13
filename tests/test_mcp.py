@@ -159,6 +159,69 @@ class FakeLivePartitionClient:
         return {"Response": {"Data": {"Items": []}}}
 
 
+class BackupDlcTableDdlTest(unittest.TestCase):
+    def setUp(self):
+        self.store = AssetStore(sqlite3.connect(":memory:"))
+        self.store.init_schema()
+
+    def test_tools_list_publishes_backup_tool_without_source_field(self):
+        response = handle_request(self.store, {"jsonrpc": "2.0", "id": 160, "method": "tools/list"})
+        tool = {item["name"]: item for item in response["result"]["tools"]}["backup_dlc_table_ddl"]
+
+        self.assertEqual(tool["annotations"], {"readOnlyHint": False, "destructiveHint": False})
+        self.assertEqual(tool["inputSchema"]["required"], ["table_name"])
+        self.assertNotIn("source", tool["inputSchema"]["properties"])
+        self.assertIn("DLC_DDL_BACKUP_DIR", tool["description"])
+
+    def test_delegates_to_query_service(self):
+        class FakeQueryService:
+            def __init__(self):
+                self.calls = []
+
+            def backup_table_ddl(self, table_name, **options):
+                self.calls.append((table_name, options))
+                return {
+                    "status": "backed_up",
+                    "database_name": options.get("database_name") or "dw",
+                    "table_name": table_name,
+                    "backup_path": "/tmp/ddl/dw/t/20260101T000000000000.sql",
+                    "ddl": "CREATE TABLE t (id bigint);",
+                }
+
+        service = FakeQueryService()
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 161,
+                "method": "tools/call",
+                "params": {"name": "backup_dlc_table_ddl", "arguments": {"table_name": "t", "database_name": "dw"}},
+            },
+            query_service=service,
+        )
+
+        self.assertEqual(
+            service.calls,
+            [("t", {"database_name": "dw", "data_engine_name": "", "datasource_connection_name": "", "resource_group_name": ""})],
+        )
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("20260101T000000000000.sql", text)
+        self.assertIn("dw.t", text)
+        self.assertIn("dlc_live", text)
+
+    def test_reports_validation_error_without_service(self):
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 162,
+                "method": "tools/call",
+                "params": {"name": "backup_dlc_table_ddl", "arguments": {"table_name": "t"}},
+            },
+        )
+        self.assertIn("dlc_query_service_unavailable", response["result"]["content"][0]["text"])
+
+
 class DeleteDlcTablesTest(unittest.TestCase):
     def setUp(self):
         self.store = AssetStore(sqlite3.connect(":memory:"))

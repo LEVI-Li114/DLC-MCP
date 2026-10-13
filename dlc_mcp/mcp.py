@@ -22,7 +22,7 @@ def _with_source_schema(schema):
 
 TOOLS = {
     "submit_dlc_sql_query": {
-        "description": "Submit one SELECT/WITH, SHOW TABLES [LIKE pattern], DROP TABLE, or ALTER TABLE statement to the Tencent Cloud DLC engine. DROP TABLE and ALTER TABLE are destructive; FULL OUTER JOIN is supported in queries.",
+        "description": "Submit one SELECT/WITH, SHOW TABLES [LIKE pattern], SHOW CREATE TABLE, DROP TABLE, or ALTER TABLE statement to the Tencent Cloud DLC engine. DROP TABLE and ALTER TABLE are destructive; FULL OUTER JOIN is supported in queries.",
         "schema": {
             "type": "object",
             "properties": {
@@ -47,6 +47,21 @@ TOOLS = {
             },
             "required": ["task_id"],
         },
+    },
+    "backup_dlc_table_ddl": {
+        "description": "Run SHOW CREATE TABLE for one DLC table and save each returned DDL as a timestamped SQL file under DLC_DDL_BACKUP_DIR/<database>/<table>/.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "table_name": {"type": "string"},
+                "database_name": {"type": "string", "description": "Optional; defaults to DLC_QUERY_DATABASE configuration."},
+                "data_engine_name": {"type": "string"},
+                "datasource_connection_name": {"type": "string"},
+                "resource_group_name": {"type": "string"},
+            },
+            "required": ["table_name"],
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False},
     },
     "delete_dlc_tables": {
         "description": "Remove DLC DMS table definitions using DropDMSTable with DeleteData=false (table data is not requested for deletion). After an accepted request, automatically run a live DLC SHOW TABLES LIKE check in the same database/catalog; results distinguish verified_absent, table_still_exists, and verification_failed. The database defaults to DLC_QUERY_DATABASE configuration if omitted. Review the exact table list and risks; pass confirmation='DELETE TABLE DEFINITIONS' to execute.",
@@ -285,7 +300,7 @@ TOOLS = {
 
 
 for _tool_name, _tool_spec in TOOLS.items():
-    if _tool_name not in {"submit_dlc_sql_query", "get_dlc_sql_query_result", "get_dlc_task_resource_usage", "delete_dlc_tables"}:
+    if _tool_name not in {"submit_dlc_sql_query", "get_dlc_sql_query_result", "get_dlc_task_resource_usage", "delete_dlc_tables", "backup_dlc_table_ddl"}:
         _tool_spec["schema"] = _with_source_schema(_tool_spec["schema"])
 
 
@@ -476,6 +491,21 @@ def _call_tool(store, request, live=None, query_service=None):
         else:
             try:
                 data = query_service.delete_tables(tables)
+            except (QueryValidationError, RuntimeError, ValueError, OSError) as exc:
+                data = _error_data(str(exc))
+    elif name == "backup_dlc_table_ddl":
+        meta["source"] = "dlc_live"
+        if query_service is None:
+            data = _error_data("dlc_query_service_unavailable")
+        else:
+            try:
+                data = query_service.backup_table_ddl(
+                    args.get("table_name", ""),
+                    database_name=args.get("database_name", ""),
+                    data_engine_name=args.get("data_engine_name", ""),
+                    datasource_connection_name=args.get("datasource_connection_name", ""),
+                    resource_group_name=args.get("resource_group_name", ""),
+                )
             except (QueryValidationError, RuntimeError, ValueError, OSError) as exc:
                 data = _error_data(str(exc))
     elif name in {"submit_dlc_sql_query", "get_dlc_sql_query_result"}:
@@ -857,6 +887,12 @@ def _format_markdown(tool_name, data):
             ["模块", "状态", "API", "错误", "可重试"],
             error_rows,
         )
+    if tool_name == "backup_dlc_table_ddl":
+        return _section("DLC 表 DDL 已备份", [
+            f"表：`{_cell(data.get('database_name'))}.{_cell(data.get('table_name'))}`",
+            f"备份文件：`{_cell(data.get('backup_path'))}`",
+            "每次调用独立保存，不覆盖已有版本。",
+        ])
     if tool_name == "submit_dlc_sql_query":
         return _section(
             "DLC SQL 已提交",

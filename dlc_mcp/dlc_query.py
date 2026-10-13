@@ -44,13 +44,14 @@ def validate_read_only_sql(sql, max_chars=100_000):
 
     keywords = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", masked.upper())
     is_show_tables = len(keywords) >= 2 and keywords[:2] == ["SHOW", "TABLES"]
+    is_show_create_table = len(keywords) >= 3 and keywords[:3] == ["SHOW", "CREATE", "TABLE"]
     is_drop_table = len(keywords) >= 2 and keywords[:2] == ["DROP", "TABLE"]
     is_alter_table = len(keywords) >= 2 and keywords[:2] == ["ALTER", "TABLE"]
     if is_drop_table and any(keyword in {"DELETE", "PURGE"} for keyword in keywords[2:]):
         raise QueryValidationError("drop_table_delete_data_not_allowed")
     if is_alter_table:
         keywords = [keyword for keyword in keywords if keyword != "SET"]
-    if not keywords or (keywords[0] not in {"SELECT", "WITH"} and not (is_show_tables or is_drop_table or is_alter_table)):
+    if not keywords or (keywords[0] not in {"SELECT", "WITH"} and not (is_show_tables or is_show_create_table or is_drop_table or is_alter_table)):
         raise QueryValidationError("only_select_with_show_drop_or_alter_table_allowed")
     if is_show_tables:
         show_keywords = keywords[2:]
@@ -58,9 +59,14 @@ def validate_read_only_sql(sql, max_chars=100_000):
             raise QueryValidationError("only_show_tables_or_show_tables_like_allowed")
         if show_keywords and not re.search(r"\bLIKE\s+(?:'|\")", sql, re.IGNORECASE):
             raise QueryValidationError("only_show_tables_or_show_tables_like_allowed")
-    forbidden = sorted(set(keywords) & FORBIDDEN_KEYWORDS)
+    if is_show_create_table:
+        if len(keywords) != 3:
+            raise QueryValidationError("only_show_create_table_allowed")
+        forbidden = set()
+    else:
+        forbidden = set(keywords) & FORBIDDEN_KEYWORDS
     if forbidden:
-        raise QueryValidationError("forbidden_sql_keyword:" + ",".join(forbidden))
+        raise QueryValidationError("forbidden_sql_keyword:" + ",".join(sorted(forbidden)))
     return sql.strip().rstrip(";").rstrip()
 
 
@@ -114,6 +120,44 @@ def _blank(chars, start, end):
 class DLCQueryService:
     def __init__(self, client=None):
         self.client = client or TencentCloudClient.dlc_from_env()
+
+    def backup_table_ddl(self, table_name, database_name="", data_engine_name="", datasource_connection_name="", resource_group_name="", backup_dir=None):
+        table_name = (table_name or "").strip()
+        database_name = database_name or _query_env("DLC_QUERY_DATABASE", "DLC_QUERY_DATABASE_NAME")
+        if not table_name:
+            raise QueryValidationError("table_name_required")
+        if not database_name:
+            raise QueryValidationError("database_name_required_or_configure_DLC_QUERY_DATABASE")
+        if not backup_dir:
+            backup_dir = os.environ.get("DLC_DDL_BACKUP_DIR", "")
+        if not backup_dir:
+            raise QueryValidationError("backup_dir_required_or_configure_DLC_DDL_BACKUP_DIR")
+        escaped_table = table_name.replace("`", "``")
+        escaped_database = database_name.replace("`", "``")
+        submitted = self.submit(
+            f"SHOW CREATE TABLE `{escaped_database}`.`{escaped_table}`",
+            database_name=database_name,
+            data_engine_name=data_engine_name,
+            datasource_connection_name=datasource_connection_name,
+            resource_group_name=resource_group_name,
+        )
+        if not submitted.get("task_id"):
+            raise RuntimeError("ddl_backup_task_id_missing")
+        result = self.result(submitted["task_id"])
+        if result["status"] != "succeeded":
+            raise RuntimeError(f"ddl_backup_query_{result['status']}:{result.get('message', '')}")
+        ddl = _first_non_empty_cell(result.get("rows") or [])
+        if not ddl:
+            raise RuntimeError("ddl_not_returned")
+        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        safe_database = re.sub(r"[^A-Za-z0-9_.-]+", "_", database_name)
+        safe_table = re.sub(r"[^A-Za-z0-9_.-]+", "_", table_name)
+        directory = os.path.join(backup_dir, safe_database, safe_table)
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, f"{timestamp}.sql")
+        with open(path, "x", encoding="utf-8") as backup:
+            backup.write(ddl.rstrip() + "\n")
+        return {"status": "backed_up", "database_name": database_name, "table_name": table_name, "backup_path": path, "ddl": ddl}
 
     def submit(self, sql, database_name="", data_engine_name="", datasource_connection_name="", resource_group_name=""):
         max_chars = int(os.environ.get("DLC_QUERY_MAX_SQL_CHARS", "100000"))
@@ -371,6 +415,22 @@ def _response_body(response):
 
 def _query_env(primary, legacy):
     return os.environ.get(primary, "") or os.environ.get(legacy, "")
+
+
+def _first_non_empty_cell(rows):
+    if not rows:
+        return ""
+    first = rows[0]
+    if isinstance(first, dict):
+        values = list(first.values())
+    elif isinstance(first, (list, tuple)):
+        values = list(first)
+    else:
+        values = [first]
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
 
 
 def _parse_result_set(value, schema=None):

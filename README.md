@@ -152,8 +152,10 @@ Update this list whenever a new MCP tool is added.
 | `get_asset_coverage()` | Return asset coverage by layer for fields, lineage, quality rules, tasks, data sources, and runs. |
 | `get_asset_governance_issue_inventory(layer, core_level, issue_type, limit)` | Return deterministic governance issues with evidence, suspected root cause, severity, and recommended next check. |
 | `get_asset_governance_daily_report(instance_date, layer, core_level)` | Return a daily governance patrol report. |
-| `submit_dlc_sql_query(sql, database_name, data_engine_name, datasource_connection_name)` | Submit one `SELECT`/`WITH`, `SHOW TABLES [LIKE pattern]`, `DROP TABLE`, or `ALTER TABLE` statement to DLC; joins including `FULL OUTER JOIN` are allowed in queries. |
+| `submit_dlc_sql_query(sql, database_name, data_engine_name, datasource_connection_name)` | Submit one `SELECT`/`WITH`, `SHOW TABLES [LIKE pattern]`, `SHOW CREATE TABLE`, `DROP TABLE`, or `ALTER TABLE` statement to DLC; joins including `FULL OUTER JOIN` are allowed in queries. |
 | `get_dlc_sql_query_result(task_id, next_token, max_results)` | Poll a DLC SQL task and return one page of status/results. |
+| `backup_dlc_table_ddl(table_name, database_name, data_engine_name, datasource_connection_name, resource_group_name)` | Run `SHOW CREATE TABLE` for one DLC table and save the returned DDL as a timestamped SQL file under `DLC_DDL_BACKUP_DIR/<database>/<table>/`; each call writes a new file and never overwrites previous versions. |
+| `delete_dlc_tables(tables, confirmation)` | Remove DLC DMS table definitions with `DropDMSTable` (`DeleteData=false`), then verify with a live `SHOW TABLES LIKE` check. Requires `confirmation="DELETE TABLE DEFINITIONS"`. |
 | `get_dlc_task_resource_usage(task_instance_id, include_cost, cost_task_id, cost_start_time, cost_end_time, cost_limit)` | Return the DLC engine Core usage curve for one DLC `TaskInstanceId` (no WeData `instance_id` mapping); optionally add CU consumption analysis for an explicit `cost_task_id`. |
 
 ### DLC SQL 查询
@@ -163,10 +165,18 @@ Update this list whenever a new MCP tool is added.
 `submit_dlc_sql_query`，再使用返回的 `task_id` 调用
 `get_dlc_sql_query_result`。结果超过一页时，把返回的 `next_token` 传入下一次调用。
 
-该入口默认使用 Spark SQL，允许一条 `SELECT`、`WITH`、`SHOW TABLES [LIKE pattern]`、`DROP TABLE` 或
+该入口默认使用 Spark SQL，允许一条 `SELECT`、`WITH`、`SHOW TABLES [LIKE pattern]`、
+`SHOW CREATE TABLE`、`DROP TABLE` 或
 `ALTER TABLE` 语句；多语句会在提交到 DLC 前被拒绝。`DROP TABLE` 和 `ALTER TABLE`
 可能改变或删除表结构/数据，请谨慎使用。可通过
 `DLC_QUERY_TASK_TYPE=presto` 切换到 Presto SQLTask。
+
+### 表 DDL 备份
+
+`backup_dlc_table_ddl` 对单表执行 `SHOW CREATE TABLE`，把 DLC 引擎返回的原始 DDL 写入
+`DLC_DDL_BACKUP_DIR` 下的 `<database>/<table>/<时间戳>.sql`。每次调用生成独立文件，
+不覆盖历史版本；`database_name` 省略时读取 `DLC_QUERY_DATABASE`，备份目录未配置时直接报错。
+该工具只读取表结构，不修改远端表。
 
 ### DLC 任务资源查询
 
