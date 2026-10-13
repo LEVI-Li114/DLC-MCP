@@ -309,6 +309,9 @@ def test_live_sync_table_lifecycle_keeps_properties_without_smart_policy():
         live._describe_dlc_table = lambda table_name: {"Properties": [{"Key": "smart-optimizer.lifecycle.enable", "Value": "true"}]}
 
         assert live.sync_table_lifecycle("dim_customer") == {"smart-optimizer.lifecycle.enable": "true"}
+        from dlc_mcp.mcp import _format_table_lifecycle
+        rendered = _format_table_lifecycle(live.sync_table_lifecycle("dim_customer"), "available")
+        assert "未开启生命周期策略，数据一直保留" in rendered
 
 
 def test_live_sync_table_lifecycle_reads_smart_policy_without_properties():

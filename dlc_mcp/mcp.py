@@ -1706,6 +1706,8 @@ def _format_table_lifecycle(lifecycle, status):
             lines = []
             for key, value in lifecycle.items():
                 lines.append(f"{key}：`{_cell(value)}`")
+            if "smart-optimizer.lifecycle.expiration" not in lifecycle:
+                lines.append("未开启生命周期策略，数据一直保留。")
             return _section("DLC 表生命周期策略", lines or ["DLC DescribeTable 未返回生命周期属性。"])
         return _section("表生命周期策略", [f"DLC 返回配置：`{_cell(lifecycle)}`"])
     messages = {
