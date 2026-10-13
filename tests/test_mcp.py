@@ -1460,6 +1460,30 @@ class McpTest(unittest.TestCase):
         self.assertNotIn("标准表画像", text)
         self.assertNotIn("上下游血缘", text)
 
+    def test_calls_table_profile_tool_with_lifecycle_section(self):
+        live = FakeLive(self.store)
+        live.sync_table_lifecycle = lambda table_name: {
+            "ExpiredField": "dt",
+            "ExpiredFieldFormat": "yyyyMMdd",
+            "Expiration": 30,
+        }
+        response = handle_request(
+            self.store,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "get_table_profile", "arguments": {"table_name": "dim_customer", "sections": ["lifecycle"]}},
+            },
+            live,
+        )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("表生命周期策略", text)
+        self.assertIn("ExpiredField", text)
+        self.assertIn("yyyyMMdd", text)
+        self.assertNotIn("标准表画像", text)
+
     def test_calls_table_partition_profile_tool(self):
         self.store.upsert_table_partition(
             {
@@ -1902,6 +1926,9 @@ class FakeLive:
     def sync_table(self, table_name):
         self.calls.append("sync_table")
         self.store.upsert_table({"name": table_name, "layer": "ads", "domain": "finance"})
+
+    def sync_table_stats(self, table_name):
+        self.calls.append("sync_table_stats")
 
     def sync_task_runs(self, task_name="", task_id="", instance_date=""):
         self.calls.append("sync_task_runs")

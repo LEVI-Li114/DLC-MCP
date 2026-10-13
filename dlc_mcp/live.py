@@ -65,6 +65,18 @@ class LiveWeData:
 
     def sync_table_stats(self, table_name):
         """通过 DLC DescribeTable 拉取单表存储大小与热度值并写入缓存。"""
+        table_detail = self._describe_dlc_table(table_name)
+        storage_bytes = table_detail.get("StorageSize") or table_detail.get("DataSize") or table_detail.get("TotalSize") or 0
+        heat_value = table_detail.get("HeatValue") or table_detail.get("Heat") or 0
+        self.store.upsert_table_stats(table_name, storage_bytes, heat_value)
+
+    def sync_table_lifecycle(self, table_name):
+        detail = self._describe_dlc_table(table_name)
+        smart_policy = detail.get("SmartPolicy") or {}
+        policy = smart_policy.get("Policy") or {}
+        return policy.get("Lifecycle")
+
+    def _describe_dlc_table(self, table_name):
         table = self.store._one("select * from tables where name = ?", (table_name,))
         if not table:
             self.sync_table(table_name)
@@ -85,11 +97,7 @@ class LiveWeData:
             error = response["Response"]["Error"]
             raise RuntimeError(f"DescribeTable failed: {error.get('Code')} {error.get('Message')}")
         table_detail = response.get("Response", {}).get("Table") or response.get("Response", {}).get("Data") or {}
-        if not isinstance(table_detail, dict):
-            table_detail = {}
-        storage_bytes = table_detail.get("StorageSize") or table_detail.get("DataSize") or table_detail.get("TotalSize") or 0
-        heat_value = table_detail.get("HeatValue") or table_detail.get("Heat") or 0
-        self.store.upsert_table_stats(table_name, storage_bytes, heat_value)
+        return table_detail if isinstance(table_detail, dict) else {}
 
     def sync_task_runs(self, task_name="", task_id="", instance_date=""):
         start, end = _day_window(instance_date)

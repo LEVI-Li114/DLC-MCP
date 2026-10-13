@@ -122,8 +122,8 @@ TOOLS = {
     },
     "get_table_profile": {
         "description": (
-            "Return table metadata, columns, lineage, quality status, related tasks, and core-table decision. "
-            "sections narrows the output to the listed sections; omit it to return everything."
+            "Return table metadata, columns, lineage, quality status, related tasks, core-table decision, and the live DLC table lifecycle policy. "
+            "The lifecycle section reads DescribeTable SmartPolicy.Policy.Lifecycle; sections narrows output and can request lifecycle alone."
         ),
         "schema": {
             "type": "object",
@@ -133,7 +133,7 @@ TOOLS = {
                     "type": "array",
                     "items": {
                         "type": "string",
-                        "enum": ["summary", "value", "storage", "expert_label", "columns", "lineage", "tasks", "data_source", "quality", "runs", "gaps"],
+                        "enum": ["summary", "value", "storage", "lifecycle", "expert_label", "columns", "lineage", "tasks", "data_source", "quality", "runs", "gaps"],
                     },
                     "description": (
                         "Optional section filter; omit it to return every section. "
@@ -552,13 +552,39 @@ def _call_tool(store, request, live=None, query_service=None):
             refreshed = _maybe_live_refresh(meta, args, data, lambda item: _has_error(item) or not item.get("columns"), lambda: live.sync_table(args["table_name"]), reason="incomplete" if not data.get("columns") else "")
             if refreshed:
                 data = store.get_table_profile(args["table_name"])
+            sections = args.get("sections") or []
+            if not sections or "lifecycle" in sections:
+                if live:
+                    lifecycle_refreshed = _maybe_live_refresh(
+                        meta,
+                        args,
+                        data,
+                        lambda _: True,
+                        lambda: data.update(lifecycle=live.sync_table_lifecycle(args["table_name"])),
+                        reason="user_requested" if args.get("live") else "lifecycle_profile",
+                    )
+                    data["lifecycle_status"] = "available" if lifecycle_refreshed and data.get("lifecycle") is not None else (
+                        "not_returned" if lifecycle_refreshed else "query_failed"
+                    )
+                else:
+                    data["lifecycle_status"] = "live_unavailable"
+            else:
+                data["lifecycle_status"] = "not_requested"
             if not _has_error(data) and not (data.get("heat") or {}).get("heat_value"):
                 try:
                     live.sync_table_stats(args["table_name"])
+                    lifecycle = data.get("lifecycle")
+                    lifecycle_status = data.get("lifecycle_status")
                     data = store.get_table_profile(args["table_name"])
+                    data["lifecycle"] = lifecycle
+                    data["lifecycle_status"] = lifecycle_status
                     meta["source"] = "cache_after_live_refresh"
                 except (RuntimeError, ValueError, OSError):
                     pass
+        elif not (args.get("sections") or []) or "lifecycle" in (args.get("sections") or []):
+            data["lifecycle_status"] = "live_unavailable"
+        else:
+            data["lifecycle_status"] = "not_requested"
         if not _has_error(data):
             data["sections"] = args.get("sections") or []
     elif name == "get_table_partition_profile":
@@ -1674,6 +1700,23 @@ def _format_table_storage_heat(data):
     return _section("存储与热度", lines)
 
 
+def _format_table_lifecycle(lifecycle, status):
+    if status == "available":
+        if isinstance(lifecycle, dict):
+            return _section(
+                "表生命周期策略",
+                [f"{key}：`{_cell(value)}`" for key, value in lifecycle.items()] or ["DLC 返回了空生命周期配置。"],
+            )
+        return _section("表生命周期策略", [f"DLC 返回配置：`{_cell(lifecycle)}`"])
+    messages = {
+        "not_returned": "DescribeTable 查询成功，但响应中未返回 SmartPolicy.Policy.Lifecycle；无法据此判断生命周期是否启用。",
+        "query_failed": "DescribeTable 生命周期配置查询失败；请查看查询元信息中的失败原因。",
+        "live_unavailable": "当前没有可用的 DLC live connector，未查询生命周期配置。",
+        "not_requested": "未请求生命周期 section。",
+    }
+    return _section("表生命周期策略", [messages.get(status, "生命周期配置状态未知。")])
+
+
 def _human_bytes(size):
     size = int(size or 0)
     if size <= 0:
@@ -1716,6 +1759,7 @@ def _format_table_profile(data):
             ],
         )),
         ("storage", _format_table_storage_heat(data)),
+        ("lifecycle", _format_table_lifecycle(data.get("lifecycle"), data.get("lifecycle_status"))),
         ("expert_label", _format_expert_label(data.get("expert_label"))),
         ("columns", _section("字段信息", [f"字段数：{len(data.get('columns', []))}"]) + "\n\n" + _table(
             ["字段名", "类型", "说明"],
