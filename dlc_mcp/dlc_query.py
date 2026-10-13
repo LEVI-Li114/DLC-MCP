@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from datetime import datetime, timedelta
 
 from .tencentcloud import TencentCloudClient
@@ -138,10 +139,26 @@ class DLCQueryService:
             resource_group_name=resource_group_name,
         )
         if not submitted.get("task_id"):
-            raise RuntimeError("ddl_backup_task_id_missing")
-        result = self.result(submitted["task_id"])
-        if result["status"] != "succeeded":
-            raise RuntimeError(f"ddl_backup_query_{result['status']}:{result.get('message', '')}")
+            raise RuntimeError(f"ddl_backup_task_id_missing request_id={submitted.get('request_id', '')}")
+        timeout_seconds = float(os.environ.get("DLC_DDL_QUERY_TIMEOUT_SECONDS", "120"))
+        poll_interval = float(os.environ.get("DLC_DDL_QUERY_POLL_INTERVAL_SECONDS", "2"))
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            result = self.result(submitted["task_id"])
+            if result["status"] == "succeeded":
+                break
+            diagnostics = (
+                f"task_id={submitted['task_id']} status={result['status']} "
+                f"state={result['state']} progress_percent={result['progress_percent']} "
+                f"OutputMessage={result.get('message', '')!r} "
+                f"RequestId={result.get('request_id', '')} "
+                f"create_request_id={submitted.get('request_id', '')}"
+            )
+            if result["status"] in {"failed", "cancelled"}:
+                raise RuntimeError(f"ddl_backup_query_{result['status']} {diagnostics}")
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"ddl_backup_query_timeout {diagnostics}")
+            time.sleep(poll_interval)
         ddl = _first_non_empty_cell(result.get("rows") or [])
         if not ddl:
             raise RuntimeError("ddl_not_returned")

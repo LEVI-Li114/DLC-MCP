@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -98,22 +99,27 @@ class FakeDLCClient:
 
 
 class FakeDDLClient:
-    def __init__(self, ddl='CREATE TABLE `dw`.`dim_customer` (`id` bigint);'):
+    def __init__(self, ddl='CREATE TABLE `dw`.`dim_customer` (`id` bigint);', states=None):
         self.calls = []
         self.ddl = ddl
+        self.states = list(states or [2])
+        self.result_requests = 0
 
     def call(self, action, payload):
         self.calls.append((action, payload))
         if action == "CreateTask":
-            return {"Response": {"TaskId": "ddl-task", "RequestId": "request-1"}}
+            return {"Response": {"TaskId": "ddl-task", "RequestId": "create-request"}}
+        self.result_requests += 1
+        state = self.states.pop(0) if self.states else 2
         return {
             "Response": {
-                "RequestId": "request-2",
+                "RequestId": f"result-request-{self.result_requests}",
                 "TaskInfo": {
-                    "State": 2,
-                    "Percentage": 100,
+                    "State": state,
+                    "Percentage": 100 if state == 2 else 0,
+                    "OutputMessage": "engine diagnostic" if state == -1 else "",
                     "ResultSchema": [{"Name": "createtab_stmt", "Type": "varchar"}],
-                    "ResultSet": json.dumps([[self.ddl]]),
+                    "ResultSet": json.dumps([[self.ddl]]) if state == 2 else "[]",
                 },
             }
         }
@@ -264,6 +270,27 @@ class DLCQueryServiceTest(unittest.TestCase):
             "filename": "dw.dim_customer.sql",
             "ddl": "CREATE TABLE `dw`.`dim_customer` (`id` bigint);",
         })
+
+    def test_ddl_fetch_waits_for_task_to_finish(self):
+        client = FakeDDLClient(states=[0, 4, 1, 2])
+        with patch("dlc_mcp.dlc_query.time.sleep") as sleep:
+            result = DLCQueryService(client).backup_table_ddl("dim_customer", database_name="dw")
+
+        self.assertEqual(result["status"], "fetched")
+        self.assertEqual(client.result_requests, 4)
+        self.assertEqual(sleep.call_count, 3)
+
+    def test_ddl_fetch_returns_task_diagnostics_on_failure(self):
+        client = FakeDDLClient(states=[-1])
+        with self.assertRaisesRegex(RuntimeError, r"ddl_backup_query_failed.*task_id=ddl-task.*OutputMessage=.*engine diagnostic.*RequestId=result-request-1"):
+            DLCQueryService(client).backup_table_ddl("dim_customer", database_name="dw")
+
+    def test_ddl_fetch_times_out_with_task_diagnostics(self):
+        client = FakeDDLClient(states=[0])
+        with patch.dict(os.environ, {"DLC_DDL_QUERY_TIMEOUT_SECONDS": "0"}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, r"ddl_backup_query_timeout.*task_id=ddl-task.*status=initializing.*RequestId=result-request-1"):
+                DLCQueryService(client).backup_table_ddl("dim_customer", database_name="dw")
+        self.assertEqual(client.result_requests, 1)
 
     def test_backup_uses_configured_database_without_local_directory(self):
         client = FakeDDLClient()
