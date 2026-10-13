@@ -154,7 +154,7 @@ Update this list whenever a new MCP tool is added.
 | `get_asset_governance_daily_report(instance_date, layer, core_level)` | Return a daily governance patrol report. |
 | `submit_dlc_sql_query(sql, database_name, data_engine_name, datasource_connection_name)` | Submit one `SELECT`/`WITH`, `SHOW TABLES [LIKE pattern]`, `SHOW CREATE TABLE`, `DROP TABLE`, or `ALTER TABLE` statement to DLC; joins including `FULL OUTER JOIN` are allowed in queries. |
 | `get_dlc_sql_query_result(task_id, next_token, max_results)` | Poll a DLC SQL task and return one page of status/results. |
-| `backup_dlc_table_ddl(table_name, database_name, data_engine_name, datasource_connection_name, resource_group_name)` | Run `SHOW CREATE TABLE` for one DLC table and save the returned DDL as a timestamped SQL file under `DLC_DDL_BACKUP_DIR/<database>/<table>/`; each call writes a new file and never overwrites previous versions. |
+| `backup_dlc_table_ddl(table_name, database_name, data_engine_name, datasource_connection_name, resource_group_name)` | Run `SHOW CREATE TABLE` for one DLC table and return DDL text with a suggested `.sql` filename for the MCP client to save locally. |
 | `delete_dlc_tables(tables, confirmation)` | Remove DLC DMS table definitions with `DropDMSTable` (`DeleteData=false`), then verify with a live `SHOW TABLES LIKE` check. Requires `confirmation="DELETE TABLE DEFINITIONS"`. |
 | `get_dlc_task_resource_usage(task_instance_id, include_cost, cost_task_id, cost_start_time, cost_end_time, cost_limit)` | Return the DLC engine Core usage curve for one DLC `TaskInstanceId` (no WeData `instance_id` mapping); optionally add CU consumption analysis for an explicit `cost_task_id`. |
 
@@ -173,9 +173,8 @@ Update this list whenever a new MCP tool is added.
 
 ### 表 DDL 备份
 
-`backup_dlc_table_ddl` 对单表执行 `SHOW CREATE TABLE`，把 DLC 引擎返回的原始 DDL 写入
-`DLC_DDL_BACKUP_DIR` 下的 `<database>/<table>/<时间戳>.sql`。每次调用生成独立文件，
-不覆盖历史版本；`database_name` 省略时读取 `DLC_QUERY_DATABASE`，备份目录未配置时直接报错。
+`backup_dlc_table_ddl` 对单表执行 `SHOW CREATE TABLE`，返回完整 DDL 原文和建议的
+`.sql` 文件名，由 MCP 客户端保存到本地；服务端不要求配置本地备份目录，也不负责写入客户端文件系统。
 该工具只读取表结构，不修改远端表。
 
 ### DLC 任务资源查询

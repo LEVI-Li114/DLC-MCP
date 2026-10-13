@@ -121,17 +121,13 @@ class DLCQueryService:
     def __init__(self, client=None):
         self.client = client or TencentCloudClient.dlc_from_env()
 
-    def backup_table_ddl(self, table_name, database_name="", data_engine_name="", datasource_connection_name="", resource_group_name="", backup_dir=None):
+    def backup_table_ddl(self, table_name, database_name="", data_engine_name="", datasource_connection_name="", resource_group_name=""):
         table_name = (table_name or "").strip()
         database_name = database_name or _query_env("DLC_QUERY_DATABASE", "DLC_QUERY_DATABASE_NAME")
         if not table_name:
             raise QueryValidationError("table_name_required")
         if not database_name:
             raise QueryValidationError("database_name_required_or_configure_DLC_QUERY_DATABASE")
-        if not backup_dir:
-            backup_dir = os.environ.get("DLC_DDL_BACKUP_DIR", "")
-        if not backup_dir:
-            raise QueryValidationError("backup_dir_required_or_configure_DLC_DDL_BACKUP_DIR")
         escaped_table = table_name.replace("`", "``")
         escaped_database = database_name.replace("`", "``")
         submitted = self.submit(
@@ -149,15 +145,7 @@ class DLCQueryService:
         ddl = _first_non_empty_cell(result.get("rows") or [])
         if not ddl:
             raise RuntimeError("ddl_not_returned")
-        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
-        safe_database = re.sub(r"[^A-Za-z0-9_.-]+", "_", database_name)
-        safe_table = re.sub(r"[^A-Za-z0-9_.-]+", "_", table_name)
-        directory = os.path.join(backup_dir, safe_database, safe_table)
-        os.makedirs(directory, exist_ok=True)
-        path = os.path.join(directory, f"{timestamp}.sql")
-        with open(path, "x", encoding="utf-8") as backup:
-            backup.write(ddl.rstrip() + "\n")
-        return {"status": "backed_up", "database_name": database_name, "table_name": table_name, "backup_path": path, "ddl": ddl}
+        return {"status": "fetched", "database_name": database_name, "table_name": table_name, "filename": f"{database_name}.{table_name}.sql", "ddl": ddl}
 
     def submit(self, sql, database_name="", data_engine_name="", datasource_connection_name="", resource_group_name=""):
         max_chars = int(os.environ.get("DLC_QUERY_MAX_SQL_CHARS", "100000"))

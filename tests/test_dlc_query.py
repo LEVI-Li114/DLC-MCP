@@ -249,64 +249,42 @@ class DLCQueryServiceTest(unittest.TestCase):
                 DLCQueryService(client).delete_tables([{"table_name": "t"}])
         self.assertEqual(client.calls, [])
 
-    def test_backs_up_show_create_table_ddl_to_timestamped_file(self):
+    def test_returns_show_create_table_ddl_without_server_path(self):
         client = FakeDDLClient()
-        with tempfile.TemporaryDirectory() as directory:
-            result = DLCQueryService(client).backup_table_ddl(
-                "dim_customer", database_name="dw", backup_dir=directory
-            )
+        result = DLCQueryService(client).backup_table_ddl("dim_customer", database_name="dw")
 
-            action, payload = client.calls[0]
-            sql = base64.b64decode(payload["Task"]["SparkSQLTask"]["SQL"]).decode("utf-8")
-            self.assertEqual(action, "CreateTask")
-            self.assertEqual(sql, "SHOW CREATE TABLE `dw`.`dim_customer`")
-            self.assertEqual(result["status"], "backed_up")
-            self.assertEqual(result["database_name"], "dw")
-            self.assertEqual(result["table_name"], "dim_customer")
-            self.assertIn(os.path.join(directory, "dw", "dim_customer"), result["backup_path"])
-            self.assertTrue(result["backup_path"].endswith(".sql"))
-            with open(result["backup_path"], encoding="utf-8") as backup:
-                self.assertEqual(backup.read(), "CREATE TABLE `dw`.`dim_customer` (`id` bigint);\n")
-            self.assertEqual(result["ddl"], "CREATE TABLE `dw`.`dim_customer` (`id` bigint);")
+        action, payload = client.calls[0]
+        sql = base64.b64decode(payload["Task"]["SparkSQLTask"]["SQL"]).decode("utf-8")
+        self.assertEqual(action, "CreateTask")
+        self.assertEqual(sql, "SHOW CREATE TABLE `dw`.`dim_customer`")
+        self.assertEqual(result, {
+            "status": "fetched",
+            "database_name": "dw",
+            "table_name": "dim_customer",
+            "filename": "dw.dim_customer.sql",
+            "ddl": "CREATE TABLE `dw`.`dim_customer` (`id` bigint);",
+        })
 
-    def test_backup_keeps_previous_versions(self):
+    def test_backup_uses_configured_database_without_local_directory(self):
         client = FakeDDLClient()
-        with tempfile.TemporaryDirectory() as directory:
-            service = DLCQueryService(client)
-            first = service.backup_table_ddl("dim_customer", database_name="dw", backup_dir=directory)
-            second = service.backup_table_ddl("dim_customer", database_name="dw", backup_dir=directory)
-
-            self.assertNotEqual(first["backup_path"], second["backup_path"])
-            self.assertTrue(os.path.exists(first["backup_path"]))
-            self.assertTrue(os.path.exists(second["backup_path"]))
-
-    def test_backup_uses_configured_directory_and_database(self):
-        client = FakeDDLClient()
-        with tempfile.TemporaryDirectory() as directory, patch.dict(
-            os.environ, {"DLC_DDL_BACKUP_DIR": directory, "DLC_QUERY_DATABASE": "configured_db"}, clear=False
-        ):
+        with patch.dict(os.environ, {"DLC_QUERY_DATABASE": "configured_db"}, clear=True):
             result = DLCQueryService(client).backup_table_ddl("t")
 
-            sql = base64.b64decode(client.calls[0][1]["Task"]["SparkSQLTask"]["SQL"]).decode("utf-8")
-            self.assertEqual(sql, "SHOW CREATE TABLE `configured_db`.`t`")
-            self.assertIn(os.path.join(directory, "configured_db", "t"), result["backup_path"])
+        sql = base64.b64decode(client.calls[0][1]["Task"]["SparkSQLTask"]["SQL"]).decode("utf-8")
+        self.assertEqual(sql, "SHOW CREATE TABLE `configured_db`.`t`")
+        self.assertEqual(result["filename"], "configured_db.t.sql")
 
-    def test_backup_requires_database_and_directory(self):
+    def test_backup_requires_database(self):
         client = FakeDDLClient()
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(QueryValidationError, "database_name_required_or_configure_DLC_QUERY_DATABASE"):
                 DLCQueryService(client).backup_table_ddl("t")
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(QueryValidationError, "backup_dir_required_or_configure_DLC_DDL_BACKUP_DIR"):
-                DLCQueryService(client).backup_table_ddl("t", database_name="dw")
         self.assertEqual(client.calls, [])
 
     def test_backup_reports_missing_ddl(self):
         client = FakeDDLClient(ddl="")
-        with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(RuntimeError, "ddl_not_returned"):
-                DLCQueryService(client).backup_table_ddl("dim_customer", database_name="dw", backup_dir=directory)
-            self.assertEqual(os.listdir(directory), [])
+        with self.assertRaisesRegex(RuntimeError, "ddl_not_returned"):
+            DLCQueryService(client).backup_table_ddl("dim_customer", database_name="dw")
 
     def test_reads_official_schema_and_array_result_set(self):
         class ArrayResultClient:

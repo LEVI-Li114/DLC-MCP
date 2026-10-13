@@ -171,7 +171,7 @@ class BackupDlcTableDdlTest(unittest.TestCase):
         self.assertEqual(tool["annotations"], {"readOnlyHint": False, "destructiveHint": False})
         self.assertEqual(tool["inputSchema"]["required"], ["table_name"])
         self.assertNotIn("source", tool["inputSchema"]["properties"])
-        self.assertIn("DLC_DDL_BACKUP_DIR", tool["description"])
+        self.assertIn("save it locally", tool["description"])
 
     def test_delegates_to_query_service(self):
         class FakeQueryService:
@@ -181,10 +181,10 @@ class BackupDlcTableDdlTest(unittest.TestCase):
             def backup_table_ddl(self, table_name, **options):
                 self.calls.append((table_name, options))
                 return {
-                    "status": "backed_up",
+                    "status": "fetched",
                     "database_name": options.get("database_name") or "dw",
                     "table_name": table_name,
-                    "backup_path": "/tmp/ddl/dw/t/20260101T000000000000.sql",
+                    "filename": "dw.t.sql",
                     "ddl": "CREATE TABLE t (id bigint);",
                 }
 
@@ -205,8 +205,8 @@ class BackupDlcTableDdlTest(unittest.TestCase):
             [("t", {"database_name": "dw", "data_engine_name": "", "datasource_connection_name": "", "resource_group_name": ""})],
         )
         text = response["result"]["content"][0]["text"]
-        self.assertIn("20260101T000000000000.sql", text)
-        self.assertIn("dw.t", text)
+        self.assertIn("dw.t.sql", text)
+        self.assertIn("CREATE TABLE t (id bigint);", text)
         self.assertIn("dlc_live", text)
 
     def test_reports_validation_error_without_service(self):

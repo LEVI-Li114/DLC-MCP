@@ -49,7 +49,7 @@ TOOLS = {
         },
     },
     "backup_dlc_table_ddl": {
-        "description": "Run SHOW CREATE TABLE for one DLC table and save each returned DDL as a timestamped SQL file under DLC_DDL_BACKUP_DIR/<database>/<table>/.",
+        "description": "Run SHOW CREATE TABLE for one DLC table and return the DDL text with a suggested .sql filename, so the MCP client can save it locally.",
         "schema": {
             "type": "object",
             "properties": {
@@ -888,10 +888,11 @@ def _format_markdown(tool_name, data):
             error_rows,
         )
     if tool_name == "backup_dlc_table_ddl":
-        return _section("DLC 表 DDL 已备份", [
+        return _section("DLC 表 DDL 已获取", [
             f"表：`{_cell(data.get('database_name'))}.{_cell(data.get('table_name'))}`",
-            f"备份文件：`{_cell(data.get('backup_path'))}`",
-            "每次调用独立保存，不覆盖已有版本。",
+            f"建议文件名：`{_cell(data.get('filename'))}`",
+            "DDL 内容：",
+            f"```sql\n{data.get('ddl', '')}\n```",
         ])
     if tool_name == "submit_dlc_sql_query":
         return _section(
