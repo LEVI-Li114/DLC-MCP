@@ -72,9 +72,22 @@ class LiveWeData:
 
     def sync_table_lifecycle(self, table_name):
         detail = self._describe_dlc_table(table_name)
+        lifecycle = {}
+        properties = detail.get("Properties") or []
+        if isinstance(properties, list):
+            lifecycle.update({
+                item.get("Key"): item.get("Value")
+                for item in properties
+                if isinstance(item, dict) and item.get("Key") and "lifecycle" in item.get("Key", "").lower()
+            })
         smart_policy = detail.get("SmartPolicy") or {}
         policy = smart_policy.get("Policy") or {}
-        return policy.get("Lifecycle")
+        smart_lifecycle = policy.get("Lifecycle")
+        if isinstance(smart_lifecycle, dict):
+            lifecycle.update(smart_lifecycle)
+        elif smart_lifecycle is not None:
+            lifecycle["Lifecycle"] = smart_lifecycle
+        return lifecycle or None
 
     def _describe_dlc_table(self, table_name):
         table = self.store._one("select * from tables where name = ?", (table_name,))

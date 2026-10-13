@@ -264,6 +264,65 @@ class DeleteDlcTablesTest(unittest.TestCase):
         self.assertIn("InternalError", result["results"][3]["error"])
 
 
+def test_live_sync_table_lifecycle_reads_dlc_describe_table_properties():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    store.upsert_table({"name": "dim_customer", "database": "dw"})
+
+    class LifecycleClient:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, action, payload):
+            self.calls.append((action, payload))
+            return {"Response": {"Table": {
+                "Properties": [
+                    {"Key": "smart-optimizer.lifecycle.enable", "Value": "true"},
+                    {"Key": "smart-optimizer.lifecycle.expiration", "Value": "30"},
+                    {"Key": "smart-optimizer.lifecycle.expired-field", "Value": "dt"},
+                    {"Key": "smart-optimizer.lifecycle.expired-field-format", "Value": "yyyyMMdd"},
+                ]
+            }}}
+
+    client = LifecycleClient()
+    with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False), patch("dlc_mcp.live._dlc_client", return_value=client):
+        lifecycle = LiveWeData(store, client=client).sync_table_lifecycle("dim_customer")
+
+    assert lifecycle == {
+        "smart-optimizer.lifecycle.enable": "true",
+        "smart-optimizer.lifecycle.expiration": "30",
+        "smart-optimizer.lifecycle.expired-field": "dt",
+        "smart-optimizer.lifecycle.expired-field-format": "yyyyMMdd",
+    }
+    assert client.calls[0][0] == "DescribeTable"
+
+
+
+def test_live_sync_table_lifecycle_keeps_properties_without_smart_policy():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    store.upsert_table({"name": "dim_customer", "database": "dw"})
+    with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+        live = LiveWeData(store, client=FakeWeDataClient())
+        live._describe_dlc_table = lambda table_name: {"Properties": [{"Key": "smart-optimizer.lifecycle.enable", "Value": "true"}]}
+
+        assert live.sync_table_lifecycle("dim_customer") == {"smart-optimizer.lifecycle.enable": "true"}
+
+
+def test_live_sync_table_lifecycle_reads_smart_policy_without_properties():
+    conn = sqlite3.connect(":memory:")
+    store = AssetStore(conn)
+    store.init_schema()
+    store.upsert_table({"name": "dim_customer", "database": "dw"})
+    with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+        live = LiveWeData(store, client=FakeWeDataClient())
+        live._describe_dlc_table = lambda table_name: {"SmartPolicy": {"Policy": {"Lifecycle": {"Expiration": 30, "ExpiredField": "dt"}}}}
+
+        assert live.sync_table_lifecycle("dim_customer") == {"Expiration": 30, "ExpiredField": "dt"}
+
+
 def test_live_sync_table_partitions_imports_dlc_partition_facts():
     conn = sqlite3.connect(":memory:")
     store = AssetStore(conn)
@@ -1462,6 +1521,11 @@ class McpTest(unittest.TestCase):
 
     def test_calls_table_profile_tool_with_lifecycle_section(self):
         live = FakeLive(self.store)
+        self.store.upsert_table({
+            "name": "dim_customer",
+            "database": "dw",
+            "raw": {"TableName": "dim_customer", "LifeCycleTime": 0},
+        })
         live.sync_table_lifecycle = lambda table_name: {
             "ExpiredField": "dt",
             "ExpiredFieldFormat": "yyyyMMdd",

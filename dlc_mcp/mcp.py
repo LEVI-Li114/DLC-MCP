@@ -123,7 +123,7 @@ TOOLS = {
     "get_table_profile": {
         "description": (
             "Return table metadata, columns, lineage, quality status, related tasks, core-table decision, and the live DLC table lifecycle policy. "
-            "The lifecycle section reads DescribeTable SmartPolicy.Policy.Lifecycle; sections narrows output and can request lifecycle alone."
+            "The lifecycle section reads the DLC DescribeTable response, including lifecycle-related Table.Properties entries and SmartPolicy.Policy.Lifecycle. It displays configured policy only and does not infer partition expiration facts. The sections argument narrows output and can request lifecycle alone."
         ),
         "schema": {
             "type": "object",
@@ -1703,13 +1703,13 @@ def _format_table_storage_heat(data):
 def _format_table_lifecycle(lifecycle, status):
     if status == "available":
         if isinstance(lifecycle, dict):
-            return _section(
-                "表生命周期策略",
-                [f"{key}：`{_cell(value)}`" for key, value in lifecycle.items()] or ["DLC 返回了空生命周期配置。"],
-            )
+            lines = []
+            for key, value in lifecycle.items():
+                lines.append(f"{key}：`{_cell(value)}`")
+            return _section("DLC 表生命周期策略", lines or ["DLC DescribeTable 未返回生命周期属性。"])
         return _section("表生命周期策略", [f"DLC 返回配置：`{_cell(lifecycle)}`"])
     messages = {
-        "not_returned": "DescribeTable 查询成功，但响应中未返回 SmartPolicy.Policy.Lifecycle；无法据此判断生命周期是否启用。",
+        "not_returned": "DescribeTable 查询成功，但响应中未返回生命周期相关的 Table.Properties 或 SmartPolicy.Policy.Lifecycle 配置；无法据此判断生命周期是否启用。",
         "query_failed": "DescribeTable 生命周期配置查询失败；请查看查询元信息中的失败原因。",
         "live_unavailable": "当前没有可用的 DLC live connector，未查询生命周期配置。",
         "not_requested": "未请求生命周期 section。",
