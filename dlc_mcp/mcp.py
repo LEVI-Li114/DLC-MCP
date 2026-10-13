@@ -22,7 +22,7 @@ def _with_source_schema(schema):
 
 TOOLS = {
     "submit_dlc_sql_query": {
-        "description": "Submit one read-only SELECT/WITH or SHOW TABLES [LIKE pattern] statement to the Tencent Cloud DLC engine. FULL OUTER JOIN is supported.",
+        "description": "Submit one SELECT/WITH, SHOW TABLES [LIKE pattern], DROP TABLE, or ALTER TABLE statement to the Tencent Cloud DLC engine. DROP TABLE and ALTER TABLE are destructive; FULL OUTER JOIN is supported in queries.",
         "schema": {
             "type": "object",
             "properties": {
@@ -34,7 +34,7 @@ TOOLS = {
             },
             "required": ["sql"],
         },
-        "annotations": {"readOnlyHint": False, "destructiveHint": False},
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
     },
     "get_dlc_sql_query_result": {
         "description": "Get status and one result page for a previously submitted DLC SQL task.",

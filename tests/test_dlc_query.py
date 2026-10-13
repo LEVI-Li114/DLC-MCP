@@ -110,6 +110,16 @@ class ReadOnlySQLValidationTest(unittest.TestCase):
         sql = "SHOW TABLES LIKE 'tmp_w547_w1'"
         self.assertEqual(validate_read_only_sql(sql), sql)
 
+    def test_allows_drop_table_and_alter_table_statements(self):
+        for sql in (
+            "DROP TABLE tmp_w547_w7",
+            "DROP TABLE IF EXISTS `byai_bigdata`.`tmp_w547_w7`",
+            "ALTER TABLE tmp_w547_w7 RENAME TO tmp_w547_w8",
+            "ALTER TABLE tmp_w547_w7 SET TBLPROPERTIES ('k'='v')",
+        ):
+            with self.subTest(sql=sql):
+                self.assertEqual(validate_read_only_sql(sql), sql)
+
     def test_rejects_other_show_statements(self):
         for sql in (
             "SHOW DATABASES",
@@ -126,7 +136,7 @@ class ReadOnlySQLValidationTest(unittest.TestCase):
             "INSERT INTO x SELECT 1",
             "WITH x AS (SELECT 1) DELETE FROM y",
             "SELECT 1; SELECT 2",
-            "DROP TABLE x",
+            "DROP TABLE x DELETE DATA",
         )
         for sql in invalid:
             with self.subTest(sql=sql), self.assertRaises(QueryValidationError):

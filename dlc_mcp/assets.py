@@ -221,7 +221,7 @@ TENCENT_CLOUD_API_CATALOG = [
         "doc_category": "任务相关接口",
         "source_url": "https://cloud.tencent.com/document/product/1342/53775",
         "description": "提交 Presto SQLTask 或 SparkSQLTask。",
-        "usage": "由 submit_dlc_sql_query 提交经过只读校验的单条查询 SQL。",
+        "usage": "由 submit_dlc_sql_query 提交经过 SQL 语句类型和单语句校验的 SQL。",
         "used_by": "dlc_mcp.dlc_query.DLCQueryService.submit",
     },
     {

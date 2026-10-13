@@ -152,7 +152,7 @@ Update this list whenever a new MCP tool is added.
 | `get_asset_coverage()` | Return asset coverage by layer for fields, lineage, quality rules, tasks, data sources, and runs. |
 | `get_asset_governance_issue_inventory(layer, core_level, issue_type, limit)` | Return deterministic governance issues with evidence, suspected root cause, severity, and recommended next check. |
 | `get_asset_governance_daily_report(instance_date, layer, core_level)` | Return a daily governance patrol report. |
-| `submit_dlc_sql_query(sql, database_name, data_engine_name, datasource_connection_name)` | Submit one read-only `SELECT`/`WITH` statement to DLC; joins including `FULL OUTER JOIN` are allowed. |
+| `submit_dlc_sql_query(sql, database_name, data_engine_name, datasource_connection_name)` | Submit one `SELECT`/`WITH`, `SHOW TABLES [LIKE pattern]`, `DROP TABLE`, or `ALTER TABLE` statement to DLC; joins including `FULL OUTER JOIN` are allowed in queries. |
 | `get_dlc_sql_query_result(task_id, next_token, max_results)` | Poll a DLC SQL task and return one page of status/results. |
 | `get_dlc_task_resource_usage(task_instance_id, include_cost, cost_task_id, cost_start_time, cost_end_time, cost_limit)` | Return the DLC engine Core usage curve for one DLC `TaskInstanceId` (no WeData `instance_id` mapping); optionally add CU consumption analysis for an explicit `cost_task_id`. |
 
@@ -163,8 +163,9 @@ Update this list whenever a new MCP tool is added.
 `submit_dlc_sql_query`，再使用返回的 `task_id` 调用
 `get_dlc_sql_query_result`。结果超过一页时，把返回的 `next_token` 传入下一次调用。
 
-该入口默认使用 Spark SQL，只接受一条只读 `SELECT` 或 `WITH` 语句；DDL、DML、
-`SET`、`USE`、多语句会在提交到 DLC 前被拒绝。可通过
+该入口默认使用 Spark SQL，允许一条 `SELECT`、`WITH`、`SHOW TABLES [LIKE pattern]`、`DROP TABLE` 或
+`ALTER TABLE` 语句；多语句会在提交到 DLC 前被拒绝。`DROP TABLE` 和 `ALTER TABLE`
+可能改变或删除表结构/数据，请谨慎使用。可通过
 `DLC_QUERY_TASK_TYPE=presto` 切换到 Presto SQLTask。
 
 ### DLC 任务资源查询

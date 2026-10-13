@@ -19,7 +19,7 @@ STATE_NAMES = {
 }
 
 FORBIDDEN_KEYWORDS = {
-    "ALTER", "CACHE", "CALL", "CREATE", "DELETE", "DROP", "GRANT",
+    "CACHE", "CALL", "CREATE", "DELETE", "GRANT",
     "INSERT", "LOAD", "MERGE", "MSCK", "REFRESH", "REPLACE", "REVOKE",
     "SET", "TRUNCATE", "UNCACHE", "UPDATE", "USE",
 }
@@ -44,8 +44,14 @@ def validate_read_only_sql(sql, max_chars=100_000):
 
     keywords = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", masked.upper())
     is_show_tables = len(keywords) >= 2 and keywords[:2] == ["SHOW", "TABLES"]
-    if not keywords or (keywords[0] not in {"SELECT", "WITH"} and not is_show_tables):
-        raise QueryValidationError("only_select_with_or_show_tables_allowed")
+    is_drop_table = len(keywords) >= 2 and keywords[:2] == ["DROP", "TABLE"]
+    is_alter_table = len(keywords) >= 2 and keywords[:2] == ["ALTER", "TABLE"]
+    if is_drop_table and any(keyword in {"DELETE", "PURGE"} for keyword in keywords[2:]):
+        raise QueryValidationError("drop_table_delete_data_not_allowed")
+    if is_alter_table:
+        keywords = [keyword for keyword in keywords if keyword != "SET"]
+    if not keywords or (keywords[0] not in {"SELECT", "WITH"} and not (is_show_tables or is_drop_table or is_alter_table)):
+        raise QueryValidationError("only_select_with_show_drop_or_alter_table_allowed")
     if is_show_tables:
         show_keywords = keywords[2:]
         if any(keyword not in {"LIKE"} for keyword in show_keywords) or len(show_keywords) > 1:

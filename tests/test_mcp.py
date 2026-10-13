@@ -770,7 +770,7 @@ class McpTest(unittest.TestCase):
 
         self.assertEqual(
             tools["submit_dlc_sql_query"]["annotations"],
-            {"readOnlyHint": False, "destructiveHint": False},
+            {"readOnlyHint": False, "destructiveHint": True},
         )
         self.assertEqual(tools["get_dlc_sql_query_result"]["annotations"], {"readOnlyHint": True})
 
