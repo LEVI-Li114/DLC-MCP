@@ -112,6 +112,21 @@ class LiveWeData:
         table_detail = response.get("Response", {}).get("Table") or response.get("Response", {}).get("Data") or {}
         return table_detail if isinstance(table_detail, dict) else {}
 
+    def get_task_instance_log(self, instance_key, life_round_num=None, log_level="", next_cursor=""):
+        payload = {"ProjectId": self.project_id, "InstanceKey": instance_key}
+        if life_round_num is not None:
+            payload["LifeRoundNum"] = life_round_num
+        if log_level:
+            payload["LogLevel"] = log_level
+        if next_cursor:
+            payload["NextCursor"] = next_cursor
+        response = self.client.call("GetTaskInstanceLog", payload)
+        if "Error" in response.get("Response", {}):
+            error = response["Response"]["Error"]
+            raise RuntimeError(f"GetTaskInstanceLog failed: {error.get('Code')} {error.get('Message')}")
+        data = response.get("Response", {}).get("Data", {}) or {}
+        return {"instance_key": instance_key, **data}
+
     def sync_task_runs(self, task_name="", task_id="", instance_date=""):
         start, end = _day_window(instance_date)
         payload = {

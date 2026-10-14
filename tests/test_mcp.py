@@ -732,6 +732,44 @@ def test_task_runs_live_failure_returns_unknown_not_empty_runs():
     assert "InternalError" in text
 
 
+def test_get_task_instance_log_calls_wedata_and_returns_raw_log_fields():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    client = FakeWeDataClient()
+    client.call = lambda action, payload: (
+        client.calls.append((action, dict(payload)))
+        or {"Response": {"Data": {"LogInfo": "raw log", "CodeContent": "raw code", "NextCursor": "cursor-2"}}}
+    )
+    with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+        live = LiveWeData(store, client=client)
+        response = handle_request(
+            store,
+            {"jsonrpc": "2.0", "id": 149, "method": "tools/call", "params": {"name": "get_task_instance_log", "arguments": {"instance_key": "instance-1", "life_round_num": 2, "log_level": "Error", "next_cursor": "cursor-1"}}},
+            live=live,
+        )
+
+    assert client.calls == [("GetTaskInstanceLog", {"ProjectId": "project", "InstanceKey": "instance-1", "LifeRoundNum": 2, "LogLevel": "Error", "NextCursor": "cursor-1"})]
+    text = response["result"]["content"][0]["text"]
+    assert "raw log" in text
+    assert "raw code" in text
+    assert "cursor-2" in text
+    assert "数据来源：live" in text
+
+
+def test_get_task_instance_log_tool_is_read_only_and_requires_instance_key():
+    store = AssetStore(sqlite3.connect(":memory:"))
+    store.init_schema()
+    response = handle_request(store, {"jsonrpc": "2.0", "id": 148, "method": "tools/list"})
+    tool = {item["name"]: item for item in response["result"]["tools"]}["get_task_instance_log"]
+
+    assert tool["annotations"] == {"readOnlyHint": True}
+    assert tool["inputSchema"]["required"] == ["instance_key"]
+    assert tool["inputSchema"]["properties"]["log_level"]["enum"] == ["All", "Info", "Debug", "Warn", "Error"]
+
+    missing = handle_request(store, {"jsonrpc": "2.0", "id": 150, "method": "tools/call", "params": {"name": "get_task_instance_log", "arguments": {}}})
+    assert "instance_key_required" in missing["result"]["content"][0]["text"]
+
+
 class McpTest(unittest.TestCase):
     def setUp(self):
         conn = sqlite3.connect(":memory:")

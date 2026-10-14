@@ -178,6 +178,19 @@ TOOLS = {
             },
         },
     },
+    "get_task_instance_log": {
+        "description": "Retrieve one WeData task instance log page using GetTaskInstanceLog; pass the instance_id/InstanceKey returned by get_task_runs. Log fields and cursor are returned as received from the API.", 
+        "schema": {
+            "type": "object",
+            "properties": {
+                "instance_key": {"type": "string"},
+                "life_round_num": {"type": "integer"},
+                "log_level": {"type": "string", "enum": ["All", "Info", "Debug", "Warn", "Error"]},
+                "next_cursor": {"type": "string"},
+            },
+            "required": ["instance_key"],
+        },
+    },
     "get_task_code": {
         "description": (
             "Return SQL/code content for a WeData task from cache or live GetTaskCode refresh, plus output tables parsed "
@@ -658,6 +671,24 @@ def _call_tool(store, request, live=None, query_service=None):
         else:
             meta["source"] = Source.NOT_AVAILABLE
             data = _error_data("live_source_unavailable", requested_source=source)
+    elif name == "get_task_instance_log":
+        meta["source"] = Source.LIVE
+        if not args.get("instance_key"):
+            data = _error_data("instance_key_required")
+        elif live:
+            meta["live_attempted"] = True
+            meta["live_reason"] = "user_requested"
+            try:
+                data = live.get_task_instance_log(
+                    args["instance_key"],
+                    life_round_num=args.get("life_round_num"),
+                    log_level=args.get("log_level", ""),
+                    next_cursor=args.get("next_cursor", ""),
+                )
+            except (RuntimeError, ValueError, OSError) as exc:
+                data = _error_data(str(exc), instance_key=args["instance_key"])
+        else:
+            data = _error_data("live_source_unavailable", instance_key=args["instance_key"])
     elif name == "get_task_code":
         if not args.get("task_id") and not args.get("task_name"):
             data = _error_data("missing_task_identity")
@@ -1114,6 +1145,13 @@ def _format_markdown(tool_name, data):
                 f"输出表：{', '.join(f'`{name}`' for name in output_tables) if output_tables else '（无，仅支持 SQL 类任务解析）'}",
             ],
         ) + f"\n\n```{language}\n{code_text}\n```"
+    if tool_name == "get_task_instance_log":
+        if data.get("error"):
+            return _section("任务实例日志查询失败", [f"实例：`{_cell(data.get('instance_key'))}`", f"错误：{_cell(data.get('error'))}"])
+        return _section(
+            f"任务实例日志：{data.get('instance_key')}",
+            [f"执行轮次：{_cell(data.get('LifeRoundNum', '最新'))}", f"后续游标：`{_cell(data.get('NextCursor'))}`"],
+        ) + f"\n\n**执行代码**\n\n```sql\n{data.get('CodeContent') or '（接口未返回代码）'}\n```\n\n**运行日志**\n\n```text\n{data.get('LogInfo') or '（接口未返回日志）'}\n```"
     if tool_name == "get_task_runs":
         rows = data.get("runs", [])
         title = f"任务运行实例：{data.get('task_name') or data.get('task_id')}"

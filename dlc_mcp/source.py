@@ -11,6 +11,7 @@ class Source:
 DYNAMIC_TOOLS = {
     "get_table_partition_profile",
     "get_task_runs",
+    "get_task_instance_log",
     "get_task_code",
     "get_table_profile",
 }
