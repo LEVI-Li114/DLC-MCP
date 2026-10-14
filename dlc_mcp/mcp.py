@@ -165,7 +165,18 @@ TOOLS = {
         "description": "Return table partition profile, row counts, recent partitions, and partition health based on synced partition facts.",
         "schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "partition_date": {"type": "string"}}, "required": ["table_name"]},
     },
+    "claim_wedata_alerts": {
+        "description": "Claim pending WeData webhook alerts for Agent analysis; claimed alerts move to processing.",
+        "schema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100}}},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False},
+    },
+    "complete_wedata_alert": {
+        "description": "Store Agent analysis and mark a claimed WeData alert completed or failed. Feishu delivery is handled by the Agent, not this tool.",
+        "schema": {"type": "object", "properties": {"alert_id": {"type": "string"}, "status": {"type": "string", "enum": ["completed", "failed"]}, "analysis": {"type": "string"}}, "required": ["alert_id", "status", "analysis"]},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False},
+    },
     "get_task_runs": {
+
         "description": "Return task instances by task id or exact task name, with optional instance date filter.",
         "schema": {
             "type": "object",
@@ -479,7 +490,17 @@ def _call_tool(store, request, live=None, query_service=None):
     if name not in TOOLS:
         return _error(request, -32602, "unknown_tool")
 
-    if name == "delete_dlc_tables":
+    if name == "claim_wedata_alerts":
+        data = store.claim_wedata_alerts(args.get("limit", 10))
+    elif name == "complete_wedata_alert":
+        missing = [field for field in ("alert_id", "status", "analysis") if field not in args]
+        if missing:
+            return _error(request, -32602, "missing_required_arguments: " + ", ".join(missing))
+        if args.get("status") not in {"completed", "failed"}:
+            data = _error_data("invalid_alert_status")
+        else:
+            data = store.complete_wedata_alert(args["alert_id"], args["status"], args["analysis"])
+    elif name == "delete_dlc_tables":
         meta["source"] = "dlc_live"
         confirmation = args.get("confirmation", "")
         tables = args.get("tables") or []

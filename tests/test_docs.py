@@ -17,6 +17,21 @@ class DocsTest(unittest.TestCase):
 
         self.assertIn("docs/architecture.md", readme)
 
+    def test_readme_documents_direct_wedata_alert_agent_flow_and_fallback(self):
+        with open("README.md", "r", encoding="utf-8") as f:
+            readme = f.read()
+
+        for phrase in (
+            "WeData 将告警直接推送给 Agent",
+            "get_task_runs",
+            "get_task_instance_log",
+            "飞书凭证由 Agent 管理",
+            "备用 Webhook 队列",
+            "claim_wedata_alerts",
+            "complete_wedata_alert",
+        ):
+            self.assertIn(phrase, readme)
+
     def test_architecture_doc_defines_project_layers(self):
         with open("docs/architecture.md", "r", encoding="utf-8") as f:
             architecture = f.read()

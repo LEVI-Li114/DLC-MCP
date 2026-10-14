@@ -251,6 +251,16 @@ class AssetStore:
     def init_schema(self):
         self.conn.executescript(
             """
+            create table if not exists wedata_alerts (
+                alert_id text primary key,
+                payload_json text not null,
+                task_name text not null default '',
+                alert_recipient text not null default '',
+                status text not null default 'pending',
+                analysis text not null default '',
+                created_at text not null,
+                updated_at text not null
+            );
             create table if not exists tables (
                 name text primary key,
                 source_guid text not null default '',
@@ -2815,7 +2825,38 @@ class AssetStore:
             "review_suggestion": value.get("review_suggestion", ""),
         }
 
+    def enqueue_wedata_alert(self, alert_id, payload, task_name="", alert_recipient=""):
+        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        self.conn.execute(
+            "insert into wedata_alerts (alert_id, payload_json, task_name, alert_recipient, status, created_at, updated_at) values (?, ?, ?, ?, 'pending', ?, ?)",
+            (alert_id, json.dumps(payload, ensure_ascii=False), task_name, alert_recipient, now, now),
+        )
+        self.conn.commit()
+
+    def claim_wedata_alerts(self, limit=10):
+        limit = max(1, min(int(limit), 100))
+        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        self.conn.execute("begin immediate")
+        rows = self._all("select * from wedata_alerts where status='pending' order by created_at limit ?", (limit,))
+        ids = [row["alert_id"] for row in rows]
+        if ids:
+            self.conn.executemany("update wedata_alerts set status='processing', updated_at=? where alert_id=? and status='pending'", [(now, alert_id) for alert_id in ids])
+            placeholders = ",".join("?" for _ in ids)
+            rows = self._all(f"select * from wedata_alerts where alert_id in ({placeholders}) order by created_at", ids)
+        self.conn.commit()
+        return {"alerts": [{**dict(row), "payload": json.loads(row["payload_json"])} for row in rows]}
+
+    def complete_wedata_alert(self, alert_id, status, analysis):
+        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        cursor = self.conn.execute(
+            "update wedata_alerts set status=?, analysis=?, updated_at=? where alert_id=?",
+            (status, analysis, now, alert_id),
+        )
+        self.conn.commit()
+        return {"alert_id": alert_id, "updated": cursor.rowcount > 0, "status": status}
+
     def _one(self, sql, args=()):
+
         return self.conn.execute(sql, args).fetchone()
 
     def _all(self, sql, args=()):

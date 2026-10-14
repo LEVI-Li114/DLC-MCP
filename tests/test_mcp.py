@@ -164,7 +164,24 @@ class BackupDlcTableDdlTest(unittest.TestCase):
         self.store = AssetStore(sqlite3.connect(":memory:"))
         self.store.init_schema()
 
+    def test_wedata_alert_queue_claim_and_complete(self):
+        self.store.enqueue_wedata_alert("alert-1", {"Content": "failure"}, "dwd_demo", "on-call")
+        claimed = self.store.claim_wedata_alerts()
+        self.assertEqual(claimed["alerts"][0]["task_name"], "dwd_demo")
+        self.assertEqual(claimed["alerts"][0]["status"], "processing")
+        self.assertEqual(claimed["alerts"][0]["payload"], {"Content": "failure"})
+        response = handle_request(self.store, {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "complete_wedata_alert", "arguments": {"alert_id": "alert-1", "status": "completed", "analysis": "done"}}})
+        self.assertIn("completed", response["result"]["content"][0]["text"])
+        completed = self.store._one("select status, analysis from wedata_alerts where alert_id=?", ("alert-1",))
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["analysis"], "done")
+        self.assertEqual(self.store.claim_wedata_alerts()["alerts"], [])
+        invalid = handle_request(self.store, {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "complete_wedata_alert", "arguments": {"alert_id": "alert-1"}}})
+        self.assertEqual(invalid["error"]["code"], -32602)
+        self.assertIn("missing_required_arguments", invalid["error"]["message"])
+
     def test_tools_list_publishes_backup_tool_without_source_field(self):
+
         response = handle_request(self.store, {"jsonrpc": "2.0", "id": 160, "method": "tools/list"})
         tool = {item["name"]: item for item in response["result"]["tools"]}["backup_dlc_table_ddl"]
 

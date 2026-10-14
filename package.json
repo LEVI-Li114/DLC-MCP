@@ -1,9 +1,10 @@
 {
   "name": "@levisli/dlc-mcp",
-  "version": "0.1.9",
+  "version": "0.3.0",
   "description": "WeData-first data asset MCP server launcher.",
   "bin": {
-    "dlc-mcp": "bin/dlc-mcp.js"
+    "dlc-mcp": "bin/dlc-mcp.js",
+    "dlc-mcp-wedata-webhook": "bin/dlc-mcp-wedata-webhook.js"
   },
   "files": [
     "bin",
