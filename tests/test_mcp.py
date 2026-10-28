@@ -18,6 +18,8 @@ class FakeWeDataClient:
         self.calls.append((action, dict(payload)))
         if action == "CreateTask":
             return {"Response": {"Data": {"TaskId": "created-task"}}}
+        if action == "ListWorkflows":
+            return {"Response": {"Data": {"Items": [{"WorkflowId": "wf-1", "WorkflowName": "test-flow", "WorkflowType": "manual", "OwnerUin": "u1"}], "TotalCount": 1, "TotalPageNumber": 1}}}
         if action == "ListProjects":
             return {"Response": {"Data": {"Items": [{"ProjectId": "project", "ProjectName": "prod", "Owner": "data-platform"}], "TotalPageNumber": 1}}}
         if action == "GetProject":
@@ -1544,6 +1546,22 @@ class McpTest(unittest.TestCase):
         self.assertIn("data-platform", get_response["result"]["content"][0]["text"])
         self.assertIn("项目成员", members_response["result"]["content"][0]["text"])
         self.assertIn("zhangsan", members_response["result"]["content"][0]["text"])
+
+    def test_list_workflows_queries_live_api(self):
+        client = FakeWeDataClient()
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            live = LiveWeData(self.store, client=client)
+            response = handle_request(
+                self.store,
+                {"jsonrpc": "2.0", "id": 48, "method": "tools/call", "params": {"name": "list_workflows", "arguments": {"keyword": "test", "workflow_type": "manual"}}},
+                live=live,
+            )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("工作流列表", text)
+        self.assertIn("wf-1", text)
+        self.assertIn("test-flow", text)
+        self.assertIn(("ListWorkflows", {"ProjectId": "project", "Keyword": "test", "WorkflowType": "manual", "PageNumber": 1, "PageSize": 20}), client.calls)
 
     def test_list_projects_query_mode_falls_back_live_on_empty_cache(self):
         client = FakeWeDataClient()

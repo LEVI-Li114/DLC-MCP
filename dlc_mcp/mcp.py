@@ -276,6 +276,17 @@ TOOLS = {
         "description": "List WeData projects cached from Tencent Cloud ListProjects.",
         "schema": {"type": "object", "properties": {"query": {"type": "string"}, "live": {"type": "boolean"}}},
     },
+    "list_workflows": {
+        "description": "List WeData workflows for a project; defaults to WEDATA_PROJECT_ID.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "keyword": {"type": "string"},
+                "workflow_type": {"type": "string", "enum": ["cycle", "manual"]},
+            },
+        },
+    },
     "get_project": {
         "description": "Return one WeData project by project_id, defaulting to WEDATA_PROJECT_ID.",
         "schema": {"type": "object", "properties": {"project_id": {"type": "string"}, "live": {"type": "boolean"}}},
@@ -816,6 +827,18 @@ def _call_tool(store, request, live=None, query_service=None):
         if live and _live_fallback(args, data, _empty_list("results")):
             live.sync_projects(args.get("query", ""))
             data = store.list_projects(args.get("query", ""))
+    elif name == "list_workflows":
+        if live is None:
+            data = _error_data("live_wedata_unavailable")
+        else:
+            try:
+                data = live.list_workflows(
+                    _project_id_arg(args),
+                    args.get("keyword", ""),
+                    args.get("workflow_type", ""),
+                )
+            except (RuntimeError, ValueError, OSError) as exc:
+                data = _error_data(str(exc))
     elif name == "get_project":
         project_id = _project_id_arg(args)
         if not project_id:
@@ -1074,6 +1097,15 @@ def _format_markdown(tool_name, data):
         return _section("项目列表", [f"查询：`{_cell(data.get('query', ''))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
             ["项目ID", "名称", "展示名", "负责人", "状态", "区域", "创建时间", "更新时间"],
             [[r.get("id"), r.get("name"), r.get("display_name"), r.get("owner"), r.get("status"), r.get("region"), r.get("create_time"), r.get("update_time")] for r in rows],
+        )
+    if tool_name == "list_workflows":
+        rows = data.get("workflows", [])
+        return _section(
+            "工作流列表",
+            [f"项目ID：`{_cell(data.get('project_id'))}`", f"总数：{data.get('total_count', len(rows))}"],
+        ) + "\n\n" + _table(
+            ["工作流ID", "工作流名称", "类型", "负责人", "创建时间", "更新时间"],
+            [[r.get("WorkflowId"), r.get("WorkflowName"), r.get("WorkflowType"), r.get("OwnerUin"), r.get("CreateTime"), r.get("ModifyTime")] for r in rows],
         )
     if tool_name == "get_project":
         return _section(

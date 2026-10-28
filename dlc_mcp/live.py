@@ -231,6 +231,21 @@ class LiveWeData:
         data = self._list_all("ListProjects", payload)
         self._import({"projects": data})
 
+    def list_workflows(self, project_id="", keyword="", workflow_type=""):
+        resolved_project_id = self.project_id_or_default(project_id)
+        payload = {"ProjectId": resolved_project_id}
+        if keyword:
+            payload["Keyword"] = keyword
+        if workflow_type:
+            payload["WorkflowType"] = workflow_type
+        response = self._list_all("ListWorkflows", payload)
+        data = response.get("Response", {}).get("Data", {})
+        return {
+            "project_id": resolved_project_id,
+            "workflows": data.get("Items", []),
+            "total_count": data.get("TotalCount", len(data.get("Items", []))),
+        }
+
     def sync_project(self, project_id=""):
         resolved_project_id = self.project_id_or_default(project_id)
         data = self.client.call("GetProject", {"ProjectId": resolved_project_id})

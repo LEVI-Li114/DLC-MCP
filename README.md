@@ -150,6 +150,8 @@ python3 -m dlc_mcp.asset_patrol --scope manual --table ads_360_fin_income_cost_1
 | `list_data_sources(query, live)` | 列出数据源、配置摘要和关联任务数。 |
 | `get_data_source(data_source_id, live)` | 返回一个数据源的类型、负责人、关联任务数、描述和配置摘要。 |
 | `list_projects(query, live)` | 列出从腾讯云 `ListProjects` 同步的 WeData 项目。 |
+| `list_workflows(project_id, keyword, workflow_type)` | 实时查询 WeData 项目工作流列表；未提供项目 ID 时默认使用 `WEDATA_PROJECT_ID`。 |
+| `create_wedata_task(...)` | 在 WeData 项目工作流中创建任务。 |
 | `get_project(project_id, live)` | 返回 WeData 项目；未提供时默认使用 `WEDATA_PROJECT_ID`。 |
 | `list_project_members(project_id, live)` | 列出 WeData 项目成员和角色。 |
 | `list_task_relations(task_id, direction, project_id, live)` | 查询任务的上游或下游 WeData 依赖关系。 |

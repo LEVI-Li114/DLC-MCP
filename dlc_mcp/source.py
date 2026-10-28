@@ -25,6 +25,7 @@ REGISTRY_TOOLS = {
     "get_data_source",
     "get_data_source_inventory",
     "list_projects",
+    "list_workflows",
     "get_project",
     "list_project_members",
     "list_metadata",
