@@ -36,6 +36,23 @@ TOOLS = {
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
     },
+    "create_wedata_task": {
+        "description": "Create a WeData task through CreateTask. Supports the task types documented by Tencent Cloud WeData CreateTask API; task_configuration and scheduler_configuration are passed through as API structures. The API call creates the task and applies its configuration, including scheduling. Review the complete request and pass confirmation='CREATE WEDATA TASK' to execute.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "task_name": {"type": "string"},
+                "task_type_id": {"type": "string", "description": "TaskTypeId from the official CreateTask API, e.g. 35 Shell, 30 Python, 32 DLC SQL, 132 Notebook."},
+                "workflow_id": {"type": "string"},
+                "task_configuration": {"type": "object", "description": "CreateTask TaskConfiguration structure for the selected task type; provide the complete API-specific configuration."},
+                "scheduler_configuration": {"type": "object", "description": "CreateTask TaskSchedulerConfiguration structure."},
+                "confirmation": {"type": "string"},
+            },
+            "required": ["task_name", "task_type_id", "workflow_id", "task_configuration", "scheduler_configuration", "confirmation"],
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
     "get_dlc_sql_query_result": {
         "description": "Get status and one result page for a previously submitted DLC SQL task.",
         "schema": {
@@ -324,7 +341,7 @@ TOOLS = {
 
 
 for _tool_name, _tool_spec in TOOLS.items():
-    if _tool_name not in {"submit_dlc_sql_query", "get_dlc_sql_query_result", "get_dlc_task_resource_usage", "delete_dlc_tables", "backup_dlc_table_ddl"}:
+    if _tool_name not in {"submit_dlc_sql_query", "get_dlc_sql_query_result", "get_dlc_task_resource_usage", "delete_dlc_tables", "backup_dlc_table_ddl", "create_wedata_task"}:
         _tool_spec["schema"] = _with_source_schema(_tool_spec["schema"])
 
 
@@ -500,6 +517,29 @@ def _call_tool(store, request, live=None, query_service=None):
             data = _error_data("invalid_alert_status")
         else:
             data = store.complete_wedata_alert(args["alert_id"], args["status"], args["analysis"])
+    elif name == "create_wedata_task":
+        meta["source"] = Source.LIVE
+        confirmation = args.get("confirmation", "")
+        if confirmation != "CREATE WEDATA TASK":
+            data = {"status": "not_executed", "error": "explicit_confirmation_required", "required_confirmation": "CREATE WEDATA TASK"}
+        elif live is None:
+            data = _error_data("live_source_unavailable")
+        elif not all(args.get(key) for key in ("task_name", "task_type_id", "workflow_id")) or not isinstance(args.get("task_configuration"), dict) or not isinstance(args.get("scheduler_configuration"), dict):
+            data = _error_data("task_name_type_workflow_and_task_configurations_required")
+        else:
+            try:
+                project_id = live.project_id_or_default(args.get("project_id", ""))
+                if not project_id:
+                    data = _error_data("missing_project_id")
+                else:
+                    data = live.create_task({
+                        "ProjectId": project_id,
+                        "TaskBaseAttribute": {"TaskName": args["task_name"], "TaskTypeId": str(args["task_type_id"]), "WorkflowId": args["workflow_id"]},
+                        "TaskConfiguration": args["task_configuration"],
+                        "TaskSchedulerConfiguration": args["scheduler_configuration"],
+                    })
+            except (RuntimeError, ValueError, OSError) as exc:
+                data = _error_data(str(exc))
     elif name == "delete_dlc_tables":
         meta["source"] = "dlc_live"
         confirmation = args.get("confirmation", "")

@@ -16,6 +16,8 @@ class FakeWeDataClient:
 
     def call(self, action, payload):
         self.calls.append((action, dict(payload)))
+        if action == "CreateTask":
+            return {"Response": {"Data": {"TaskId": "created-task"}}}
         if action == "ListProjects":
             return {"Response": {"Data": {"Items": [{"ProjectId": "project", "ProjectName": "prod", "Owner": "data-platform"}], "TotalPageNumber": 1}}}
         if action == "GetProject":
@@ -858,6 +860,66 @@ class McpTest(unittest.TestCase):
         )
         self.store.upsert_column("m2c_ods_crm_payment_plan_df", "id", "bigint", "Primary key", 1)
         self.store.upsert_expert_label({"asset_name": "dim_customer", "core_level": "P1", "value_tier": "重要", "domain": "客户", "use_case": "客户分析"})
+
+    def test_create_wedata_task_requires_confirmation_and_passes_multiple_task_types(self):
+        client = FakeWeDataClient()
+        scheduler = {"CycleType": "DAY", "ScheduleTime": "00:00"}
+        configs = [("35", {"CodeContent": "encoded-shell", "BrokerIp": "any"}), ("30", {"CodeContent": "python-code", "PythonType": "Python3"})]
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "default-project"}, clear=False):
+            live = LiveWeData(self.store, client=client)
+            for index, (task_type_id, task_configuration) in enumerate(configs):
+                arguments = {
+                    "project_id": "project-1",
+                    "task_name": f"task_{task_type_id}",
+                    "task_type_id": task_type_id,
+                    "workflow_id": "flow-1",
+                    "task_configuration": task_configuration,
+                    "scheduler_configuration": scheduler,
+                }
+                unconfirmed = handle_request(
+                    self.store,
+                    {"jsonrpc": "2.0", "id": 201 + index * 2, "method": "tools/call", "params": {"name": "create_wedata_task", "arguments": arguments}},
+                    live=live,
+                )
+                self.assertEqual(len(client.calls), index)
+                self.assertIn("explicit_confirmation_required", unconfirmed["result"]["content"][0]["text"])
+                confirmed = handle_request(
+                    self.store,
+                    {"jsonrpc": "2.0", "id": 202 + index * 2, "method": "tools/call", "params": {"name": "create_wedata_task", "arguments": {**arguments, "confirmation": "CREATE WEDATA TASK"}}},
+                    live=live,
+                )
+                payload = client.calls[index][1]
+                self.assertEqual(payload["TaskBaseAttribute"], {"TaskName": f"task_{task_type_id}", "TaskTypeId": task_type_id, "WorkflowId": "flow-1"})
+                self.assertEqual(payload["TaskConfiguration"], task_configuration)
+                self.assertEqual(payload["TaskSchedulerConfiguration"], scheduler)
+                self.assertIn("created-task", confirmed["result"]["content"][0]["text"])
+
+    def test_create_wedata_task_schema_and_api_error(self):
+        response = handle_request(self.store, {"jsonrpc": "2.0", "id": 203, "method": "tools/list"})
+        tool = {item["name"]: item for item in response["result"]["tools"]}["create_wedata_task"]
+        self.assertEqual(tool["annotations"], {"readOnlyHint": False, "destructiveHint": True})
+        self.assertNotIn("source", tool["inputSchema"]["properties"])
+        self.assertIn("creates the task", tool["description"])
+        self.assertIn("task_type_id", tool["inputSchema"]["properties"])
+        self.assertIn("task_configuration", tool["inputSchema"]["properties"])
+
+        class ErrorClient(FakeWeDataClient):
+            def call(self, action, payload):
+                self.calls.append((action, dict(payload)))
+                return {"Response": {"Error": {"Code": "InternalError", "Message": "failed"}}}
+
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            live = LiveWeData(self.store, client=ErrorClient())
+            error = handle_request(
+                self.store,
+                {"jsonrpc": "2.0", "id": 204, "method": "tools/call", "params": {"name": "create_wedata_task", "arguments": {
+                    "task_name": "python_demo", "task_type_id": "30", "workflow_id": "flow-1",
+                    "task_configuration": {"CodeContent": "python-code"}, "scheduler_configuration": {},
+                    "confirmation": "CREATE WEDATA TASK",
+                }}},
+                live=live,
+            )
+        self.assertIn("InternalError", error["result"]["content"][0]["text"])
 
     def test_live_wedata_syncs_task_code(self):
         client = FakeWeDataClient()

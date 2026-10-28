@@ -1,3 +1,4 @@
+import base64
 import os
 from datetime import datetime, timedelta
 
@@ -13,6 +14,16 @@ class LiveWeData:
         self.client = client or TencentCloudClient.wedata_from_env()
         self.project_id = os.environ["WEDATA_PROJECT_ID"]
         self.page_size = max(10, int(os.environ.get("WEDATA_LIVE_PAGE_SIZE", "20")))
+
+    def create_task(self, payload):
+        response = self.client.call("CreateTask", payload)
+        if "Error" in response.get("Response", {}):
+            error = response["Response"]["Error"]
+            raise RuntimeError(f"CreateTask failed: {error.get('Code')} {error.get('Message')}")
+        task_id = response.get("Response", {}).get("Data", {}).get("TaskId")
+        if not task_id:
+            raise RuntimeError("CreateTask failed: missing TaskId")
+        return {"task_id": task_id}
 
     def sync_tasks(self, query):
         data = self._list_all("ListTasks", {"ProjectId": self.project_id, "TaskName": query})
