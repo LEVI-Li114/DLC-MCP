@@ -219,6 +219,18 @@ TOOLS = {
             "required": ["instance_key"],
         },
     },
+    "get_task_detail": {
+        "description": "Return the complete live WeData GetTask response for one task, including TaskConfiguration, TaskExtConfigurationList, and scheduler configuration.",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "task_name": {"type": "string"},
+                "project_id": {"type": "string"},
+            },
+        },
+        "annotations": {"readOnlyHint": True},
+    },
     "get_task_code": {
         "description": (
             "Return SQL/code content for a WeData task from cache or live GetTaskCode refresh, plus output tables parsed "
@@ -761,6 +773,20 @@ def _call_tool(store, request, live=None, query_service=None):
                 data = _error_data(str(exc), instance_key=args["instance_key"])
         else:
             data = _error_data("live_source_unavailable", instance_key=args["instance_key"])
+    elif name == "get_task_detail":
+        if not args.get("task_id") and not args.get("task_name"):
+            data = _error_data("missing_task_identity")
+        elif live is None:
+            data = _error_data("live_source_unavailable")
+        else:
+            try:
+                data = live.get_task_detail(
+                    task_id=args.get("task_id", ""),
+                    task_name=args.get("task_name", ""),
+                    project_id=args.get("project_id", ""),
+                )
+            except (RuntimeError, ValueError, OSError) as exc:
+                data = _error_data(str(exc), task_id=args.get("task_id", ""), task_name=args.get("task_name", ""))
     elif name == "get_task_code":
         if not args.get("task_id") and not args.get("task_name"):
             data = _error_data("missing_task_identity")

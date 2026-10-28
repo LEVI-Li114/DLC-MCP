@@ -106,6 +106,18 @@ class FakeWeDataClient:
                     "RequestId": "req-task-code",
                 }
             }
+        if action == "GetTask" and payload.get("TaskId") == "detail-task":
+            return {
+                "Response": {
+                    "Data": {
+                        "TaskId": "detail-task",
+                        "TaskName": "detail_sql",
+                        "TaskConfiguration": {"CodeContent": "c2VsZWN0IDE="},
+                        "TaskExtConfigurationList": [{"Key": "dlcEngineType", "Value": "SparkSQLTask"}],
+                        "TaskSchedulerConfiguration": {"CycleType": "DAY"},
+                    }
+                }
+            }
         if action == "GetTask" and payload.get("TaskId") == "task_sync_config":
             return {
                 "Response": {
@@ -895,6 +907,23 @@ class McpTest(unittest.TestCase):
                 self.assertEqual(payload["TaskConfiguration"], task_configuration)
                 self.assertEqual(payload["TaskSchedulerConfiguration"], scheduler)
                 self.assertIn("created-task", confirmed["result"]["content"][0]["text"])
+
+    def test_get_task_detail_returns_complete_get_task_configuration(self):
+        client = FakeWeDataClient()
+        self.store.upsert_task({"id": "detail-task", "name": "detail_sql", "task_type": "32"})
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            response = handle_request(
+                self.store,
+                {"jsonrpc": "2.0", "id": 207, "method": "tools/call", "params": {"name": "get_task_detail", "arguments": {"task_name": "detail_sql"}}},
+                live=LiveWeData(self.store, client=client),
+            )
+
+        self.assertEqual(client.calls[-1], ("GetTask", {"ProjectId": "project", "TaskId": "detail-task"}))
+        text = response["result"]["content"][0]["text"]
+        self.assertIn('"TaskExtConfigurationList":', text)
+        self.assertIn('"Key": "dlcEngineType"', text)
+        self.assertIn('"TaskConfiguration":', text)
+        self.assertIn('"TaskSchedulerConfiguration":', text)
 
     def test_create_wedata_task_schema_and_api_error(self):
         response = handle_request(self.store, {"jsonrpc": "2.0", "id": 203, "method": "tools/list"})

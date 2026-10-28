@@ -151,6 +151,23 @@ class LiveWeData:
         data = self._list_all("ListTaskInstances", payload, max_pages=int(os.environ.get("WEDATA_LIVE_INSTANCE_MAX_PAGES", "5")))
         self._import({"task_instances": data})
 
+    def get_task_detail(self, task_id="", task_name="", project_id=""):
+        resolved_project_id = self.project_id_or_default(project_id)
+        task = self.store.resolve_task(task_id, task_name)
+        if not task and task_name:
+            self.sync_tasks(task_name)
+            task = self.store.resolve_task("", task_name)
+        if not task:
+            raise RuntimeError("task_not_found")
+        response = self.client.call("GetTask", {"ProjectId": resolved_project_id, "TaskId": task["id"]})
+        if "Error" in response.get("Response", {}):
+            error = response["Response"]["Error"]
+            raise RuntimeError(f"GetTask failed: {error.get('Code')} {error.get('Message')}")
+        data = response.get("Response", {}).get("Data", {}) or {}
+        if not data:
+            raise RuntimeError("GetTask returned no task detail")
+        return {"project_id": resolved_project_id, **data}
+
     def sync_task_tables(self, task_id="", task_name="", project_id=""):
         resolved_project_id = self.project_id_or_default(project_id)
         task = self.store.resolve_task(task_id, task_name)
