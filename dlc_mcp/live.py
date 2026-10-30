@@ -17,13 +17,30 @@ class LiveWeData:
 
     def create_task(self, payload):
         response = self.client.call("CreateTask", payload)
-        if "Error" in response.get("Response", {}):
-            error = response["Response"]["Error"]
-            raise RuntimeError(f"CreateTask failed: {error.get('Code')} {error.get('Message')}")
-        task_id = response.get("Response", {}).get("Data", {}).get("TaskId")
+        response_data = response.get("Response", {})
+        if "Error" in response_data:
+            error = response_data["Error"]
+            raise RuntimeError(
+                f"CreateTask failed: {error.get('Code')} {error.get('Message')} "
+                f"RequestId={response_data.get('RequestId')} Error={error}"
+            )
+        task_id = response_data.get("Data", {}).get("TaskId")
         if not task_id:
             raise RuntimeError("CreateTask failed: missing TaskId")
         return {"task_id": task_id}
+
+    def list_integration_tasks(self, task_type, keyword=""):
+        payload = {"ProjectId": self.project_id, "TaskType": int(task_type)}
+        if keyword:
+            payload["TaskName"] = keyword
+        response = self._list_all("DescribeIntegrationTasks", payload)
+        data = response.get("Response", {}).get("Data", {})
+        return {
+            "results": data.get("Items", []),
+            "total_count": data.get("TotalCount", len(data.get("Items", []))),
+            "limit": self.page_size,
+            "offset": 0,
+        }
 
     def sync_tasks(self, query):
         data = self._list_all("ListTasks", {"ProjectId": self.project_id, "TaskName": query})

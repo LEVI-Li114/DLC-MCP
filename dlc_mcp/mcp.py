@@ -132,13 +132,14 @@ TOOLS = {
         "schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
     },
     "search_tasks": {
-        "description": "Search WeData ETL tasks by id, name, owner, or status.",
-        "schema": {"type": "object", "properties": {"query": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["query"]},
+        "description": "Search WeData ETL tasks by id, name, owner, or status; task_type 201/202 selects real-time/offline integration tasks.",
+        "schema": {"type": "object", "properties": {"query": {"type": "string"}, "task_type": {"type": "string"}, "live": {"type": "boolean"}}, "required": ["query"]},
     },
     "list_tasks": {
         "description": (
-            "List cached WeData tasks with pagination and optional keyword/task_type/owner filters. "
-            "Returns total_count for task inventory. live=true refreshes from WeData ListTasks but requires keyword."
+            "List cached development tasks with pagination and optional keyword/task_type/owner filters. "
+            "task_type 201/202 lists real-time/offline integration tasks from DescribeIntegrationTasks. "
+            "live=true refreshes development tasks from WeData ListTasks but requires keyword."
         ),
         "schema": {
             "type": "object",
@@ -646,15 +647,30 @@ def _call_tool(store, request, live=None, query_service=None):
     elif name == "search_assets":
         data = store.search_assets(args["query"])
     elif name == "search_tasks":
-        data = store.search_tasks(args["query"])
-        if live:
-            refreshed = _maybe_live_refresh(meta, args, data, _empty_list("results"), lambda: live.sync_tasks(args["query"]))
-            if refreshed:
-                data = store.search_tasks(args["query"])
+        task_type = str(args.get("task_type", ""))
+        if task_type in {"201", "202"}:
+            if live:
+                data = live.list_integration_tasks(task_type, args["query"])
+            else:
+                data = {"query": args["query"], "results": [], "total_count": 0, "limit": 0, "offset": 0}
+        else:
+            data = store.search_tasks(args["query"])
+            if live:
+                refreshed = _maybe_live_refresh(meta, args, data, _empty_list("results"), lambda: live.sync_tasks(args["query"]))
+                if refreshed:
+                    data = store.search_tasks(args["query"])
     elif name == "list_tasks":
         keyword = args.get("keyword", "")
+        task_type = str(args.get("task_type", ""))
         has_keyword = bool((keyword or "").strip())
-        if args.get("live") and not has_keyword:
+        if task_type in {"201", "202"}:
+            if not live:
+                data = {"keyword": keyword, "results": [], "total_count": 0, "limit": args.get("limit", 20), "offset": args.get("offset", 0)}
+            elif args.get("live") and not has_keyword:
+                data = _error_data("keyword_required_for_live")
+            else:
+                data = live.list_integration_tasks(task_type, keyword)
+        elif args.get("live") and not has_keyword:
             data = _error_data("keyword_required_for_live")
         else:
             data = store.list_tasks(
@@ -1216,12 +1232,22 @@ def _format_markdown(tool_name, data):
         )
     if tool_name == "search_tasks":
         rows = data.get("results", [])
+        if rows and ("TaskId" in rows[0] or "TaskName" in rows[0]):
+            return _section("集成任务搜索结果", [f"查询：`{_cell(data.get('query'))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
+                ["TaskId", "任务名", "类型", "状态"],
+                [[r.get("TaskId"), r.get("TaskName"), r.get("TaskType"), r.get("Status")] for r in rows],
+            )
         return _section("任务搜索结果", [f"查询：`{_cell(data.get('query'))}`", f"数量：{len(rows)}"]) + "\n\n" + _table(
             ["TaskId", "任务名", "类型", "负责人", "状态", "产出表"],
             [[r.get("id"), r.get("name"), _task_type_display(r.get("task_type")), _owner_display(r), r.get("status"), ", ".join(r.get("outputs") or [])] for r in rows],
         )
     if tool_name == "list_tasks":
         rows = data.get("results", [])
+        if rows and ("TaskId" in rows[0] or "TaskName" in rows[0]):
+            return _section("集成任务列表", [f"总数：**{data.get('total_count', 0)}**", f"本页：{len(rows)}"]) + "\n\n" + _table(
+                ["TaskId", "任务名", "类型", "状态"],
+                [[r.get("TaskId"), r.get("TaskName"), r.get("TaskType"), r.get("Status")] for r in rows],
+            )
         return _section(
             "任务列表",
             [

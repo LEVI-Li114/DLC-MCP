@@ -56,6 +56,8 @@ class FakeWeDataClient:
                     ]
                 }
             }
+        if action == "DescribeIntegrationTasks":
+            return {"Response": {"Data": {"Items": [{"TaskId": "integration-1", "TaskName": "sync_orders", "TaskType": payload.get("TaskType")}], "TotalCount": 1, "TotalPageNumber": 1}}}
         if action == "ListTasks" and payload.get("TaskName"):
             return {
                 "Response": {
@@ -331,7 +333,7 @@ class DeleteDlcTablesTest(unittest.TestCase):
                 if payload["Name"] == "missing-response":
                     return {}
                 if payload["Name"] == "api-error":
-                    return {"Response": {"Error": {"Code": "InternalError", "Message": "failed"}}}
+                    return {"Response": {"RequestId": "req-create-failed", "Error": {"Code": "InternalError", "Message": "failed", "Details": "dependency validation"}}}
                 return {"Response": {"RequestId": "req-1"}}
 
         client = FakeClient()
@@ -937,7 +939,7 @@ class McpTest(unittest.TestCase):
         class ErrorClient(FakeWeDataClient):
             def call(self, action, payload):
                 self.calls.append((action, dict(payload)))
-                return {"Response": {"Error": {"Code": "InternalError", "Message": "failed"}}}
+                return {"Response": {"RequestId": "req-create-failed", "Error": {"Code": "InternalError", "Message": "failed", "Details": "dependency validation"}}}
 
         with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
             live = LiveWeData(self.store, client=ErrorClient())
@@ -951,6 +953,8 @@ class McpTest(unittest.TestCase):
                 live=live,
             )
         self.assertIn("InternalError", error["result"]["content"][0]["text"])
+        self.assertIn("req-create-failed", error["result"]["content"][0]["text"])
+        self.assertIn("dependency validation", error["result"]["content"][0]["text"])
 
     def test_live_wedata_syncs_task_code(self):
         client = FakeWeDataClient()
@@ -1486,7 +1490,37 @@ class McpTest(unittest.TestCase):
         self.assertIn("task_code_not_found", text)
         self.assertEqual(self.store.get_task("task_sync_empty")["outputs"], [])
 
+    def test_list_tasks_selects_integration_task_type_without_caching(self):
+        client = FakeWeDataClient()
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            live = LiveWeData(self.store, client=client)
+            response = handle_request(
+                self.store,
+                {"jsonrpc": "2.0", "id": 154, "method": "tools/call", "params": {"name": "list_tasks", "arguments": {"keyword": "sync", "task_type": "201", "live": True}}},
+                live=live,
+            )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("sync_orders", text)
+        self.assertIn("DescribeIntegrationTasks", [action for action, payload in client.calls])
+        self.assertEqual(self.store.get_task("integration-1").get("error"), "task_not_found")
+
+    def test_search_tasks_selects_offline_integration_tasks(self):
+        client = FakeWeDataClient()
+        with patch.dict(os.environ, {"WEDATA_PROJECT_ID": "project"}, clear=False):
+            live = LiveWeData(self.store, client=client)
+            response = handle_request(
+                self.store,
+                {"jsonrpc": "2.0", "id": 155, "method": "tools/call", "params": {"name": "search_tasks", "arguments": {"query": "sync", "task_type": "202"}}},
+                live=live,
+            )
+
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("sync_orders", text)
+        self.assertTrue(any(action == "DescribeIntegrationTasks" and payload.get("TaskType") == 202 for action, payload in client.calls))
+
     def test_list_tasks_renders_total_count_and_rows(self):
+
         self.store.upsert_task({"id": "task_dlc_1", "name": "build_dws_a", "task_type": "32", "owner": "alice"})
         self.store.upsert_task({"id": "task_dlc_2", "name": "build_ads_a", "task_type": "32", "owner": "bob"})
 
