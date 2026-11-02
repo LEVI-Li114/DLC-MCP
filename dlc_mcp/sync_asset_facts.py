@@ -10,7 +10,7 @@ from .assets import AssetStore
 from .sync_table_fields import _call_with_retries
 from .tencentcloud import TencentCloudClient
 from .wedata import import_wedata_snapshot, snapshot_from_api_dump
-from .sync_wedata import _first_detail_item
+from .sync_wedata import _first_detail_item, _dlc_catalog_response
 
 
 def main():
@@ -24,12 +24,16 @@ def main():
     os.makedirs(work_dir, exist_ok=True)
 
     client = TencentCloudClient.wedata_from_env()
+    dlc_client = TencentCloudClient.dlc_from_env()
     store = AssetStore(sqlite3.connect(db_path))
     store.init_schema()
-    catalog = _list_all_retried(client, "ListTable", {}, page_size, args)
+    catalog = _dlc_catalog_response(dlc_client, page_size)
     tables = snapshot_from_api_dump({"tables": catalog})["tables"]
     report = {"table_count": len(tables), "failures": []}
     dump = {"tables": catalog}
+
+    if args.sync_lineage:
+        _attach_we_data_guids(client, tables, page_size, args, report)
 
     if args.sync_tasks:
         tasks = _list_all_retried(client, "ListTasks", {"ProjectId": project_id}, page_size, args)
@@ -77,6 +81,22 @@ def _parse_args():
     parser.add_argument("--sync-quality", action="store_true", default=os.environ.get("WEDATA_FULL_FACTS_SYNC_QUALITY", "1") == "1")
     parser.add_argument("--fail-on-error", action="store_true", default=os.environ.get("WEDATA_FULL_FACTS_FAIL_ON_ERROR", "0") == "1")
     return parser.parse_args()
+
+
+def _attach_we_data_guids(client, tables, page_size, args, report):
+    """DLC 表目录不返回 WeData 表 GUID；血缘接口仍以 GUID 为键，这里补一层名称映射。"""
+    try:
+        response = _list_all_retried(client, "ListTable", {}, page_size, args)
+    except Exception as exc:
+        report["failures"].append({"fact": "table_guid_map", "error": str(exc)})
+        return
+    by_name = {
+        item.get("Name") or item.get("TableName"): item.get("Guid")
+        for item in response.get("Response", {}).get("Data", {}).get("Items") or []
+        if item.get("Guid")
+    }
+    for table in tables:
+        table["guid"] = by_name.get(table.get("name"), "")
 
 
 def _sync_lineage_quality(client, project_id, tables, page_size, args, report):

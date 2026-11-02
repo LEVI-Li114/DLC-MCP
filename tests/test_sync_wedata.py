@@ -247,6 +247,44 @@ class FakeChangedTaskClient:
 
 
 class SyncWeDataTest(unittest.TestCase):
+    def test_dlc_catalog_lists_all_databases_and_tables_with_offsets(self):
+        class Client:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, action, payload):
+                self.calls.append((action, dict(payload)))
+                offset = payload["Offset"]
+                if action == "DescribeDatabases":
+                    databases = [{"DatabaseName": "db_a"}, {"DatabaseName": "db_b"}]
+                    return {"Response": {"DatabaseList": databases[offset:offset + 1]}}
+                if payload["DatabaseName"] == "db_a":
+                    tables = [
+                        {"TableBaseInfo": {"TableName": "t1"}, "Columns": [{"Name": "id"}]},
+                        {"TableBaseInfo": {"TableName": "t2"}},
+                    ]
+                    return {"Response": {"TableList": tables[offset:offset + 1], "TotalCount": 2}}
+                return {"Response": {"TableList": [{"TableBaseInfo": {"TableName": "t3"}}] if offset == 0 else []}}
+
+        from dlc_mcp.sync_wedata import _dlc_catalog_response
+        client = Client()
+        with patch.dict(os.environ, {"DLC_CATALOG": "catalog"}):
+            catalog = _dlc_catalog_response(client, 1)
+
+        items = catalog["Response"]["Data"]["Items"]
+        self.assertEqual([item["Name"] for item in items], ["t1", "t2", "t3"])
+        self.assertEqual(items[0]["Columns"], [{"Name": "id"}])
+        self.assertEqual(items[0]["DatabaseName"], "db_a")
+        self.assertEqual(items[2]["DatabaseName"], "db_b")
+        self.assertEqual(
+            [call[0] for call in client.calls],
+            ["DescribeDatabases", "DescribeDatabases", "DescribeDatabases", *["DescribeTables"] * 4],
+        )
+        self.assertEqual(client.calls[0][1]["DatasourceConnectionName"], "catalog")
+        self.assertEqual(client.calls[2][1]["Offset"], 2)
+        self.assertEqual(client.calls[-1][1]["DatabaseName"], "db_b")
+        self.assertEqual(client.calls[-1][1]["Offset"], 1)
+
     def test_data_source_task_sync_prints_progress(self):
         data_sources = {"Response": {"Data": {"Items": [{"Id": 1}, {"Id": 2}]}}}
         output = StringIO()

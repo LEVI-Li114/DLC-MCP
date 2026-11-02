@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 
 from .assets import AssetStore
-from .sync_wedata import _list_all
+from .sync_wedata import _dlc_catalog_response
 from .tencentcloud import TencentCloudClient
 from .wedata import snapshot_from_api_dump
 
@@ -14,17 +14,17 @@ from .wedata import snapshot_from_api_dump
 def main():
     args = _parse_args()
     start = time.monotonic()
-    project_id = os.environ["WEDATA_PROJECT_ID"]
     db_path = args.db or os.environ.get("DLC_MCP_DB", "/data/dlc-mcp/assets.db")
     work_dir = args.work_dir or os.environ.get("DLC_MCP_SYNC_DIR", "/data/dlc-mcp/sync")
     page_size = args.page_size or int(os.environ.get("WEDATA_PAGE_SIZE", "100"))
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
     os.makedirs(work_dir, exist_ok=True)
 
-    client = TencentCloudClient.wedata_from_env()
+    dlc_client = TencentCloudClient.dlc_from_env()
+    datasource = os.environ.get("DLC_CATALOG", "DataLakeCatalog")
     store = AssetStore(sqlite3.connect(db_path))
     store.init_schema()
-    catalog = _call_with_retries(lambda: _list_all(client, "ListTable", {}, page_size), "ListTable", args)
+    catalog = _call_with_retries(lambda: _dlc_catalog_response(dlc_client, page_size), "DLC catalog", args)
     tables = snapshot_from_api_dump({"tables": catalog})["tables"]
     synced_names = _synced_column_tables(store) if not args.force else set()
     failures = []
@@ -34,24 +34,31 @@ def main():
     print(f"table catalog count: {len(tables)}", flush=True)
     for index, table in enumerate(tables, start=1):
         name = table.get("name", "")
-        guid = table.get("guid", "")
+        database = table.get("database", "")
         if not name:
             continue
         if name in synced_names:
             skipped += 1
             continue
-        if not guid:
-            failures.append({"table": name, "error": "missing_guid"})
+        if not database:
+            failures.append({"table": name, "error": "missing_database"})
             continue
         try:
-            response = _call_with_retries(lambda: client.call("GetTableColumns", {"TableGuid": guid}), "GetTableColumns", args)
-            table["columns"] = snapshot_from_api_dump({"tables": {"Response": {"Data": {"Items": [{"Name": name, "Guid": guid, "Columns": response.get("Response", {}).get("Data") or []}]}}}})["tables"][0]["columns"]
+            response = _call_with_retries(
+                lambda: dlc_client.call("DescribeTable", {"DatasourceConnectionName": datasource, "DatabaseName": database, "TableName": name}),
+                "DescribeTable",
+                args,
+            )
+            detail = response.get("Response", {}).get("Table") or {}
+            table["columns"] = snapshot_from_api_dump(
+                {"tables": {"Response": {"Data": {"Items": [{**detail, "TableName": name, "DatabaseName": database}]}}}}
+            )["tables"][0]["columns"]
             store.upsert_table(table)
             for ordinal, column in enumerate(table["columns"], start=1):
                 store.upsert_column(name, column["name"], column.get("type", ""), column.get("description", ""), column.get("ordinal") or ordinal)
             synced += 1
         except Exception as exc:
-            failures.append({"table": name, "guid": guid, "error": str(exc)})
+            failures.append({"table": name, "database": database, "error": str(exc)})
         if args.progress_every and (index == len(tables) or index % args.progress_every == 0):
             print(f"progress {index}/{len(tables)} synced={synced} skipped={skipped} failed={len(failures)}", flush=True)
         if args.request_interval > 0:

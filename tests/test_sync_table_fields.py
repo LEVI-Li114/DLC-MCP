@@ -16,20 +16,22 @@ class FakeClient:
 
     def call(self, action, payload):
         self.calls.append((action, payload))
-        if action == "ListTable":
+        if action == "DescribeDatabases":
+            return {"Response": {"DatabaseList": [{"DatabaseName": "analytics"}]}}
+        if action == "DescribeTables":
             return {
                 "Response": {
-                    "Data": {
-                        "Items": [
-                            {"Name": "has_columns", "Guid": "guid_has"},
-                            {"Name": "new_table", "Guid": "guid_new"},
-                            {"Name": "missing_guid"},
-                        ]
-                    }
+                    "TableList": [
+                        {"TableBaseInfo": {"TableName": "has_columns"}},
+                        {"TableBaseInfo": {"TableName": "new_table"}},
+                        {"TableBaseInfo": {"TableName": "broken_table"}},
+                    ]
                 }
             }
-        if action == "GetTableColumns":
-            return {"Response": {"Data": [{"Name": "id", "Type": "bigint", "Description": "id"}]}}
+        if action == "DescribeTable":
+            if payload["TableName"] == "broken_table":
+                return {"Response": {"Error": {"Code": "InternalError", "Message": "boom"}}}
+            return {"Response": {"Table": {"Columns": [{"Name": "id", "Type": "bigint", "Comment": "id"}]}}}
         return {"Response": {"Data": {"Items": []}}}
 
 
@@ -42,7 +44,7 @@ class SyncTableFieldsTest(unittest.TestCase):
             store.upsert_table({"name": "has_columns"})
             store.upsert_column("has_columns", "old_id")
 
-            with patch.dict("os.environ", {"WEDATA_PROJECT_ID": "project", "DLC_MCP_DB": db_path, "DLC_MCP_SYNC_DIR": tmp}), patch.object(sync_table_fields.TencentCloudClient, "wedata_from_env", return_value=FakeClient()), patch("sys.argv", ["sync_table_fields"]):
+            with patch.dict("os.environ", {"DLC_MCP_DB": db_path, "DLC_MCP_SYNC_DIR": tmp}), patch.object(sync_table_fields.TencentCloudClient, "dlc_from_env", return_value=FakeClient()), patch("sys.argv", ["sync_table_fields", "--request-interval", "0", "--max-retries", "0"]):
                 sync_table_fields.main()
 
             store = AssetStore(sqlite3.connect(db_path))

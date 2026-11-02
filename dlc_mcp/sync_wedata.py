@@ -60,7 +60,7 @@ def main():
     catalog_tables = {}
 
     if os.environ.get("WEDATA_SYNC_TABLE_CATALOG", "1") == "1":
-        tables_response = _list_all(client, "ListTable", {}, page_size)
+        tables_response = _dlc_catalog_response(TencentCloudClient.dlc_from_env(), page_size)
         tables_path = os.path.join(work_dir, "wedata_tables.json")
         with open(tables_path, "w", encoding="utf-8") as f:
             json.dump(tables_response, f, ensure_ascii=False, indent=2)
@@ -166,6 +166,63 @@ def main():
         print(f"synced partitions for {_response_item_count(dump['table_partitions'])} table partitions", flush=True)
     if os.environ.get("WEDATA_SYNC_TABLE_STATS") == "1":
         print(f"synced DLC table stats for {_response_item_count(dump['tables'])} tables", flush=True)
+
+
+def _dlc_catalog_response(client, page_size):
+    """通过 DLC DescribeDatabases + DescribeTables 拉取全量数据库与表目录。"""
+    datasource = os.environ.get("DLC_CATALOG", "DataLakeCatalog")
+    tables = []
+    for database in _list_dlc_pages(client, "DescribeDatabases", {"DatasourceConnectionName": datasource}, page_size):
+        database_name = database.get("DatabaseName") or database.get("Name") or database.get("Database")
+        if not database_name:
+            continue
+        for item in _list_dlc_tables(client, database_name, page_size, datasource):
+            tables.append(_dlc_catalog_item(item, database_name))
+    return {"Response": {"Data": {"Items": tables}}}
+
+
+def _dlc_catalog_item(item, database_name):
+    """把 DLC TableResponseInfo 展平成表目录项，表名和库名来自 TableBaseInfo。"""
+    base = item.get("TableBaseInfo") or {}
+    name = base.get("TableName") or item.get("TableName") or item.get("Name")
+    return {
+        **base,
+        **item,
+        "Name": name,
+        "TableName": name,
+        "DatabaseName": base.get("DatabaseName") or database_name,
+    }
+
+
+def _list_dlc_pages(client, action, payload, page_size):
+    """按 DLC 的 Limit/Offset 协议分页，返回 DatabaseList 或 TableList 的全部记录。"""
+    items_key = "DatabaseList" if action == "DescribeDatabases" else "TableList"
+    items = []
+    offset = 0
+    while True:
+        response = client.call(action, {**payload, "Limit": page_size, "Offset": offset})
+        error = response.get("Response", {}).get("Error")
+        if error:
+            raise RuntimeError(f"{action} failed: {error.get('Code')} {error.get('Message')}")
+        body = response.get("Response") or {}
+        if isinstance(body.get("Data"), dict):
+            body = body["Data"]
+        page_items = body.get(items_key) or body.get("Items") or []
+        items.extend(page_items)
+        total = int(body.get("TotalCount") or 0)
+        offset += page_size
+        if not page_items or (total and offset >= total) or len(page_items) < page_size:
+            break
+    return items
+
+
+def _list_dlc_tables(client, database_name, page_size, datasource):
+    return _list_dlc_pages(
+        client,
+        "DescribeTables",
+        {"DatasourceConnectionName": datasource, "DatabaseName": database_name},
+        page_size,
+    )
 
 
 def _list_all(client, action, payload, page_size, max_pages=None):
@@ -633,7 +690,7 @@ def _sync_table_stats(client, table_names, progress_every=10, catalog_tables=Non
 
 
 def _merge_table_catalog_with_stats(tables_response, stats_response):
-    """把 DLC DescribeTable 热度/存储合并回 ListTable 表目录响应，供 snapshot 归一化。"""
+    """把 DLC DescribeTable 热度/存储合并回表目录响应，供 snapshot 归一化。"""
     merged = {"Response": {"Data": {"Items": []}}}
     catalog_items = tables_response.get("Response", {}).get("Data", {}).get("Items") or []
     by_name = {}
@@ -830,7 +887,7 @@ def _filter_new_asset_tables(table_names, catalog_tables, start, end):
     window_start = _parse_date(start)
     window_end = _parse_date(end)
     if not any(_item_dates(item) for item in catalog_tables.values()) and _table_change_strict() == "1":
-        raise RuntimeError("ListTable response has no recognized create/update/structure_update time fields for changed asset sync")
+        raise RuntimeError("table catalog response has no recognized create/update/structure_update time fields for changed asset sync")
     names = set(table_names)
     return sorted(
         name
@@ -846,7 +903,7 @@ def _item_dates(item):
     if "create" in date_groups:
         fields.extend(("CreateTime", "CreateDate", "CreatedAt", "CreateAt", "GmtCreate"))
     if "update" in date_groups:
-        fields.extend(("UpdateTime", "ModifyTime", "ModifiedAt", "LastModifyTime"))
+        fields.extend(("UpdateTime", "ModifiedTime", "ModifyTime", "ModifiedAt", "LastModifyTime"))
     if "structure_update" in date_groups:
         fields.extend(("StructUpdateTime",))
     for field in fields:

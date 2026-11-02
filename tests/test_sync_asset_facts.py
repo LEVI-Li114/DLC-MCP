@@ -15,6 +15,10 @@ class FakeClient:
 
     def call(self, action, payload):
         self.calls.append((action, dict(payload)))
+        if action == "DescribeDatabases":
+            return {"Response": {"DatabaseList": [{"DatabaseName": "analytics"}]}}
+        if action == "DescribeTables":
+            return {"Response": {"TableList": [{"TableBaseInfo": {"TableName": "ads_bill_company_1d_di"}}]}}
         if action == "ListTable":
             return {"Response": {"Data": {"Items": [{"Name": "ads_bill_company_1d_di", "Guid": "guid_1"}]}}}
         if action == "ListTasks":
@@ -33,7 +37,7 @@ class SyncAssetFactsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "assets.db")
             client = FakeClient()
-            with patch.dict("os.environ", {"WEDATA_PROJECT_ID": "project", "DLC_MCP_DB": db_path, "DLC_MCP_SYNC_DIR": tmp}), patch.object(sync_asset_facts.TencentCloudClient, "wedata_from_env", return_value=client), patch("sys.argv", ["sync_asset_facts", "--request-interval", "0"]):
+            with patch.dict("os.environ", {"WEDATA_PROJECT_ID": "project", "DLC_MCP_DB": db_path, "DLC_MCP_SYNC_DIR": tmp}), patch.object(sync_asset_facts.TencentCloudClient, "wedata_from_env", return_value=client), patch.object(sync_asset_facts.TencentCloudClient, "dlc_from_env", return_value=client), patch("sys.argv", ["sync_asset_facts", "--request-interval", "0"]):
                 sync_asset_facts.main()
 
             store = AssetStore(sqlite3.connect(db_path))
