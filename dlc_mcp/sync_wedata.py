@@ -185,13 +185,17 @@ def _dlc_catalog_item(item, database_name):
     """把 DLC TableResponseInfo 展平成表目录项，表名和库名来自 TableBaseInfo。"""
     base = item.get("TableBaseInfo") or {}
     name = base.get("TableName") or item.get("TableName") or item.get("Name")
-    return {
+    catalog_item = {
         **base,
         **item,
         "Name": name,
         "TableName": name,
         "DatabaseName": base.get("DatabaseName") or database_name,
     }
+    # 目录同步只保留表级信息；字段和分区体积大，由字段/分区同步各自按需拉取。
+    catalog_item.pop("Columns", None)
+    catalog_item.pop("Partitions", None)
+    return catalog_item
 
 
 def _list_dlc_pages(client, action, payload, page_size):

@@ -273,7 +273,7 @@ class SyncWeDataTest(unittest.TestCase):
 
         items = catalog["Response"]["Data"]["Items"]
         self.assertEqual([item["Name"] for item in items], ["t1", "t2", "t3"])
-        self.assertEqual(items[0]["Columns"], [{"Name": "id"}])
+        self.assertNotIn("Columns", items[0])
         self.assertEqual(items[0]["DatabaseName"], "db_a")
         self.assertEqual(items[2]["DatabaseName"], "db_b")
         self.assertEqual(
